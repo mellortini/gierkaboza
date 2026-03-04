@@ -77,18 +77,9 @@ const rooms = new Map();
 // Player sessions - keyed by socket ID
 const players = new Map();
 
-// Load game engine at startup
+// Skip engine.js - use only SimpleWorld to avoid browser code issues
 let World = null;
-try {
-    // Try to load engine.js for server-side world creation
-    const engine = require('./engine.js');
-    World = engine.World;
-    console.log('✅ Game engine loaded successfully');
-} catch (err) {
-    console.error('❌ Failed to load engine.js:', err.message);
-    // We'll create a simple world class if engine fails to load
-    World = null;
-}
+console.log('Using SimpleWorld (engine.js skipped for server)');
 
 // Simple fallback World class if engine.js fails
 class SimpleWorld {
