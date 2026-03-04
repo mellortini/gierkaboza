@@ -12,37 +12,28 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
-// CORS middleware - must be before Socket.io
-app.use(cors({
-    origin: true,
-    credentials: true
-}));
+// Global CORS - must be first
+app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
+    res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With,content-type');
+    res.setHeader('Access-Control-Allow-Credentials', true);
+    if (req.method === 'OPTIONS') {
+        res.sendStatus(200);
+    } else {
+        next();
+    }
+});
 
 app.use(express.json({ limit: '10mb' }));
 
-// CORS headers for Socket.io polling
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type');
-    if (req.method === 'OPTIONS') {
-        return res.sendStatus(200);
-    }
-    next();
-});
-
-// Socket.io with only polling (more reliable on Railway)
+// Socket.io without built-in CORS (using global middleware)
 const io = new Server(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    },
     transports: ['polling'],
     pingTimeout: 60000,
     pingInterval: 25000,
     allowEIO3: true,
-    perMessageDeflate: false,
-    path: '/socket.io'
+    perMessageDeflate: false
 });
 
 // Trust proxy for Railway
