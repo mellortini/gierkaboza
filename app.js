@@ -396,7 +396,7 @@ function connectToServer(serverUrl) {
 
         try {
             state.socket = io(url, {
-                transports: ['polling', 'websocket'],
+                transports: ['polling'],  // Only polling for Railway
                 reconnection: true,
                 reconnectionAttempts: 3,
                 reconnectionDelay: 2000,

@@ -20,14 +20,13 @@ app.use(cors({
 
 app.use(express.json({ limit: '10mb' }));
 
-// Socket.io with proper CORS for Railway
+// Socket.io with only polling (more reliable on Railway)
 const io = new Server(server, {
     cors: {
         origin: "*",
-        methods: ["GET", "POST"],
-        credentialsAllowed: true
+        methods: ["GET", "POST"]
     },
-    transports: ['polling', 'websocket'],
+    transports: ['polling'],  // Only polling, no websocket
     pingTimeout: 60000,
     pingInterval: 25000,
     allowEIO3: true,
