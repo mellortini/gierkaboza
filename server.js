@@ -195,7 +195,10 @@ io.on('connection', (socket) => {
             id: playerId,
             socketId: socket.id,
             name: playerName,
-            characterData: characterData,
+            characterData: {
+                ...characterData,
+                apiKey: state.apiKey // Include API key for LLM calls
+            },
             joinedAt: Date.now(),
             isHost: room.hostId === socket.id
         });
@@ -299,9 +302,9 @@ ${context}
             action: action.substring(0, 50)
         });
 
-        // For now, simulate a simple response
-        // In production, this would call the LLM
-        const response = await simulateLLMResponse(actionContext, playerData.name);
+        // Call LLM with player's API key
+        const playerApiKey = playerData.characterData?.apiKey || '';
+        const response = await callLLM(actionContext, playerData.name, playerApiKey);
 
         // Advance world time
         world.advanceWorldTime(10);
@@ -452,19 +455,44 @@ function serializeWorld(world) {
 }
 
 /**
- * Simulate LLM response (placeholder)
- * In production, replace with actual OpenRouter API call
+ * Call OpenRouter API for LLM response
+ * Each player uses their own API key
  */
-async function simulateLLMResponse(context, playerName) {
-    // This is a placeholder - in production, call OpenRouter API
-    const responses = [
-        `Rozglądasz się wokół. Słońce powoli zachodzi za horyzont, rzucając długie cienie na brukowane ulice. ${playerName} stoi pośrodku rynku, gdzie tłumy ludzi przechodzą obok siebie, każdy zajęty swoimi sprawami.`,
-        `Wiatr niesie zapach świeżo upieczonego chleba z pobliskiej piekarni. ${playerName} zauważa, że kilka osób przygląda mu się z ciekawością.`,
-        `Nocne niebo rozświetlają gwiazdy. W cieniu jednego z budynków ${playerName} dostrzega postać, która wydaje się go obserwować.`,
-        `Deszcz pada od rana, tworząc kałuże na ulicach. ${playerName} schronić się może pod okapem starej kamienicy, gdzie inni podróżni już czekają na poprawę pogody.`
-    ];
+async function callLLM(context, playerName, apiKey) {
+    if (!apiKey) {
+        return `${playerName} wykonuje akcję... (brak klucza API - dodaj swój klucz OpenRouter)`;
+    }
     
-    return responses[Math.floor(Math.random() * responses.length)];
+    try {
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`,
+                'HTTP-Referer': 'https://gierkaboza-production.up.railway.app',
+                'X-Title': 'AI RPG Multiplayer'
+            },
+            body: JSON.stringify({
+                model: 'openai/gpt-3.5-turbo',
+                messages: [
+                    { role: 'system', content: 'Jesteś narratorem w grze RPG. Opisuj świat szczegółowo, zmysłowo, buduj atmosferę. Nie przejmujesz kontroli nad postacią gracza.' },
+                    { role: 'user', content: context }
+                ],
+                temperature: 0.9,
+                max_tokens: 500
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`API error: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        return data.choices[0].message.content;
+    } catch (error) {
+        console.error('LLM error:', error);
+        return `${playerName} wykonuje akcję, ale narrator ma problemy techniczne...`;
+    }
 }
 
 // ============================================================================

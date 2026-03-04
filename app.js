@@ -458,10 +458,16 @@ async function joinRoom(serverUrl, roomId) {
         
         const playerName = characterData.name || 'Gracz';
         
+        // Include API key for LLM calls on server
+        const characterDataWithApi = {
+            ...characterData,
+            apiKey: state.apiKey
+        };
+        
         state.socket.emit('joinRoom', {
             roomId: roomId,
             playerName: playerName,
-            characterData: characterData
+            characterData: characterDataWithApi
         });
 
         // Wait for roomJoined event
