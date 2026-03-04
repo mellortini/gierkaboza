@@ -396,12 +396,13 @@ function connectToServer(serverUrl) {
 
         try {
             state.socket = io(url, {
-                transports: ['polling'],  // Only polling for Railway
+                transports: ['polling'],
                 reconnection: true,
-                reconnectionAttempts: 3,
-                reconnectionDelay: 2000,
-                timeout: 15000,
-                forceNew: true
+                reconnectionAttempts: 5,
+                reconnectionDelay: 1000,
+                timeout: 20000,
+                forceNew: true,
+                withCredentials: false
             });
 
             state.socket.on('connect', () => {

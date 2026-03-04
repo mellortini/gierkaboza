@@ -27,13 +27,20 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: '10mb' }));
 
-// Socket.io without built-in CORS (using global middleware)
+// Socket.io configuration for Railway
 const io = new Server(server, {
     transports: ['polling'],
     pingTimeout: 60000,
     pingInterval: 25000,
     allowEIO3: true,
-    perMessageDeflate: false
+    perMessageDeflate: false,
+    serveClient: false,
+    cookie: false
+});
+
+// Log all Socket.io errors
+io.engine.on('connection_error', (err) => {
+    console.log('Connection error:', err.req, err.code, err.message, err.context);
 });
 
 // Trust proxy for Railway
