@@ -30,12 +30,13 @@ app.use(express.json({ limit: '10mb' }));
 // Socket.io configuration for Railway
 const io = new Server(server, {
     transports: ['polling'],
-    pingTimeout: 60000,
-    pingInterval: 25000,
+    pingTimeout: 30000,
+    pingInterval: 10000,
     allowEIO3: true,
     perMessageDeflate: false,
     cookie: false,
-    serveClient: true
+    serveClient: true,
+    maxHttpBufferSize: 1e6
 });
 
 // Log all Socket.io errors
@@ -169,10 +170,19 @@ io.on('connection', (socket) => {
 
     // Create or join a game room
     socket.on('joinRoom', (data) => {
-        const { roomId, playerName, characterData } = data;
-        
-        // Create room if it doesn't exist
-        if (!rooms.has(roomId)) {
+        try {
+            const { roomId, playerName, characterData } = data;
+            
+            console.log(`Join room request: ${roomId}, player: ${playerName}`);
+            
+            // Validate data
+            if (!roomId || !playerName) {
+                socket.emit('joinError', { message: 'Brak ID pokoju lub nazwy gracza' });
+                return;
+            }
+            
+            // Create room if it doesn't exist
+            if (!rooms.has(roomId)) {
             rooms.set(roomId, {
                 id: roomId,
                 world: null,          // Will be created when first player joins
@@ -195,10 +205,7 @@ io.on('connection', (socket) => {
             id: playerId,
             socketId: socket.id,
             name: playerName,
-            characterData: {
-                ...characterData,
-                apiKey: state.apiKey // Include API key for LLM calls
-            },
+            characterData: characterData, // API key should be included in characterData from client
             joinedAt: Date.now(),
             isHost: room.hostId === socket.id
         });
@@ -240,6 +247,10 @@ io.on('connection', (socket) => {
         });
 
         console.log(`${playerName} joined room ${roomId}`);
+        } catch (err) {
+            console.error('Error in joinRoom:', err);
+            socket.emit('joinError', { message: 'Błąd serwera: ' + err.message });
+        }
     });
 
     // Handle player action
