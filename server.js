@@ -20,17 +20,29 @@ app.use(cors({
 
 app.use(express.json({ limit: '10mb' }));
 
+// CORS headers for Socket.io polling
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
 // Socket.io with only polling (more reliable on Railway)
 const io = new Server(server, {
     cors: {
         origin: "*",
         methods: ["GET", "POST"]
     },
-    transports: ['polling'],  // Only polling, no websocket
+    transports: ['polling'],
     pingTimeout: 60000,
     pingInterval: 25000,
     allowEIO3: true,
-    perMessageDeflate: false
+    perMessageDeflate: false,
+    path: '/socket.io'
 });
 
 // Trust proxy for Railway
