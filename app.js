@@ -387,7 +387,8 @@ function connectToServer(serverUrl) {
 
         // Determine the correct URL
         let url = serverUrl || 'http://localhost:3000';
-        if (!url.startsWith('http')) {
+        // Always add protocol
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
             url = 'https://' + url;
         }
 
