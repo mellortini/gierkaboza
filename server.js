@@ -34,8 +34,8 @@ const io = new Server(server, {
     pingInterval: 25000,
     allowEIO3: true,
     perMessageDeflate: false,
-    serveClient: false,
-    cookie: false
+    cookie: false,
+    serveClient: true
 });
 
 // Log all Socket.io errors
