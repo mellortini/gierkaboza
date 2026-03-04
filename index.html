@@ -359,6 +359,15 @@
             
             <div id="game-story"></div>
             
+            <!-- Player chat area (visible only in multiplayer) -->
+            <div id="player-chat-area" class="game-input-area hidden">
+                <div class="input-hint">💬 Dialog z innymi graczami (AI widzi ale nie odpowiada)</div>
+                <textarea id="player-chat-input" placeholder="np. [Thorgar] co tam ziomeczku, u ciebie słychać?" rows="2"></textarea>
+                <div class="action-buttons">
+                    <button id="send-player-chat" class="btn-secondary">💬 Wyślij do graczy</button>
+                </div>
+            </div>
+            
             <div class="game-input-area">
                 <div class="input-hint">Co robisz? (Napisz swoją akcję lub wybierz jedną z sugerowanych)</div>
                 <textarea id="player-action" placeholder="np. Wyciągam miecz i podchodzę do drzwi. Oglądam się uważnie na wszystkie strony..." rows="3"></textarea>

@@ -332,6 +332,19 @@ function init() {
         }
     });
     elements.suggestActionsBtn.addEventListener('click', suggestActions);
+    
+    // Player chat in multiplayer
+    const sendPlayerChatBtn = document.getElementById('send-player-chat');
+    const playerChatInput = document.getElementById('player-chat-input');
+    if (sendPlayerChatBtn && playerChatInput) {
+        sendPlayerChatBtn.addEventListener('click', sendPlayerChat);
+        playerChatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendPlayerChat();
+            }
+        });
+    }
     elements.viewCharacterBtn.addEventListener('click', showCharacterModal);
     elements.closeModal.addEventListener('click', hideCharacterModal);
     elements.saveGameBtn.addEventListener('click', () => saveGameToFile());
@@ -605,6 +618,12 @@ function startMultiplayerGame(roomData) {
     addStoryEntry('system', `ID Pokoju: ${state.roomId}`);
     addStoryEntry('system', `Gracze: ${state.players.map(p => p.name).join(', ')}`);
     
+    // Show player chat area in multiplayer
+    const playerChatArea = document.getElementById('player-chat-area');
+    if (playerChatArea) {
+        playerChatArea.classList.remove('hidden');
+    }
+    
     // Setup socket listeners for multiplayer
     setupMultiplayerListeners();
     
@@ -678,7 +697,29 @@ async function sendMultiplayerAction(action) {
 }
 
 /**
- * Send chat message in multiplayer
+ * Send player-to-player chat (AI sees but doesn't respond immediately)
+ */
+function sendPlayerChat() {
+    const chatInput = document.getElementById('player-chat-input');
+    const message = chatInput.value.trim();
+    
+    if (!message || !state.socket || !state.isMultiplayer) return;
+    
+    // Add to story as player dialogue
+    addStoryEntry('player', `💬 ${message}`);
+    
+    // Send to other players via special event
+    state.socket.emit('playerChat', {
+        message: message,
+        type: 'player_dialogue'
+    });
+    
+    // Clear input
+    chatInput.value = '';
+}
+
+/**
+ * Send chat message in multiplayer (old general chat)
  */
 function sendMultiplayerChat(message) {
     if (!state.socket || !state.isMultiplayer) return;

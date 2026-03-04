@@ -287,24 +287,21 @@ io.on('connection', (socket) => {
         const currentPlayer = world.player;
         const location = world.getLocation(currentPlayer.locationId);
 
-        // Build action context
-        const actionContext = `
-**AKTUALNY STAN GRY:**
-- Czas: ${world.getFormattedTime()} (Dzień ${world.getDayNumber()})
-- Lokacja: ${location ? location.name : currentPlayer.locationId}
-- HP: ${Math.round(currentPlayer.hp)}/${currentPlayer.maxHp}
-- Złoto: ${currentPlayer.gold}
-
-**INNI GRACZE W GRZE:**
-${Array.from(room.players.values())
-    .filter(p => p.socketId !== socket.id)
-    .map(p => `- ${p.name}`)
-    .join('\n') || '- Brak innych graczy'}
-
-${context}
-
-**AKCJA GRACZA:** ${action}
-`;
+        // Build action context - be brief, don't describe location every time
+        let actionContext = `Jesteś ${playerName}. `;
+        actionContext += `Akcja: "${action}". `;
+        actionContext += `To dzieje się w ${location ? location.name : currentPlayer.locationId}. `;
+        actionContext += `Jest ${world.getFormattedTime()}, dzień ${world.getDayNumber()}. `;
+        
+        if (room.players.size > 1) {
+            const others = Array.from(room.players.values())
+                .filter(p => p.socketId !== socket.id)
+                .map(p => p.name)
+                .join(', ');
+            actionContext += `Obok ciebie jest: ${others}. `;
+        }
+        
+        actionContext += `Opisz co się dzieje w wyniku tej akcji. NIE opisuj dokładnie lokacji - zakładam, że gracz ją widzi. Skup się na akcji, reakcjach NPC, konsekwencjach. 2-3 zdania wystarczą.`;
 
         // Emit to all players in room that action is processing
         io.to(player.roomId).emit('actionStarted', {
@@ -400,6 +397,35 @@ ${context}
         console.log(`Player disconnected: ${socket.id}`);
     });
 
+    // Player-to-player chat (AI sees but doesn't respond)
+    socket.on('playerChat', (data) => {
+        try {
+            const { message, type } = data;
+            const player = players.get(socket.id);
+            
+            if (!player || !rooms.has(player.roomId)) {
+                socket.emit('chatError', { message: 'Not in a room' });
+                return;
+            }
+
+            const room = rooms.get(player.roomId);
+            const playerData = room.players.get(socket.id);
+
+            // Broadcast to all other players in room
+            socket.to(player.roomId).emit('playerChatMessage', {
+                playerId: playerData.id,
+                playerName: playerData.name,
+                message: message,
+                type: type || 'player_dialogue',
+                timestamp: Date.now()
+            });
+
+            console.log(`Player chat from ${playerData.name}: ${message.substring(0, 50)}`);
+        } catch (err) {
+            console.error('Error in playerChat:', err);
+        }
+    });
+
     // Get room state
     socket.on('getRoomState', () => {
         const player = players.get(socket.id);
@@ -486,11 +512,11 @@ async function callLLM(context, playerName, apiKey) {
             body: JSON.stringify({
                 model: 'openai/gpt-3.5-turbo',
                 messages: [
-                    { role: 'system', content: `Jesteś narratorem w grze RPG. Opisuj świat szczegółowo, zmysłowo, buduj atmosferę. Nie przejmujesz kontroli nad postacią gracza. Postać gracza nazywa się ${playerName}.` },
+                    { role: 'system', content: `Jesteś narratorem w grze RPG. Opisuj akcje gracza i ich konsekwencje. NIE opisuj ciągle tej samej lokacji - zakładaj, że gracz ją zna. Skup się na tym CO się dzieje, nie GDZIE się dzieje. Postać nazywa się ${playerName}. Odpowiadaj po polsku.` },
                     { role: 'user', content: context }
                 ],
-                temperature: 0.9,
-                max_tokens: 500
+                temperature: 0.8,
+                max_tokens: 400
             })
         });
         
