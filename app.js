@@ -453,10 +453,24 @@ async function joinRoom(serverUrl, roomId) {
     statusEl.textContent = 'Łączenie z serwerem...';
     statusEl.className = 'multiplayer-status connecting';
 
+    // Validate character name
+    const charNameInput = elements.charName.value.trim();
+    if (!charNameInput) {
+        statusEl.textContent = 'Wpisz imię postaci w formularzu powyżej!';
+        statusEl.className = 'multiplayer-status error';
+        elements.charName.focus();
+        return;
+    }
+    
+    // Update character data
+    characterData.name = charNameInput;
+    characterData.setting = elements.charSetting.value;
+    characterData.description = elements.charDescription.value.trim();
+    
     try {
         await connectToServer(serverUrl);
         
-        const playerName = characterData.name || 'Gracz';
+        const playerName = characterData.name;
         
         // Include API key for LLM calls on server
         const characterDataWithApi = {
@@ -509,6 +523,15 @@ async function joinRoom(serverUrl, roomId) {
  */
 async function createRoom(serverUrl, roomId) {
     const statusEl = document.getElementById('multiplayer-status');
+    
+    // Validate character name first
+    const charNameInput = elements.charName.value.trim();
+    if (!charNameInput) {
+        statusEl.textContent = 'Wpisz imię postaci w formularzu powyżej!';
+        statusEl.className = 'multiplayer-status error';
+        elements.charName.focus();
+        return;
+    }
     
     // Generate room ID if not provided
     const finalRoomId = roomId || `room_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;

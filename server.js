@@ -486,7 +486,7 @@ async function callLLM(context, playerName, apiKey) {
             body: JSON.stringify({
                 model: 'openai/gpt-3.5-turbo',
                 messages: [
-                    { role: 'system', content: 'Jesteś narratorem w grze RPG. Opisuj świat szczegółowo, zmysłowo, buduj atmosferę. Nie przejmujesz kontroli nad postacią gracza.' },
+                    { role: 'system', content: `Jesteś narratorem w grze RPG. Opisuj świat szczegółowo, zmysłowo, buduj atmosferę. Nie przejmujesz kontroli nad postacią gracza. Postać gracza nazywa się ${playerName}.` },
                     { role: 'user', content: context }
                 ],
                 temperature: 0.9,
