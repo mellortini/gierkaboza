@@ -20,11 +20,19 @@ const io = new Server(server, {
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+
+// Serve static files from root directory
+const rootDir = __dirname;
+app.use(express.static(rootDir));
 
 // Serve index.html for root route
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    res.sendFile(path.join(rootDir, 'index.html'));
+});
+
+// Also serve index.html at /index.html
+app.get('/index.html', (req, res) => {
+    res.sendFile(path.join(rootDir, 'index.html'));
 });
 
 // ============================================================================
