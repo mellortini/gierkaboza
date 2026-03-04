@@ -558,13 +558,12 @@ function startMultiplayerGame(roomData) {
     elements.gameCharacterName.textContent = characterData.name || 'Gracz';
     elements.gameSetting.textContent = settingNames[characterData.setting] || characterData.setting;
     
-    // Initialize game state
-    if (roomData.worldState) {
-        // Restore world from server state
-        state.world = World.fromJSON(roomData.worldState);
-    } else {
-        // Create new world
-        state.world = World.createStarterWorld(characterData.name, 'town_central');
+    // Initialize game state - always create local world (server doesn't send full world data)
+    state.world = World.createStarterWorld(characterData.name, 'town_central');
+    
+    // If server sent world state, we could sync some data here in the future
+    if (roomData.worldState && roomData.worldState.formattedTime) {
+        state.world.currentTimeMinutes = roomData.worldState.currentTimeMinutes || 0;
     }
     
     // Initialize game state for LLM
