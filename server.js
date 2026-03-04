@@ -12,12 +12,20 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
-// Socket.io with polling support for Railway
+// CORS middleware - must be before Socket.io
+app.use(cors({
+    origin: true,
+    credentials: true
+}));
+
+app.use(express.json({ limit: '10mb' }));
+
+// Socket.io with proper CORS for Railway
 const io = new Server(server, {
     cors: {
         origin: "*",
         methods: ["GET", "POST"],
-        credentials: false
+        credentialsAllowed: true
     },
     transports: ['polling', 'websocket'],
     pingTimeout: 60000,
@@ -28,12 +36,6 @@ const io = new Server(server, {
 
 // Trust proxy for Railway
 app.set('trust proxy', 1);
-
-app.use(cors({
-    origin: "*",
-    credentials: false
-}));
-app.use(express.json({ limit: '10mb' }));
 
 // Serve static files from root directory
 const rootDir = __dirname;
