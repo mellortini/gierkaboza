@@ -16,19 +16,30 @@ const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
         origin: "*",
-        methods: ["GET", "POST"]
+        methods: ["GET", "POST"],
+        credentials: false
     },
-    transports: ['polling', 'websocket'],  // Prefer polling for Railway
+    transports: ['polling', 'websocket'],
     pingTimeout: 60000,
-    pingInterval: 25000
+    pingInterval: 25000,
+    allowEIO3: true,
+    perMessageDeflate: false
 });
 
-app.use(cors());
-app.use(express.json());
+// Trust proxy for Railway
+app.set('trust proxy', 1);
+
+app.use(cors({
+    origin: "*",
+    credentials: false
+}));
+app.use(express.json({ limit: '10mb' }));
 
 // Serve static files from root directory
 const rootDir = __dirname;
-app.use(express.static(rootDir));
+app.use(express.static(rootDir, {
+    index: ['index.html', 'index.htm']
+}));
 
 // Serve index.html for root route
 app.get('/', (req, res) => {
@@ -38,6 +49,11 @@ app.get('/', (req, res) => {
 // Also serve index.html at /index.html
 app.get('/index.html', (req, res) => {
     res.sendFile(path.join(rootDir, 'index.html'));
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', rooms: rooms.size, players: io.engine.clientsCount });
 });
 
 // ============================================================================
@@ -55,7 +71,17 @@ const players = new Map();
 // ============================================================================
 
 io.on('connection', (socket) => {
-    console.log(`Player connected: ${socket.id}`);
+    console.log(`Player connected: ${socket.id}, transport: ${socket.conn.transport.name}`);
+
+    // Handle transport upgrade
+    socket.conn.on('upgrade', (transport) => {
+        console.log(`Transport upgraded for ${socket.id}: ${transport.name}`);
+    });
+
+    // Handle connection errors
+    socket.conn.on('error', (err) => {
+        console.error(`Connection error for ${socket.id}:`, err.message);
+    });
 
     // Create or join a game room
     socket.on('joinRoom', (data) => {

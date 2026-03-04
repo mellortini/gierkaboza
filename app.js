@@ -392,31 +392,44 @@ function connectToServer(serverUrl) {
             url = 'https://' + url;
         }
 
+        console.log('Connecting to:', url);
+
         try {
             state.socket = io(url, {
-                transports: ['polling', 'websocket'],  // Prefer polling for Railway
+                transports: ['polling', 'websocket'],
                 reconnection: true,
-                reconnectionAttempts: 5,
-                reconnectionDelay: 1000,
-                timeout: 20000
+                reconnectionAttempts: 3,
+                reconnectionDelay: 2000,
+                timeout: 15000,
+                forceNew: true
             });
 
             state.socket.on('connect', () => {
-                console.log('Connected to server:', url);
+                console.log('Connected to server:', url, 'ID:', state.socket.id);
                 resolve(state.socket);
             });
 
             state.socket.on('connect_error', (error) => {
-                console.error('Connection error:', error);
+                console.error('Connection error:', error.message);
                 reject(error);
             });
 
-            state.socket.on('disconnect', () => {
-                console.log('Disconnected from server');
-                updateMultiplayerStatus('Rozłączono z serwerem', 'error');
+            state.socket.on('disconnect', (reason) => {
+                console.log('Disconnected:', reason);
+                updateMultiplayerStatus('Rozłączono: ' + reason, 'error');
+            });
+
+            state.socket.on('error', (error) => {
+                console.error('Socket error:', error);
+            });
+
+            // Log transport
+            state.socket.on('open', () => {
+                console.log('Transport opened');
             });
 
         } catch (error) {
+            console.error('Socket creation error:', error);
             reject(error);
         }
     });
