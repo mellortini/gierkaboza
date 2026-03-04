@@ -3026,7 +3026,7 @@ class World {
             faction.aggression = factData.aggression;
             
             // Phase 3: Assign random long-term goals
-            this._assignRandomGoals(faction);
+            world._assignRandomGoals(faction);
             
             world.addFaction(faction);
         }
