@@ -111,9 +111,9 @@ io.on('connection', (socket) => {
     // Create or join a game room
     socket.on('joinRoom', (data) => {
         try {
-            const { roomId, playerName, characterData } = data;
+            const { roomId, playerName, characterData, worldData, worldOption } = data;
             
-            console.log(`Join room request: ${roomId}, player: ${playerName}`);
+            console.log(`Join room request: ${roomId}, player: ${playerName}, worldOption: ${worldOption}`);
             
             // Validate data
             if (!roomId || !playerName) {
@@ -134,9 +134,29 @@ io.on('connection', (socket) => {
 
         const room = rooms.get(roomId);
         
-        // Create world if first player
+        // Create or load world based on option
         if (!room.world) {
-            room.world = World.createStarterWorld(playerName, 'town_central');
+            if (worldData && worldOption === 'current') {
+                // Load world from client data
+                try {
+                    room.world = World.fromJSON(worldData);
+                    console.log('World loaded from client data');
+                } catch (e) {
+                    console.error('Error loading world from client:', e);
+                    room.world = World.createStarterWorld(playerName, 'town_central');
+                }
+            } else if (worldOption === 'saved' && worldData) {
+                try {
+                    room.world = World.fromJSON(worldData);
+                    console.log('World loaded from saved game');
+                } catch (e) {
+                    console.error('Error loading saved world:', e);
+                    room.world = World.createStarterWorld(playerName, 'town_central');
+                }
+            } else {
+                // Create new world
+                room.world = World.createStarterWorld(playerName, 'town_central');
+            }
         }
 
         // Add player to room
@@ -166,6 +186,7 @@ io.on('connection', (socket) => {
             success: true,
             roomId,
             playerId,
+            playerName: playerName,
             isHost: room.hostId === socket.id,
             players: Array.from(room.players.values()).map(p => ({
                 id: p.id,

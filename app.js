@@ -475,6 +475,10 @@ async function joinRoom(serverUrl, roomId) {
         return;
     }
     
+    // Get world selection
+    const worldSelect = document.getElementById('world-select');
+    const worldOption = worldSelect ? worldSelect.value : 'new';
+    
     // Update character data
     characterData.name = charNameInput;
     characterData.setting = elements.charSetting.value;
@@ -491,10 +495,28 @@ async function joinRoom(serverUrl, roomId) {
             apiKey: state.apiKey
         };
         
+        // Prepare world data based on selection
+        let worldData = null;
+        if (worldOption === 'current' && state.world) {
+            worldData = state.world.toJSON();
+        } else if (worldOption === 'saved') {
+            // Load from localStorage
+            const savedGame = localStorage.getItem('rpg_current_save');
+            if (savedGame) {
+                try {
+                    worldData = JSON.parse(savedGame);
+                } catch (e) {
+                    console.error('Error parsing saved game:', e);
+                }
+            }
+        }
+        
         state.socket.emit('joinRoom', {
             roomId: roomId,
             playerName: playerName,
-            characterData: characterDataWithApi
+            characterData: characterDataWithApi,
+            worldData: worldData,
+            worldOption: worldOption
         });
 
         // Wait for roomJoined event
@@ -502,6 +524,7 @@ async function joinRoom(serverUrl, roomId) {
             state.isMultiplayer = true;
             state.roomId = data.roomId;
             state.playerId = data.playerId;
+            state.playerName = data.playerName;
             state.isHost = data.isHost;
             state.players = data.players;
 
@@ -681,7 +704,10 @@ function setupMultiplayerListeners() {
 
     // Player-to-player chat message (from other players)
     state.socket.on('playerChatMessage', (data) => {
-        addStoryEntry('player', `💬 [${data.playerName}]: ${data.message}`);
+        // Don't add if it's our own message (we already added it locally)
+        if (data.playerId !== state.playerId) {
+            addStoryEntry('player', `💬 [${data.playerName}]: ${data.message}`);
+        }
     });
 
     // Action error (when bot fails to respond)
@@ -715,8 +741,11 @@ function sendPlayerChat() {
     
     if (!message || !state.socket || !state.isMultiplayer) return;
     
-    // Add to story as player dialogue
-    addStoryEntry('player', `💬 ${message}`);
+    // Get player name from state
+    const playerName = state.playerName || 'Ty';
+    
+    // Add to story as player dialogue (format matches server)
+    addStoryEntry('player', `💬 [${playerName}]: ${message}`);
     
     // Send to other players via special event
     state.socket.emit('playerChat', {
