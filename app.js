@@ -393,10 +393,11 @@ function connectToServer(serverUrl) {
 
         try {
             state.socket = io(url, {
-                transports: ['websocket', 'polling'],
+                transports: ['polling', 'websocket'],  // Prefer polling for Railway
                 reconnection: true,
                 reconnectionAttempts: 5,
-                reconnectionDelay: 1000
+                reconnectionDelay: 1000,
+                timeout: 20000
             });
 
             state.socket.on('connect', () => {

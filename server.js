@@ -11,11 +11,16 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
+
+// Socket.io with polling support for Railway
 const io = new Server(server, {
     cors: {
         origin: "*",
         methods: ["GET", "POST"]
-    }
+    },
+    transports: ['polling', 'websocket'],  // Prefer polling for Railway
+    pingTimeout: 60000,
+    pingInterval: 25000
 });
 
 app.use(cors());
