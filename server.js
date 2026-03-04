@@ -78,77 +78,17 @@ const rooms = new Map();
 // Player sessions - keyed by socket ID
 const players = new Map();
 
-// Skip engine.js - use only SimpleWorld to avoid browser code issues
-let World = null;
-console.log('Using SimpleWorld (engine.js skipped for server)');
-
-// Simple fallback World class if engine.js fails
-class SimpleWorld {
-    constructor() {
-        this.currentTimeMinutes = 0;
-        this.locations = new Map();
-        this.factions = new Map();
-        this.npcs = new Map();
-        this.player = null;
-        this.worldLog = [];
-    }
-    
-    advanceWorldTime(minutes) {
-        this.currentTimeMinutes += minutes;
-    }
-    
-    getFormattedTime() {
-        const hours = Math.floor(this.currentTimeMinutes / 60);
-        const minutes = this.currentTimeMinutes % 60;
-        return `${hours}:${minutes.toString().padStart(2, '0')}`;
-    }
-    
-    getDayNumber() {
-        return Math.floor(this.currentTimeMinutes / (24 * 60)) + 1;
-    }
-    
-    getTimeOfDay() {
-        const hour = this.currentTimeMinutes % (24 * 60) / 60;
-        if (hour >= 6 && hour < 12) return "Morning";
-        if (hour >= 12 && hour < 17) return "Afternoon";
-        if (hour >= 17 && hour < 21) return "Evening";
-        return "Night";
-    }
-    
-    getLocation(id) { return this.locations.get(id); }
-    getNPC(id) { return this.npcs.get(id); }
-    getFaction(id) { return this.factions.get(id); }
-    
-    static createStarterWorld(playerName, locationId) {
-        const world = new SimpleWorld();
-        world.player = {
-            name: playerName,
-            locationId: locationId,
-            hp: 100,
-            maxHp: 100,
-            gold: 100,
-            hunger: 0,
-            thirst: 0,
-            fatigue: 0
-        };
-        
-        // Add default locations
-        world.locations.set('town_central', { id: 'town_central', name: 'Central Town', population: 500, wealth: 60, stability: 70, dangerLevel: 10, controllingFactionId: 'kingdom' });
-        world.locations.set('tavern', { id: 'tavern', name: 'Golden Dragon Tavern', population: 50, wealth: 40, stability: 60, dangerLevel: 5, controllingFactionId: null });
-        world.locations.set('market', { id: 'market', name: 'Market Square', population: 200, wealth: 80, stability: 75, dangerLevel: 15, controllingFactionId: 'kingdom' });
-        
-        // Add default factions
-        world.factions.set('kingdom', { id: 'kingdom', name: 'Kingdom of Valdoria', power: 80, resources: 70 });
-        world.factions.set('merchants', { id: 'merchants', name: 'Merchants Guild', power: 50, resources: 90 });
-        
-        return world;
-    }
-}
-
-// Use SimpleWorld if engine.js failed to load
-if (!World) {
-    console.log('Using SimpleWorld fallback');
-    World = SimpleWorld;
+// ====================== PEŁNY SILNIK (fazy 1-5) ======================
+let World;
+try {
+    const engineModule = require('./engine.js');
+    World = engineModule.World;
+    console.log('✅ PEŁNY SILNIK RPG (fazy 1-5) ZAŁADOWANY POMYŚLNIE');
+} catch (err) {
+    console.error('❌ BŁĄD ŁADOWANIA ENGINE.JS:');
+    console.error(err.message);
+    console.error(err.stack);
+    process.exit(1); // zatrzymujemy serwer, bo bez silnika nie ma sensu
 }
 
 // ============================================================================
@@ -288,7 +228,7 @@ io.on('connection', (socket) => {
         const location = world.getLocation(currentPlayer.locationId);
 
         // Build action context - be brief, don't describe location every time
-        let actionContext = `Jesteś ${playerName}. `;
+        let actionContext = `Jesteś ${playerData.name}. `;
         actionContext += `Akcja: "${action}". `;
         actionContext += `To dzieje się w ${location ? location.name : currentPlayer.locationId}. `;
         actionContext += `Jest ${world.getFormattedTime()}, dzień ${world.getDayNumber()}. `;
@@ -314,10 +254,10 @@ io.on('connection', (socket) => {
         const playerApiKey = playerData.characterData?.apiKey || '';
         const response = await callLLM(actionContext, playerData.name, playerApiKey);
 
-        // Advance world time
-        world.advanceWorldTime(10);
+        // Phase 1-2: Przesuwamy czas i przetwarzamy wydarzenia
+        world.advanceWorldTime(15);   // realistyczny koszt akcji
 
-        // Record action in memory
+        // Phase 4: Zapisujemy akcję do pamięci kontekstowej
         if (world.recordPlayerAction) {
             world.recordPlayerAction('player_action', {
                 description: action.substring(0, 100),
@@ -411,8 +351,8 @@ io.on('connection', (socket) => {
             const room = rooms.get(player.roomId);
             const playerData = room.players.get(socket.id);
 
-            // Broadcast to all other players in room
-            socket.to(player.roomId).emit('playerChatMessage', {
+            // Broadcast to ALL players in room (including sender)
+            io.to(player.roomId).emit('playerChatMessage', {
                 playerId: playerData.id,
                 playerName: playerData.name,
                 message: message,

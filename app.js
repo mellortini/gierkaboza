@@ -678,6 +678,16 @@ function setupMultiplayerListeners() {
     state.socket.on('chatMessage', (data) => {
         addStoryEntry('player', `[${data.playerName}]: ${data.message}`);
     });
+
+    // Player-to-player chat message (from other players)
+    state.socket.on('playerChatMessage', (data) => {
+        addStoryEntry('player', `💬 [${data.playerName}]: ${data.message}`);
+    });
+
+    // Action error (when bot fails to respond)
+    state.socket.on('actionError', (data) => {
+        addStoryEntry('system', `❌ Błąd: ${data.message}`);
+    });
 }
 
 /**
