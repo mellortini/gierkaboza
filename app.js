@@ -704,6 +704,7 @@ function setupMultiplayerListeners() {
 
     // Player-to-player chat message (from other players)
     state.socket.on('playerChatMessage', (data) => {
+        console.log('Received playerChatMessage:', { dataPlayerId: data.playerId, statePlayerId: state.playerId, dataPlayerName: data.playerName });
         // Don't add if it's our own message (we already added it locally)
         if (data.playerId !== state.playerId) {
             addStoryEntry('player', `💬 [${data.playerName}]: ${data.message}`);

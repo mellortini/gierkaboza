@@ -372,6 +372,8 @@ io.on('connection', (socket) => {
             const room = rooms.get(player.roomId);
             const playerData = room.players.get(socket.id);
 
+            console.log(`playerChat: socket.id=${socket.id}, playerData.id=${playerData.id}, playerData.name=${playerData.name}`);
+
             // Broadcast to ALL players in room (including sender)
             io.to(player.roomId).emit('playerChatMessage', {
                 playerId: playerData.id,
