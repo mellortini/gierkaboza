@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI RPG - Narrator</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎲 AI RPG</h1>
+            <p>Stwórz postać. AI poprowadzi Twoją przygodę.</p>
+        </header>
+
+        <!-- Konfiguracja API -->
+        <div id="api-config" class="section">
+            <h2>🔑 Konfiguracja API</h2>
+            <div class="input-group">
+                <label for="api-key">Klucz API OpenRouter:</label>
+                <input type="password" id="api-key" placeholder="sk-or-v1-...">
+                <button id="save-api-key" class="btn-primary">Zapisz</button>
+            </div>
+            <div class="input-group">
+                <label for="model-select">Model:</label>
+                <div class="model-select-wrapper">
+                    <select id="model-select">
+                        <option value="">Wczytywanie modeli...</option>
+                    </select>
+                    <button id="refresh-models" class="btn-secondary" title="Odśwież listę modeli">🔄</button>
+                </div>
+                <div id="models-loading" class="models-status hidden">Wczytywanie modeli...</div>
+            </div>
+            <div id="api-status" class="status"></div>
+        </div>
+
+        <!-- Budowanie Świata -->
+        <div id="world-building" class="section hidden">
+            <h2>🌍 Zaawansowana Budowa Świata</h2>
+            <div class="world-builder-tabs">
+                <button class="tab-btn active" data-tab="world-settings">⚙️ Ustawienia</button>
+                <button class="tab-btn" data-tab="world-plan">📋 Plan Świata</button>
+                <button class="tab-btn" data-tab="world-preview">👁️ Podgląd</button>
+            </div>
+
+            <!-- Tab: Ustawienia -->
+            <div id="world-settings" class="tab-content active">
+                <div class="input-group">
+                    <label for="world-name">Nazwa świata:</label>
+                    <input type="text" id="world-name" placeholder="np. Królestwo Eldoria, Planeta Kepler-452b...">
+                </div>
+
+                <div class="input-group">
+                    <label for="world-description">Ogólny opis świata:</label>
+                    <textarea id="world-description" placeholder="Opisz ogólną ideę świata, jego historię, główne cechy..." rows="4"></textarea>
+                </div>
+
+                <div class="input-group">
+                    <label for="world-model">Model do planowania świata:</label>
+                    <div class="model-select-wrapper">
+                        <select id="world-model">
+                            <option value="">Wczytywanie modeli...</option>
+                        </select>
+                        <button id="refresh-world-models" class="btn-secondary" title="Odśwież listę modeli">🔄</button>
+                    </div>
+                </div>
+
+                <div class="input-group">
+                    <label for="world-scope">Zakres planowania:</label>
+                    <select id="world-scope">
+                        <option value="small">🏘️ Mały (1-2 miasta, kilka lokacji)</option>
+                        <option value="medium" selected>🗺️ Średni (region, 5-10 miast, wiele lokacji)</option>
+                        <option value="large">🌍 Duży (cały kontynent, 20+ miast, złożona polityka)</option>
+                        <option value="epic">🌌 Epicki (cały świat, imperium, wiele ras i kultur)</option>
+                    </select>
+                </div>
+
+                <div class="input-group">
+                    <label for="world-complexity">Złożoność fabuły:</label>
+                    <select id="world-complexity">
+                        <option value="simple">Prosta (główny wątek, kilka postaci)</option>
+                        <option value="moderate" selected>Umiarkowana (kilka wątków, intrygi)</option>
+                        <option value="complex">Złożona (wiele wątków, tajemnice, zwroty akcji)</option>
+                        <option value="epic">Epicka (światowe konsekwencje, wiele frakcji)</option>
+                    </select>
+                </div>
+
+                <button id="generate-world-plan" class="btn-primary btn-large">🎲 WYGENERUJ PLAN ŚWIATA</button>
+            </div>
+
+            <!-- Tab: Plan Świata -->
+            <div id="world-plan" class="tab-content">
+                <div id="world-plan-content" class="world-plan-display">
+                    <p style="color: #888; text-align: center; padding: 40px;">Wygeneruj plan świata, aby zobaczyć szczegóły</p>
+                </div>
+                <button id="regenerate-plan" class="btn-secondary" style="margin-top: 20px;">🔄 Regeneruj Plan</button>
+            </div>
+
+            <!-- Tab: Podgląd -->
+            <div id="world-preview" class="tab-content">
+                <div id="world-preview-content" class="world-preview-display">
+                    <p style="color: #888; text-align: center; padding: 40px;">Podgląd będzie dostępny po wygenerowaniu planu</p>
+                </div>
+            </div>
+
+            <button id="start-with-world" class="btn-primary btn-large" style="margin-top: 20px;">🎮 ROZPOCZNIJ GRĘ Z TYM ŚWIATEM</button>
+        </div>
+
+        <!-- Tworzenie postaci -->
+        <div id="character-creation" class="section hidden">
+            <h2>🧙 Tworzenie Postaci</h2>
+            <div class="character-form">
+                <div class="input-group">
+                    <label for="char-name">Imię postaci:</label>
+                    <input type="text" id="char-name" placeholder="np. Thorgar, Elara, Shadow...">
+                </div>
+                
+                <div class="input-group">
+                    <label for="char-setting">Świat/Setting:</label>
+                    <select id="char-setting">
+                        <option value="fantasy">🐉 Fantasy (Średniowiecze, magia, smoki)</option>
+                        <option value="scifi">🚀 Sci-Fi (Przyszłość, kosmos, technologia)</option>
+                        <option value="postapo">☢️ Post-Apo (Zniszczony świat, przetrwanie)</option>
+                        <option value="cyberpunk">🌃 Cyberpunk (Megamiasto, korporacje, hakerzy)</option>
+                        <option value="horror">🕯️ Horror (Mroczne, nadprzyrodzone, strach)</option>
+                        <option value="modern">🏙️ Współczesny (Dzisiejszy świat, kryminał, thriller)</option>
+                        <option value="historical">⚔️ Historyczny (Starożytność, historia)</option>
+                        <option value="custom">✨ Własny (Ty decydujesz o świecie)</option>
+                    </select>
+                </div>
+
+                <div class="input-group" id="custom-setting-group" class="hidden">
+                    <label for="custom-setting">Opis świata:</label>
+                    <textarea id="custom-setting" placeholder="Opisz swój świat... np. Świat gdzie magia i technologia splatają się w jedno..." rows="3"></textarea>
+                </div>
+
+                <div class="input-group">
+                    <label for="char-description">Opis postaci:</label>
+                    <textarea id="char-description" placeholder="Kim jest Twoja postać? Wiek, wygląd, osobowość, umiejętności, historia, motywacje..." rows="6"></textarea>
+                </div>
+
+                <div class="input-group">
+                    <label for="adventure-type">Typ przygody:</label>
+                    <select id="adventure-type">
+                        <option value="epic">⚔️ Epicka podróż (ratowanie świata)</option>
+                        <option value="mystery">🔍 Tajemnica (do rozwiązania)</option>
+                        <option value="survival">🏕️ Przetrwanie (walka o życie)</option>
+                        <option value="exploration">🗺️ Eksploracja (odkrywanie świata)</option>
+                        <option value="revenge">⚔️ Zemsta (dla tych, których skrzywdzono)</option>
+                        <option value="heist">💰 Skok (napad, kradzież, intryga)</option>
+                        <option value="romance">💕 Romans (miłosna historia)</option>
+                        <option value="open">🎲 Otwarta (dowolny kierunek)</option>
+                    </select>
+                </div>
+
+                <div class="input-group">
+                    <label for="tone-ton">Klimat gry:</label>
+                    <select id="tone-ton">
+                        <option value="mature">🔞 Dojrzały (brutalność, moralne dylematy, brak cenzury)</option>
+                        <option value="dark">🌑 Mroczny (ciężki, ponury, niebezpieczny)</option>
+                        <option value="gritty">💀 Realistyczny (brutalna rzeczywistość)</option>
+                        <option value="balanced">⚖️ Zbalansowany (mieszanka emocji)</option>
+                        <option value="heroic">🦸 Heroiczny (wartości, honor, przyjaźń)</option>
+                        <option value="comedy">😂 Komediowy (humor, absurd)</option>
+                    </select>
+                </div>
+
+                <div class="sliders-section">
+                    <h3>🎚️ Poziom treści (1-10)</h3>
+                    
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <label for="violence-level">💀 Brutalność / Przemoc:</label>
+                            <span class="slider-value" id="violence-value">5</span>
+                        </div>
+                        <input type="range" id="violence-level" min="1" max="10" value="5" class="slider">
+                        <div class="slider-labels">
+                            <span>Opisowa</span>
+                            <span>Realistyczna</span>
+                            <span>Ekstremalna</span>
+                        </div>
+                    </div>
+
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <label for="sexual-level">🔞 Erotyka / Treści seksualne:</label>
+                            <span class="slider-value" id="sexual-value">5</span>
+                        </div>
+                        <input type="range" id="sexual-level" min="1" max="10" value="5" class="slider">
+                        <div class="slider-labels">
+                            <span>Wzmianki</span>
+                            <span>Szczegółowe</span>
+                            <span>Ekstremalne</span>
+                        </div>
+                    </div>
+
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <label for="darkness-level">🌑 Mroczność / Ciemny klimat:</label>
+                            <span class="slider-value" id="darkness-value">5</span>
+                        </div>
+                        <input type="range" id="darkness-level" min="1" max="10" value="5" class="slider">
+                        <div class="slider-labels">
+                            <span>Lekka</span>
+                            <span>Ponura</span>
+                            <span>Beznadziejna</span>
+                        </div>
+                    </div>
+
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <label for="realism-level">🎭 Realizm / Surowość:</label>
+                            <span class="slider-value" id="realism-value">5</span>
+                        </div>
+                        <input type="range" id="realism-level" min="1" max="10" value="5" class="slider">
+                        <div class="slider-labels">
+                            <span>Heroiczny</span>
+                            <span>Realistyczny</span>
+                            <span>Brutalny</span>
+                        </div>
+                    </div>
+
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <label for="language-level">🗣️ Język / Wulgaryzmy:</label>
+                            <span class="slider-value" id="language-value">3</span>
+                        </div>
+                        <input type="range" id="language-level" min="1" max="10" value="3" class="slider">
+                        <div class="slider-labels">
+                            <span>Czysty</span>
+                            <span>Średni</span>
+                            <span>Brutalny</span>
+                        </div>
+                    </div>
+
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <label for="psychological-level">🧠 Psychologia / Trauma:</label>
+                            <span class="slider-value" id="psychological-value">5</span>
+                        </div>
+                        <input type="range" id="psychological-level" min="1" max="10" value="5" class="slider">
+                        <div class="slider-labels">
+                            <span>Prosta</span>
+                            <span>Złożona</span>
+                            <span>Pokrętna</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="world-selection">
+                    <button id="use-custom-world" class="btn-secondary">🌍 Użyj własnego świata</button>
+                    <button id="skip-world-building" class="btn-secondary">⏭️ Pomiń budowanie świata</button>
+                </div>
+
+                <button id="start-game" class="btn-primary btn-large">🎮 ROZPOCZNIJ PRZYGODĘ</button>
+                
+                <!-- Multiplayer Section -->
+                <div class="multiplayer-section">
+                    <h3>🌐 Gra wieloosobowa (Multiplayer)</h3>
+                    <div class="input-group">
+                        <label for="server-url">Adres serwera:</label>
+                        <input type="text" id="server-url" placeholder="localhost:3000 lub twój-railway-app.up.railway.app">
+                    </div>
+                    <div class="input-group">
+                        <label for="room-id">ID Pokoju:</label>
+                        <input type="text" id="room-id" placeholder="np. moja-przygoda">
+                    </div>
+                    <button id="join-room" class="btn-secondary">🔗 Dołącz do pokoju</button>
+                    <button id="create-room" class="btn-secondary">✨ Stwórz nowy pokój</button>
+                    <div id="multiplayer-status" class="status"></div>
+                    <div id="players-list" class="players-list hidden">
+                        <h4>Gracze w pokoju:</h4>
+                        <ul id="players-in-room"></ul>
+                    </div>
+                </div>
+                
+                <div class="saved-games-section" id="saved-games-section">
+                    <h3>📂 Zapisane gry</h3>
+                    <div id="saved-games-list">
+                        <p class="no-saves">Brak zapisanych gier</p>
+                    </div>
+                    <div class="import-section">
+                        <label for="import-file" class="btn-secondary import-btn">📁 Importuj z pliku</label>
+                        <input type="file" id="import-file" accept=".json" hidden>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Gra -->
+        <div id="game-section" class="section hidden">
+            <div class="game-header">
+                <div class="character-info">
+                    <h2 id="game-character-name">Postać</h2>
+                    <span id="game-setting">Setting</span>
+                </div>
+                <div class="game-actions">
+                    <button id="view-character" class="btn-secondary">📋 Postać</button>
+                    <button id="save-game" class="btn-secondary">💾 Zapisz</button>
+                    <button id="load-game" class="btn-secondary">📂 Wczytaj</button>
+                    <button id="export-game" class="btn-secondary">💾 Eksport</button>
+                    <button id="new-game" class="btn-secondary">🔄 Nowa Gra</button>
+                </div>
+            </div>
+            
+            <!-- HUD - World Clock & Stats -->
+            <div id="game-hud" class="hud-panel">
+                <div class="hud-item">
+                    <span class="hud-icon">⏱️</span>
+                    <span class="hud-label">Czas:</span>
+                    <span id="game-time" class="hud-value">0:00</span>
+                </div>
+                <div class="hud-item">
+                    <span class="hud-icon">📅</span>
+                    <span class="hud-label">Dzień:</span>
+                    <span id="game-day" class="hud-value">1</span>
+                </div>
+                <div class="hud-item">
+                    <span class="hud-icon">📍</span>
+                    <span class="hud-label">Lokacja:</span>
+                    <span id="player-location" class="hud-value">-</span>
+                </div>
+                <div class="hud-item hud-health">
+                    <span class="hud-icon">❤️</span>
+                    <span class="hud-label">HP:</span>
+                    <span id="player-hp" class="hud-value">100/100</span>
+                </div>
+                <div class="hud-item hud-stamina">
+                    <span class="hud-icon">⚡</span>
+                    <span class="hud-label">Stamina:</span>
+                    <span id="player-stamina" class="hud-value">100/100</span>
+                </div>
+                <div class="hud-item hud-mana">
+                    <span class="hud-icon">💎</span>
+                    <span class="hud-label">Mana:</span>
+                    <span id="player-mana" class="hud-value">50/50</span>
+                </div>
+                <div class="hud-item hud-gold">
+                    <span class="hud-icon">💰</span>
+                    <span class="hud-label">Złoto:</span>
+                    <span id="player-gold" class="hud-value">100</span>
+                </div>
+                <div class="hud-item hud-survival">
+                    <span class="hud-icon">🍖</span>
+                    <span class="hud-label">Głód:</span>
+                    <span id="player-hunger" class="hud-value">0%</span>
+                </div>
+                <div class="hud-item hud-survival">
+                    <span class="hud-icon">💧</span>
+                    <span class="hud-label">Pragnienie:</span>
+                    <span id="player-thirst" class="hud-value">0%</span>
+                </div>
+                <div class="hud-item hud-survival">
+                    <span class="hud-icon">😴</span>
+                    <span class="hud-label">Zmęczenie:</span>
+                    <span id="player-fatigue" class="hud-value">0%</span>
+                </div>
+            </div>
+            
+            <div id="game-story"></div>
+            
+            <div class="game-input-area">
+                <div class="input-hint">Co robisz? (Napisz swoją akcję lub wybierz jedną z sugerowanych)</div>
+                <textarea id="player-action" placeholder="np. Wyciągam miecz i podchodzę do drzwi. Oglądam się uważnie na wszystkie strony..." rows="3"></textarea>
+                <div class="action-buttons">
+                    <button id="send-action" class="btn-primary">Wykonaj akcję</button>
+                    <button id="suggest-actions" class="btn-secondary">💡 Sugeruj akcje</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal z informacjami o postaci -->
+        <div id="character-modal" class="modal hidden">
+            <div class="modal-content">
+                <span class="close-modal">&times;</span>
+                <h2>📋 Twoja Postać</h2>
+                <div id="character-details"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Phase 1: World Clock & Data Layer Engine -->
+    <script src="engine.js" defer></script>
+    <script src="app.js" defer onerror="console.error('ERROR: app.js failed to load!')"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // Global error handler
+        window.onerror = function(msg, url, line, col, error) {
+            console.error('Global error:', msg, 'at', url, 'line', line);
+            return false;
+        };
+    </script>
+</body>
+</html>
