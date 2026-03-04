@@ -68,6 +68,88 @@ const rooms = new Map();
 // Player sessions - keyed by socket ID
 const players = new Map();
 
+// Load game engine at startup
+let World = null;
+try {
+    // Try to load engine.js for server-side world creation
+    const engine = require('./engine.js');
+    World = engine.World;
+    console.log('✅ Game engine loaded successfully');
+} catch (err) {
+    console.error('❌ Failed to load engine.js:', err.message);
+    // We'll create a simple world class if engine fails to load
+    World = null;
+}
+
+// Simple fallback World class if engine.js fails
+class SimpleWorld {
+    constructor() {
+        this.currentTimeMinutes = 0;
+        this.locations = new Map();
+        this.factions = new Map();
+        this.npcs = new Map();
+        this.player = null;
+        this.worldLog = [];
+    }
+    
+    advanceWorldTime(minutes) {
+        this.currentTimeMinutes += minutes;
+    }
+    
+    getFormattedTime() {
+        const hours = Math.floor(this.currentTimeMinutes / 60);
+        const minutes = this.currentTimeMinutes % 60;
+        return `${hours}:${minutes.toString().padStart(2, '0')}`;
+    }
+    
+    getDayNumber() {
+        return Math.floor(this.currentTimeMinutes / (24 * 60)) + 1;
+    }
+    
+    getTimeOfDay() {
+        const hour = this.currentTimeMinutes % (24 * 60) / 60;
+        if (hour >= 6 && hour < 12) return "Morning";
+        if (hour >= 12 && hour < 17) return "Afternoon";
+        if (hour >= 17 && hour < 21) return "Evening";
+        return "Night";
+    }
+    
+    getLocation(id) { return this.locations.get(id); }
+    getNPC(id) { return this.npcs.get(id); }
+    getFaction(id) { return this.factions.get(id); }
+    
+    static createStarterWorld(playerName, locationId) {
+        const world = new SimpleWorld();
+        world.player = {
+            name: playerName,
+            locationId: locationId,
+            hp: 100,
+            maxHp: 100,
+            gold: 100,
+            hunger: 0,
+            thirst: 0,
+            fatigue: 0
+        };
+        
+        // Add default locations
+        world.locations.set('town_central', { id: 'town_central', name: 'Central Town', population: 500, wealth: 60, stability: 70, dangerLevel: 10, controllingFactionId: 'kingdom' });
+        world.locations.set('tavern', { id: 'tavern', name: 'Golden Dragon Tavern', population: 50, wealth: 40, stability: 60, dangerLevel: 5, controllingFactionId: null });
+        world.locations.set('market', { id: 'market', name: 'Market Square', population: 200, wealth: 80, stability: 75, dangerLevel: 15, controllingFactionId: 'kingdom' });
+        
+        // Add default factions
+        world.factions.set('kingdom', { id: 'kingdom', name: 'Kingdom of Valdoria', power: 80, resources: 70 });
+        world.factions.set('merchants', { id: 'merchants', name: 'Merchants Guild', power: 50, resources: 90 });
+        
+        return world;
+    }
+}
+
+// Use SimpleWorld if engine.js failed to load
+if (!World) {
+    console.log('Using SimpleWorld fallback');
+    World = SimpleWorld;
+}
+
 // ============================================================================
 // SOCKET.IO HANDLERS
 // ============================================================================
@@ -104,7 +186,6 @@ io.on('connection', (socket) => {
         
         // Create world if first player
         if (!room.world) {
-            const { World } = require('./engine.js');
             room.world = World.createStarterWorld(playerName, 'town_central');
         }
 
