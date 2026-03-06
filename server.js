@@ -285,13 +285,21 @@ io.on('connection', (socket) => {
             }
         }
 
+        // Sprawdź czy gracz prosi o szczegółowy opis
+        const wantsDetailed = /szczeg[oó]łowo|opisz dokładnie|rozwiń|detale|wiecej szczeg[oó][lł]ow|bardziej szczeg[oó]łowo/i.test(action);
+        
         actionContext += `\n\nINSTRUKCJE DLA NARRATORA:
 - Opisz SZCZEGÓŁOWO co się dzieje w tej scenie
 - POKAŻ konkretne działania postaci, nie ogólniki
 - UWZGLĘDNIJ reakcje NPC w czasie rzeczywistym (jęki, słowa, ruchy)
 - NIE używaj szablonowych zakończeń typu "Czy ta decyzja..."
-- NIE pisz o przyszłych konsekwencjach - opisuj TYLKO teraz
-- 2-4 zdania konkretnego opisu, potem KONIEC`;
+- NIE pisz o przyszłych konsekwencjach - opisuj TYLKO teraz`;
+        
+        if (wantsDetailed) {
+            actionContext += `\n- ⚠️ GRACZ CHCE SZCZEGÓŁOWEGO OPISU - NAPISZ DŁUGI, ROZBUDOWANY TEKST (min. 5-8 zdań) z detalami, opisami zmysłowymi, dialogiem!`;
+        } else {
+            actionContext += `\n- 2-4 zdania konkretnego opisu, potem KONIEC`;
+        }
 
         // Emit to all players in room that action is processing
         io.to(player.roomId).emit('actionStarted', {
@@ -303,7 +311,7 @@ io.on('connection', (socket) => {
         // Call LLM with player's API key
         const playerApiKey = playerData.characterData?.apiKey || '';
         if (!room.narratorHistory) room.narratorHistory = [];
-        const response = await callLLM(actionContext, playerData.name, playerApiKey, room.narratorHistory);
+        const response = await callLLM(actionContext, playerData.name, playerApiKey, room.narratorHistory, wantsDetailed);
 
         // Zapisz TYLKO akcję gracza i odpowiedź AI do historii narracji (pamięć bota)
         // WAŻNE: Nie zapisujemy całego kontekstu z lokacją i czasem - to zużywa tokeny!
@@ -511,7 +519,7 @@ function serializeWorld(world) {
  * Call OpenRouter API for LLM response
  * Each player uses their own API key
  */
-async function callLLM(context, playerName, apiKey, narratorHistory = []) {
+async function callLLM(context, playerName, apiKey, narratorHistory = [], wantsDetailed = false) {
     if (!apiKey) {
         return `${playerName} wykonuje akcję... (brak klucza API - dodaj swój klucz OpenRouter)`;
     }
@@ -537,7 +545,7 @@ JAK PISAĆ (ZAWSZE stosuj):
 - ✅ Pokazuj reakcje NPC konkretnie, nie ogólnikowo
 - ✅ Nawiązuj do poprzednich akcji w tej sesji
 - ✅ Bądź bezpośredni - nie zadawaj pytań retorycznych
-- ✅ Maksymalnie 2-3 zdania, potem KONIEC
+- ✅ DŁUGOŚĆ: Domyślnie 2-4 zdania, ALE jeśli gracz prosi "szczegółowo/opisz dokładnie/rozwiń" - napisz DŁUGI, szczegółowy opis!
 
 Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
         };
@@ -557,7 +565,7 @@ Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
                 model: 'openai/gpt-3.5-turbo',
                 messages,
                 temperature: 0.8,
-                max_tokens: 400
+                max_tokens: wantsDetailed ? 800 : 400
             })
         });
         
