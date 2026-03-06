@@ -516,6 +516,8 @@ async function joinRoom(serverUrl, roomId) {
     };
     
     try {
+        await connectToServer(serverUrl);
+        
         const playerName = characterData.name;
         
         // Include API key for LLM calls on server
