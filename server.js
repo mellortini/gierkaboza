@@ -342,10 +342,6 @@ io.on('connection', (socket) => {
         const playerModel = playerData.characterData?.model || 'openai/gpt-3.5-turbo';
         console.log(`Using model: ${playerModel} for player: ${playerData.name}`);
         
-        if (!room.playerHistories) room.playerHistories = {};
-        if (!room.playerHistories[socket.id]) room.playerHistories[socket.id] = [];
-        const playerHistory = room.playerHistories[socket.id];
-        
         const response = await callLLM(actionContext, playerData.name, playerApiKey, playerModel, playerHistory, wantsDetailed);
 
         // Zapisz akcję gracza i odpowiedź AI do jego osobistej historii (pamięć bota) - BEZ LIMITU
