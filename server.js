@@ -374,8 +374,8 @@ io.on('connection', (socket) => {
 
             console.log(`playerChat: socket.id=${socket.id}, playerData.id=${playerData.id}, playerData.name=${playerData.name}`);
 
-            // Broadcast to ALL players in room (including sender)
-            io.to(player.roomId).emit('playerChatMessage', {
+            // Broadcast only to OTHER players in room (sender already added message locally)
+            socket.to(player.roomId).emit('playerChatMessage', {
                 playerId: playerData.id,
                 playerName: playerData.name,
                 message: message,

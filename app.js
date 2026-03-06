@@ -703,15 +703,9 @@ function setupMultiplayerListeners() {
         addStoryEntry('player', `[${data.playerName}]: ${data.message}`);
     });
 
-    // Player-to-player chat message (from other players)
+    // Player-to-player chat message (only from other players - server uses socket.to() so sender never gets this)
     state.socket.on('playerChatMessage', (data) => {
-        console.log('Received playerChatMessage:', { dataPlayerId: data.playerId, statePlayerId: state.playerId, dataPlayerName: data.playerName });
-        // Always add messages from other players (not our own - those we added locally)
-        if (data.playerId !== state.playerId) {
-            addStoryEntry('player', `💬 [${data.playerName}]: ${data.message}`);
-        } else {
-            console.log('Skipping own message (already added locally)');
-        }
+        addStoryEntry('player', `💬 [${data.playerName}]: ${data.message}`);
     });
 
     // Action error (when bot fails to respond)
