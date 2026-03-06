@@ -389,12 +389,17 @@ io.on('connection', (socket) => {
         if (player && rooms.has(player.roomId)) {
             const room = rooms.get(player.roomId);
             const playerData = room.players.get(socket.id);
+            const roomId = player.roomId;
+            const playerName = player.playerName;
+            const playerId = player.playerId;
+            const wasHost = room.hostId === socket.id;
+            const characterData = playerData?.characterData;
 
-            // Remove player from room
+            // Remove player from room immediately
             room.players.delete(socket.id);
 
             // Notify others
-            io.to(player.roomId).emit('playerLeft', {
+            io.to(roomId).emit('playerLeft', {
                 playerId: player.playerId,
                 playerName: player.playerName,
                 players: Array.from(room.players.values()).map(p => ({
@@ -406,25 +411,122 @@ io.on('connection', (socket) => {
 
             // Clean up empty rooms
             if (room.players.size === 0) {
-                rooms.delete(player.roomId);
-                console.log(`Room ${player.roomId} deleted (empty)`);
-            } else if (room.hostId === socket.id) {
+                rooms.delete(roomId);
+                console.log(`Room ${roomId} deleted (empty)`);
+            } else if (wasHost) {
                 // Transfer host to next player
                 const newHost = room.players.keys().next().value;
                 room.hostId = newHost;
                 room.players.get(newHost).isHost = true;
                 
-                io.to(player.roomId).emit('hostChanged', {
+                io.to(roomId).emit('hostChanged', {
                     newHostId: room.players.get(newHost).id,
                     newHostName: room.players.get(newHost).name
                 });
             }
 
-            console.log(`${player.playerName} left room ${player.roomId}`);
+            console.log(`${playerName} left room ${roomId}`);
+            
+            // Store reconnection data for 60 seconds
+            const rejoinData = {
+                roomId,
+                playerId,
+                playerName,
+                characterData,
+                isHost: wasHost,
+                expiresAt: Date.now() + 60000
+            };
+            socket.rejoinData = rejoinData;
+            
+            // Tell client to reconnect
+            socket.emit('connectionLost', {
+                roomId,
+                message: 'Połączenie zostało przerwane. Spróbuj ponownie dołączyć do pokoju.'
+            });
         }
 
         players.delete(socket.id);
         console.log(`Player disconnected: ${socket.id}`);
+    });
+
+    // Rejoin room after reconnect
+    socket.on('rejoinRoom', (data) => {
+        const { roomId } = data;
+        
+        // Sprawdź czy są dane do ponownego dołączenia
+        if (!socket.rejoinData || socket.rejoinData.roomId !== roomId) {
+            socket.emit('joinError', { message: 'Nie można ponownie dołączyć - dane wygasły. Dołącz ponownie ręcznie.' });
+            return;
+        }
+        
+        if (socket.rejoinData.expiresAt < Date.now()) {
+            socket.emit('joinError', { message: 'Czas na ponowne dołączenie wygasł. Dołącz ponownie ręcznie.' });
+            delete socket.rejoinData;
+            return;
+        }
+        
+        if (!rooms.has(roomId)) {
+            socket.emit('joinError', { message: 'Pokój już nie istnieje.' });
+            delete socket.rejoinData;
+            return;
+        }
+        
+        const room = rooms.get(roomId);
+        const rejoinData = socket.rejoinData;
+        
+        // Dodaj gracza z powrotem do pokoju
+        room.players.set(socket.id, {
+            id: rejoinData.playerId,
+            socketId: socket.id,
+            name: rejoinData.playerName,
+            characterData: rejoinData.characterData,
+            joinedAt: Date.now(),
+            isHost: rejoinData.isHost
+        });
+        
+        // Zaktualizuj hosta jeśli trzeba
+        if (rejoinData.isHost) {
+            room.hostId = socket.id;
+        }
+        
+        // Join socket room
+        socket.join(roomId);
+        socket.roomId = roomId;
+        
+        // Zaktualizuj players map
+        players.set(socket.id, {
+            roomId,
+            playerId: rejoinData.playerId,
+            playerName: rejoinData.playerName
+        });
+        
+        // Wyślij potwierdzenie
+        socket.emit('roomRejoined', {
+            success: true,
+            roomId,
+            playerId: rejoinData.playerId,
+            playerName: rejoinData.playerName,
+            isHost: rejoinData.isHost,
+            players: Array.from(room.players.values()).map(p => ({
+                id: p.id,
+                name: p.name,
+                isHost: p.isHost
+            }))
+        });
+        
+        // Powiadom innych
+        socket.to(roomId).emit('playerRejoined', {
+            playerId: rejoinData.playerId,
+            playerName: rejoinData.playerName,
+            players: Array.from(room.players.values()).map(p => ({
+                id: p.id,
+                name: p.name,
+                isHost: p.isHost
+            }))
+        });
+        
+        console.log(`${rejoinData.playerName} reconnected to room ${roomId}`);
+        delete socket.rejoinData;
     });
 
     // Player-to-player chat (AI sees but doesn't respond)

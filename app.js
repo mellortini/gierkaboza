@@ -439,6 +439,13 @@ function connectToServer(serverUrl) {
 
             state.socket.on('connect', () => {
                 console.log('Connected to server:', url, 'ID:', state.socket.id);
+                
+                // Jeśli byliśmy wcześniej w pokoju, spróbuj wrócić
+                if (state.roomId && state.isMultiplayer) {
+                    console.log('Attempting to rejoin room:', state.roomId);
+                    state.socket.emit('rejoinRoom', { roomId: state.roomId });
+                }
+                
                 resolve(state.socket);
             });
 
@@ -450,6 +457,35 @@ function connectToServer(serverUrl) {
             state.socket.on('disconnect', (reason) => {
                 console.log('Disconnected:', reason);
                 updateMultiplayerStatus('Rozłączono: ' + reason, 'error');
+            });
+            
+            // Obsługa utraty połączenia z informacją o pokoju
+            state.socket.on('connectionLost', (data) => {
+                console.log('Connection lost:', data);
+                updateMultiplayerStatus('Utracono połączenie z pokojem. Łączę ponownie...', 'error');
+                state.isMultiplayer = false;
+            });
+            
+            // Ponowne dołączenie do pokoju
+            state.socket.on('roomRejoined', (data) => {
+                console.log('Room rejoined:', data);
+                state.isMultiplayer = true;
+                state.roomId = data.roomId;
+                state.playerId = data.playerId;
+                state.playerName = data.playerName;
+                state.isHost = data.isHost;
+                state.players = data.players;
+                
+                updateMultiplayerStatus(`Połączono ponownie! Jesteś w pokoju: ${data.roomId}`, 'success');
+                updatePlayersList(data.players);
+            });
+            
+            // Gracz dołączył z powrotem
+            state.socket.on('playerRejoined', (data) => {
+                console.log('Player rejoined:', data);
+                state.players = data.players;
+                updatePlayersList(data.players);
+                addStoryEntry('system', `${data.playerName} ponownie dołączył do gry!`);
             });
 
             state.socket.on('error', (error) => {
@@ -761,6 +797,17 @@ function setupMultiplayerListeners() {
     // Action error (when bot fails to respond)
     state.socket.on('actionError', (data) => {
         addStoryEntry('system', `❌ Błąd: ${data.message}`);
+    });
+    
+    // Chat error
+    state.socket.on('chatError', (data) => {
+        addStoryEntry('system', `❌ Błąd czatu: ${data.message}`);
+    });
+    
+    // Join error (for rejoin)
+    state.socket.on('joinError', (data) => {
+        addStoryEntry('system', `❌ Błąd dołączania: ${data.message}`);
+        state.isMultiplayer = false;
     });
 }
 
