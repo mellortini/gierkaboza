@@ -285,7 +285,13 @@ io.on('connection', (socket) => {
             }
         }
 
-        actionContext += `\nOpisz co się dzieje w wyniku tej akcji. NIE opisuj dokładnie lokacji - zakładam, że gracz ją widzi. Skup się na akcji, reakcjach NPC, konsekwencjach. 2-3 zdania wystarczą.`;
+        actionContext += `\n\nINSTRUKCJE DLA NARRATORA:
+- Opisz SZCZEGÓŁOWO co się dzieje w tej scenie
+- POKAŻ konkretne działania postaci, nie ogólniki
+- UWZGLĘDNIJ reakcje NPC w czasie rzeczywistym (jęki, słowa, ruchy)
+- NIE używaj szablonowych zakończeń typu "Czy ta decyzja..."
+- NIE pisz o przyszłych konsekwencjach - opisuj TYLKO teraz
+- 2-4 zdania konkretnego opisu, potem KONIEC`;
 
         // Emit to all players in room that action is processing
         io.to(player.roomId).emit('actionStarted', {
@@ -515,15 +521,25 @@ async function callLLM(context, playerName, apiKey, narratorHistory = []) {
         // UWAGA: narratorHistory zawiera pary user/assistant - bierzemy ostatnie 10 tur (20 wiadomości)
         const systemMessage = {
             role: 'system',
-            content: `Jesteś narratorem w grze RPG. Opisuj akcje gracza i ich konsekwencje. 
+            content: `Jesteś narratorem w grze RPG. Opisuj akcje gracza i ich konsekwencje.
 
-KLUCZOWE ZASADY PAMIĘCI:
-1. PAMIĘTAJ wszystkie poprzednie wydarzenia z tej sesji i NAWIĄZUJ do nich!
-2. Jeśli gracz wcześniej rozmawiał z NPC, pamiętaj o tej rozmowie!
-3. Jeśli gracz podjął decyzję, pamiętaj jej konsekwencje!
-4. Nie zapominaj o postaciach, które się pojawiły!
+ZAKAZANE SFORMUŁOWANIA (NIGDY ich nie używaj):
+- ❌ "Czy ta decyzja..."
+- ❌ "Odpowiedź wkrótce się wyjaśni"
+- ❌ "Konsekwencje mogą być poważne"
+- ❌ "Sytuacja staje się napięta"
+- ❌ "Coś może się wkrótce wydarzyć"
+- ❌ Powtarzanie tych samych zwrotów w każdej odpowiedzi
 
-NIE opisuj ciągle tej samej lokacji - zakładaj, że gracz ją zna. Skup się na tym CO się dzieje, nie GDZIE się dzieje. Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
+JAK PISAĆ (ZAWSZE stosuj):
+- ✅ Opisuj TYLKO to co się DZIEJE TERAZ
+- ✅ Używaj zmysłowych szczegółów (dźwięki, zapachy, tekstury)
+- ✅ Pokazuj reakcje NPC konkretnie, nie ogólnikowo
+- ✅ Nawiązuj do poprzednich akcji w tej sesji
+- ✅ Bądź bezpośredni - nie zadawaj pytań retorycznych
+- ✅ Maksymalnie 2-3 zdania, potem KONIEC
+
+Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
         };
         // Weź ostatnie 10 tur (20 wiadomości) z historii
         const historySlice = narratorHistory.slice(-20);
