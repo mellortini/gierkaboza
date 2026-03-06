@@ -128,7 +128,8 @@ io.on('connection', (socket) => {
                 world: null,          // Will be created when first player joins
                 players: new Map(),   // playerId -> player data
                 createdAt: Date.now(),
-                hostId: socket.id
+                hostId: socket.id,
+                chatHistory: []       // Historia czatu graczy (dla kontekstu AI)
             });
         }
 
@@ -261,8 +262,18 @@ io.on('connection', (socket) => {
                 .join(', ');
             actionContext += `Obok ciebie jest: ${others}. `;
         }
+
+        // Dołącz historię czatu graczy do kontekstu AI
+        if (room.chatHistory && room.chatHistory.length > 0) {
+            const recentChat = room.chatHistory.slice(-20); // ostatnie 20 wiadomości
+            actionContext += `\n\n## OSTATNI DIALOG MIĘDZY GRACZAMI (uwzględnij to w narracji!):\n`;
+            for (const msg of recentChat) {
+                const tag = msg.type === 'in_character' ? '[IC]' : '[OOC]';
+                actionContext += `${tag} ${msg.playerName}: ${msg.message}\n`;
+            }
+        }
         
-        actionContext += `Opisz co się dzieje w wyniku tej akcji. NIE opisuj dokładnie lokacji - zakładam, że gracz ją widzi. Skup się na akcji, reakcjach NPC, konsekwencjach. 2-3 zdania wystarczą.`;
+        actionContext += `\nOpisz co się dzieje w wyniku tej akcji. NIE opisuj dokładnie lokacji - zakładam, że gracz ją widzi. Skup się na akcji, reakcjach NPC, konsekwencjach. 2-3 zdania wystarczą.`;
 
         // Emit to all players in room that action is processing
         io.to(player.roomId).emit('actionStarted', {
@@ -374,6 +385,19 @@ io.on('connection', (socket) => {
 
             console.log(`playerChat: socket.id=${socket.id}, playerData.id=${playerData.id}, playerData.name=${playerData.name}`);
 
+            // Zapisz wiadomość w historii czatu pokoju (dla kontekstu AI)
+            if (!room.chatHistory) room.chatHistory = [];
+            room.chatHistory.push({
+                playerName: playerData.name,
+                message: message,
+                type: type || 'player_dialogue',
+                timestamp: Date.now()
+            });
+            // Ogranicz historię do ostatnich 50 wiadomości
+            if (room.chatHistory.length > 50) {
+                room.chatHistory = room.chatHistory.slice(-50);
+            }
+
             // Broadcast only to OTHER players in room (sender already added message locally)
             socket.to(player.roomId).emit('playerChatMessage', {
                 playerId: playerData.id,
@@ -383,7 +407,7 @@ io.on('connection', (socket) => {
                 timestamp: Date.now()
             });
 
-            console.log(`Player chat from ${playerData.name}: ${message.substring(0, 50)}`);
+            console.log(`Player chat from ${playerData.name}: ${message.substring(0, 50)}`); 
         } catch (err) {
             console.error('Error in playerChat:', err);
         }
