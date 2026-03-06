@@ -231,7 +231,7 @@ async function fetchModels(forWorldBuilder = false) {
 }
 
 // Inicjalizacja aplikacji
-function init() {
+async function init() {
     console.log('🚀 init() started');
     
     // Phase 1: Inicjalizacja silnika gry (po załadowaniu engine.js)
@@ -253,8 +253,14 @@ function init() {
     if (state.apiKey) {
         elements.apiKeyInput.value = state.apiKey;
         showStatus('Klucz API wczytany z pamięci', 'success');
-        fetchModels();
-        showCharacterCreation();
+        try {
+            await fetchModels();
+            showCharacterCreation();
+        } catch (e) {
+            console.error('Błąd wczytywania modeli:', e);
+            showStatus('Błąd wczytywania modeli, ale możesz kontynuować', 'error');
+            showCharacterCreation();
+        }
     }
 
     // Event listeners - API
@@ -365,7 +371,7 @@ function init() {
 // Zapisanie klucza API
 async function saveApiKey() {
     const apiKey = elements.apiKeyInput.value.trim();
-    
+
     if (!apiKey) {
         showStatus('Wprowadź klucz API', 'error');
         return;
@@ -379,8 +385,21 @@ async function saveApiKey() {
     state.apiKey = apiKey;
     localStorage.setItem('openrouter_api_key', apiKey);
     showStatus('Klucz API zapisany! Wczytywanie modeli...', 'success');
-    
-    await fetchModels();
+
+    try {
+        await fetchModels();
+        showStatus('Modele wczytane!', 'success');
+    } catch (error) {
+        console.error('Błąd pobierania modeli:', error);
+        showStatus('Błąd wczytywania modeli, ale możesz kontynuować', 'warning');
+        // Dodaj domyślne modele jako fallback
+        const fallbackHTML = `
+            <option value="deepseek/deepseek-chat:free">DeepSeek V3 (Free)</option>
+            <option value="deepseek/deepseek-r1:free">DeepSeek R1 (Free)</option>
+            <option value="moonshotai/kimi-k2.5:free">Kimi K2.5 (Free)</option>
+        `;
+        elements.modelSelect.innerHTML = fallbackHTML;
+    }
     showCharacterCreation();
 }
 
