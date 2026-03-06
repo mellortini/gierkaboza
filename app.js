@@ -826,7 +826,8 @@ async function sendMultiplayerAction(action) {
     state.socket.emit('playerAction', {
         action: action,
         sceneType: sceneType,
-        sceneTags: sceneTags
+        sceneTags: sceneTags,
+        model: state.model  // Wyślij aktualny model przy każdej akcji
     });
 }
 

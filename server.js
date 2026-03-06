@@ -232,7 +232,7 @@ io.on('connection', (socket) => {
 
     // Handle player action
     socket.on('playerAction', async (data) => {
-        const { action, sceneType, sceneTags } = data;
+        const { action, sceneType, sceneTags, model: actionModel } = data;
         const player = players.get(socket.id);
         
         if (!player || !rooms.has(player.roomId)) {
@@ -337,9 +337,9 @@ io.on('connection', (socket) => {
             action: action.substring(0, 50)
         });
 
-        // Call LLM with player's API key and model
+        // Call LLM with player's API key and model (użyj modelu z akcji lub fallback do characterData)
         const playerApiKey = playerData.characterData?.apiKey || '';
-        const playerModel = playerData.characterData?.model || 'openai/gpt-3.5-turbo';
+        const playerModel = actionModel || playerData.characterData?.model || 'openai/gpt-3.5-turbo';
         console.log(`Using model: ${playerModel} for player: ${playerData.name}`);
         
         const response = await callLLM(actionContext, playerData.name, playerApiKey, playerModel, playerHistory, wantsDetailed);
