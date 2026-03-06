@@ -1197,6 +1197,9 @@ ${s.psychological >= 8 ? 'Szaleństwo, zaburzenia osobowości, psychopatia, niez
 ## ========== PHASE 1: WORLD CLOCK CONTEXT ==========
 ${buildWorldContext()}
 
+## INNI GRACZE W GRZE:
+${state.isMultiplayer && state.players && state.players.length > 1 ? state.players.map(p => `- **${p.name}**: ${p.isHost ? 'Host (tworzy świat gry)' : 'Współgracz'}`).join('\n') : 'Brak innych graczy - gra jednoosobowa.'}
+
 ## WAŻNE:
 - Odpowiadaj po POLSKU.
 - Dostosuj styl do ustawionych poziomów treści.
@@ -1711,7 +1714,10 @@ async function sendAction() {
     if (!action || state.isLoading) return;
 
     elements.playerAction.value = '';
-    addStoryEntry('player', action);
+    
+    // W multiplayer dodaj etykietę z imieniem gracza
+    const playerLabel = state.isMultiplayer && state.playerName ? `[${state.playerName}]: ` : '';
+    addStoryEntry('player', playerLabel + action);
     
     // Check if in multiplayer mode
     if (state.isMultiplayer) {
