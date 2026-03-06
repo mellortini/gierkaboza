@@ -144,7 +144,7 @@ io.on('connection', (socket) => {
                 createdAt: Date.now(),
                 hostId: socket.id,
                 chatHistory: [],      // Historia czatu graczy (dla kontekstu AI)
-                narratorHistory: []   // Historia narracji AI (akcja + odpowiedź) dla pamięci bota
+                playerHistories: {}   // Historia narracji dla KAŻDEGO gracza osobno
             });
         }
 
@@ -277,25 +277,28 @@ io.on('connection', (socket) => {
                 .join(', ');
             actionContext += `Obok ciebie jest: ${others}. `;
         }
+        
+        // KAŻDY GRACZ MA SWOJĄ HISTORIĘ - nie mieszaj z innymi graczami!
+        if (!room.playerHistories) room.playerHistories = {};
+        if (!room.playerHistories[socket.id]) room.playerHistories[socket.id] = [];
+        const playerHistory = room.playerHistories[socket.id];
 
         // Dołącz historię czatu graczy do kontekstu AI
         if (room.chatHistory && room.chatHistory.length > 0) {
-            const recentChat = room.chatHistory.slice(-20); // ostatnie 20 wiadomości
-            actionContext += `\n\n## OSTATNI DIALOG MIĘDZY GRACZAMI (uwzględnij to w narracji!):\n`;
+            const recentChat = room.chatHistory.slice(-10); // ostatnie 10 wiadomości
+            actionContext += `\n\n## OSTATNI CZAT MIĘDZY GRACZAMI:\n`;
             for (const msg of recentChat) {
                 const tag = msg.type === 'in_character' ? '[IC]' : '[OOC]';
                 actionContext += `${tag} ${msg.playerName}: ${msg.message}\n`;
             }
         }
         
-        // Dodaj podsumowanie poprzednich akcji (pomaga AI pamiętać)
-        if (room.narratorHistory && room.narratorHistory.length > 0) {
-            const recentHistory = room.narratorHistory.slice(-6); // ostatnie 3 tury
-            actionContext += `\n\n## CO SIĘ WCZEŚNIEJ STAŁO (pamiętaj o tym!):\n`;
-            for (let i = 0; i < recentHistory.length; i += 2) {
-                const action = recentHistory[i]?.content || '...';
-                const response = recentHistory[i+1]?.content?.substring(0, 100) || '...';
-                actionContext += `- Gracz: "${action}" → ${response}...\n`;
+        // Dodaj podsumowanie poprzednich akcji TYLKO tego gracza (nie mieszaj z innymi graczami)
+        const recentPlayerActions = playerHistory?.filter((_, i) => i % 2 === 0).slice(-4) || []; // tylko akcje tego gracza
+        if (recentPlayerActions.length > 0) {
+            actionContext += `\n\n## TWOJE POPRZEDNIE AKCJE:\n`;
+            for (const h of recentPlayerActions) {
+                actionContext += `- ${h.content?.substring(0, 80) || '...'}\n`;
             }
         }
 
@@ -339,13 +342,16 @@ io.on('connection', (socket) => {
         const playerModel = playerData.characterData?.model || 'openai/gpt-3.5-turbo';
         console.log(`Using model: ${playerModel} for player: ${playerData.name}`);
         
-        if (!room.narratorHistory) room.narratorHistory = [];
-        const response = await callLLM(actionContext, playerData.name, playerApiKey, playerModel, room.narratorHistory, wantsDetailed);
+        if (!room.playerHistories) room.playerHistories = {};
+        if (!room.playerHistories[socket.id]) room.playerHistories[socket.id] = [];
+        const playerHistory = room.playerHistories[socket.id];
+        
+        const response = await callLLM(actionContext, playerData.name, playerApiKey, playerModel, playerHistory, wantsDetailed);
 
-        // Zapisz akcję gracza i odpowiedź AI do historii narracji (pamięć bota) - BEZ LIMITU
-        room.narratorHistory.push({ role: 'user', content: action });
-        room.narratorHistory.push({ role: 'assistant', content: response });
-        // Bez limitu - bot pamięta całą historię!
+        // Zapisz akcję gracza i odpowiedź AI do jego osobistej historii (pamięć bota) - BEZ LIMITU
+        playerHistory.push({ role: 'user', content: action });
+        playerHistory.push({ role: 'assistant', content: response });
+        // Bez limitu - bot pamięta całą historię tego gracza!
 
         // Phase 1-2: Przesuwamy czas i przetwarzamy wydarzenia
         world.advanceWorldTime(15);   // realistyczny koszt akcji
