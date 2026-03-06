@@ -20,7 +20,8 @@ body {
 header {
     text-align: center;
     margin-bottom: 30px;
-    padding: 20px;
+    padding: 25px 20px;
+    border-bottom: 1px solid rgba(233, 69, 96, 0.3);
 }
 
 header h1 {
@@ -141,8 +142,8 @@ button {
 }
 
 .btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 5px 20px rgba(233, 69, 96, 0.4);
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px rgba(233, 69, 96, 0.5);
 }
 
 .btn-secondary {
