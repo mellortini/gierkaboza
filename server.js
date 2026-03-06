@@ -334,10 +334,13 @@ io.on('connection', (socket) => {
             action: action.substring(0, 50)
         });
 
-        // Call LLM with player's API key
+        // Call LLM with player's API key and model
         const playerApiKey = playerData.characterData?.apiKey || '';
+        const playerModel = playerData.characterData?.model || 'openai/gpt-3.5-turbo';
+        console.log(`Using model: ${playerModel} for player: ${playerData.name}`);
+        
         if (!room.narratorHistory) room.narratorHistory = [];
-        const response = await callLLM(actionContext, playerData.name, playerApiKey, room.narratorHistory, wantsDetailed);
+        const response = await callLLM(actionContext, playerData.name, playerApiKey, playerModel, room.narratorHistory, wantsDetailed);
 
         // Zapisz akcję gracza i odpowiedź AI do historii narracji (pamięć bota) - BEZ LIMITU
         room.narratorHistory.push({ role: 'user', content: action });
@@ -642,7 +645,7 @@ function serializeWorld(world) {
  * Call OpenRouter API for LLM response
  * Each player uses their own API key
  */
-async function callLLM(context, playerName, apiKey, narratorHistory = [], wantsDetailed = false) {
+async function callLLM(context, playerName, apiKey, model = 'openai/gpt-3.5-turbo', narratorHistory = [], wantsDetailed = false) {
     if (!apiKey) {
         return `${playerName} wykonuje akcję... (brak klucza API - dodaj swój klucz OpenRouter)`;
     }
@@ -685,7 +688,7 @@ Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
                 'X-Title': 'AI RPG Multiplayer'
             },
             body: JSON.stringify({
-                model: 'openai/gpt-3.5-turbo',
+                model: model,
                 messages,
                 temperature: 0.8,
                 max_tokens: wantsDetailed ? 1200 : 800

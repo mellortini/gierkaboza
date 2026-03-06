@@ -556,11 +556,14 @@ async function joinRoom(serverUrl, roomId) {
         
         const playerName = characterData.name;
         
-        // Include API key for LLM calls on server
+        // Include API key and model for LLM calls on server
         const characterDataWithApi = {
             ...characterData,
-            apiKey: state.apiKey
+            apiKey: state.apiKey,
+            model: state.model
         };
+        
+        console.log('Sending to server - API Key:', state.apiKey ? 'YES' : 'NO', 'Model:', state.model);
         
         // Prepare world data based on selection
         let worldData = null;
