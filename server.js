@@ -340,13 +340,13 @@ io.on('connection', (socket) => {
         const response = await callLLM(actionContext, playerData.name, playerApiKey, room.narratorHistory, wantsDetailed);
 
         // Zapisz TYLKO akcję gracza i odpowiedź AI do historii narracji (pamięć bota)
-        // WAŻNE: Nie zapisujemy całego kontekstu z lokacją i czasem - to zużywa tokeny!
-        const shortAction = action.length > 100 ? action.substring(0, 100) + '...' : action;
+        // Zwiększamy limit do 50 wiadomości (25 par) żeby bot pamiętał więcej
+        const shortAction = action.length > 150 ? action.substring(0, 150) + '...' : action;
         room.narratorHistory.push({ role: 'user', content: shortAction });
         room.narratorHistory.push({ role: 'assistant', content: response });
-        // Ogranicz historię do ostatnich 10 par (20 wiadomości) dla lepszej pamięci
-        if (room.narratorHistory.length > 20) {
-            room.narratorHistory = room.narratorHistory.slice(-20);
+        // Ogranicz historię do ostatnich 50 wiadomości dla lepszej pamięci
+        if (room.narratorHistory.length > 50) {
+            room.narratorHistory = room.narratorHistory.slice(-50);
         }
 
         // Phase 1-2: Przesuwamy czas i przetwarzamy wydarzenia
@@ -571,12 +571,12 @@ JAK PISAĆ (ZAWSZE stosuj):
 - ✅ Pokazuj reakcje NPC konkretnie, nie ogólnikowo
 - ✅ Nawiązuj do poprzednich akcji w tej sesji
 - ✅ Bądź bezpośredni - nie zadawaj pytań retorycznych
-- ✅ DŁUGOŚĆ: Domyślnie 2-4 zdania, ALE jeśli gracz prosi "szczegółowo/opisz dokładnie/rozwiń" - napisz DŁUGI, szczegółowy opis!
+
 
 Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
         };
-        // Weź ostatnie 10 tur (20 wiadomości) z historii
-        const historySlice = narratorHistory.slice(-20);
+        // Weź ostatnie 25 tur (50 wiadomości) z historii
+        const historySlice = narratorHistory.slice(-50);
         const messages = [systemMessage, ...historySlice, { role: 'user', content: context }];
 
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -591,7 +591,7 @@ Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
                 model: 'openai/gpt-3.5-turbo',
                 messages,
                 temperature: 0.8,
-                max_tokens: wantsDetailed ? 800 : 400
+                max_tokens: wantsDetailed ? 1200 : 800
             })
         });
         
