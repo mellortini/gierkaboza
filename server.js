@@ -274,6 +274,17 @@ io.on('connection', (socket) => {
             }
         }
         
+        // Dodaj podsumowanie poprzednich akcji (pomaga AI pamiętać)
+        if (room.narratorHistory && room.narratorHistory.length > 0) {
+            const recentHistory = room.narratorHistory.slice(-6); // ostatnie 3 tury
+            actionContext += `\n\n## CO SIĘ WCZEŚNIEJ STAŁO (pamiętaj o tym!):\n`;
+            for (let i = 0; i < recentHistory.length; i += 2) {
+                const action = recentHistory[i]?.content || '...';
+                const response = recentHistory[i+1]?.content?.substring(0, 100) || '...';
+                actionContext += `- Gracz: "${action}" → ${response}...\n`;
+            }
+        }
+
         actionContext += `\nOpisz co się dzieje w wyniku tej akcji. NIE opisuj dokładnie lokacji - zakładam, że gracz ją widzi. Skup się na akcji, reakcjach NPC, konsekwencjach. 2-3 zdania wystarczą.`;
 
         // Emit to all players in room that action is processing
@@ -288,12 +299,14 @@ io.on('connection', (socket) => {
         if (!room.narratorHistory) room.narratorHistory = [];
         const response = await callLLM(actionContext, playerData.name, playerApiKey, room.narratorHistory);
 
-        // Zapisz akcję i odpowiedź AI do historii narracji (pamięć bota)
-        room.narratorHistory.push({ role: 'user', content: actionContext });
+        // Zapisz TYLKO akcję gracza i odpowiedź AI do historii narracji (pamięć bota)
+        // WAŻNE: Nie zapisujemy całego kontekstu z lokacją i czasem - to zużywa tokeny!
+        const shortAction = action.length > 100 ? action.substring(0, 100) + '...' : action;
+        room.narratorHistory.push({ role: 'user', content: shortAction });
         room.narratorHistory.push({ role: 'assistant', content: response });
-        // Ogranicz historię do ostatnich 20 par (40 wiadomości) żeby nie przekroczyć limitu tokenów
-        if (room.narratorHistory.length > 40) {
-            room.narratorHistory = room.narratorHistory.slice(-40);
+        // Ogranicz historię do ostatnich 10 par (20 wiadomości) dla lepszej pamięci
+        if (room.narratorHistory.length > 20) {
+            room.narratorHistory = room.narratorHistory.slice(-20);
         }
 
         // Phase 1-2: Przesuwamy czas i przetwarzamy wydarzenia
@@ -499,11 +512,20 @@ async function callLLM(context, playerName, apiKey, narratorHistory = []) {
     
     try {
         // Buduj messages z historią narracji żeby bot pamiętał poprzednie tury
+        // UWAGA: narratorHistory zawiera pary user/assistant - bierzemy ostatnie 10 tur (20 wiadomości)
         const systemMessage = {
             role: 'system',
-            content: `Jesteś narratorem w grze RPG. Opisuj akcje gracza i ich konsekwencje. NIE opisuj ciągle tej samej lokacji - zakładaj, że gracz ją zna. Skup się na tym CO się dzieje, nie GDZIE się dzieje. Postać nazywa się ${playerName}. Pamiętaj o poprzednich wydarzeniach z tej sesji i nawiązuj do nich. Odpowiadaj po polsku.`
+            content: `Jesteś narratorem w grze RPG. Opisuj akcje gracza i ich konsekwencje. 
+
+KLUCZOWE ZASADY PAMIĘCI:
+1. PAMIĘTAJ wszystkie poprzednie wydarzenia z tej sesji i NAWIĄZUJ do nich!
+2. Jeśli gracz wcześniej rozmawiał z NPC, pamiętaj o tej rozmowie!
+3. Jeśli gracz podjął decyzję, pamiętaj jej konsekwencje!
+4. Nie zapominaj o postaciach, które się pojawiły!
+
+NIE opisuj ciągle tej samej lokacji - zakładaj, że gracz ją zna. Skup się na tym CO się dzieje, nie GDZIE się dzieje. Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
         };
-        // Weź ostatnie 20 wiadomości z historii żeby nie przekroczyć limitu tokenów
+        // Weź ostatnie 10 tur (20 wiadomości) z historii
         const historySlice = narratorHistory.slice(-20);
         const messages = [systemMessage, ...historySlice, { role: 'user', content: context }];
 
