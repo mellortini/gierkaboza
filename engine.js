@@ -690,7 +690,14 @@ class Faction {
         faction.resources = json.resources;
         faction.aggression = json.aggression;
         faction.stability = json.stability;
-        faction.relations = new Map(json.relations || {});
+        // FIX: Handle both Map (array of entries) and plain object
+        if (Array.isArray(json.relations)) {
+            faction.relations = new Map(json.relations);
+        } else if (json.relations && typeof json.relations === 'object') {
+            faction.relations = new Map(Object.entries(json.relations));
+        } else {
+            faction.relations = new Map();
+        }
         faction.description = json.description || "";
         
         // Phase 3: Goals and strategy
@@ -941,7 +948,14 @@ class Player {
         player.hunger = json.hunger;
         player.thirst = json.thirst;
         player.fatigue = json.fatigue;
-        player.reputation = new Map(json.reputation || {});
+        // FIX: Handle both Map (array of entries) and plain object
+        if (Array.isArray(json.reputation)) {
+            player.reputation = new Map(json.reputation);
+        } else if (json.reputation && typeof json.reputation === 'object') {
+            player.reputation = new Map(Object.entries(json.reputation));
+        } else {
+            player.reputation = new Map();
+        }
         player.statusEffects = (json.statusEffects || []).map(e => 
             new StatusEffect(e.name, e.remainingMinutes, e.effectType, e.magnitude)
         );
@@ -2469,7 +2483,12 @@ class World {
         
         // Phase 2: Restore active wars
         if (json.activeWars) {
-            world.activeWars = new Map(json.activeWars.map(([k, v]) => [k, new Set(v)]));
+            // FIX: Handle both array of entries and plain object
+            if (Array.isArray(json.activeWars)) {
+                world.activeWars = new Map(json.activeWars.map(([k, v]) => [k, new Set(v)]));
+            } else if (typeof json.activeWars === 'object') {
+                world.activeWars = new Map(Object.entries(json.activeWars).map(([k, v]) => [k, new Set(Array.isArray(v) ? v : [])]));
+            }
         }
         
         // Phase 4: Contextual Memory System
