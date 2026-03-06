@@ -339,15 +339,11 @@ io.on('connection', (socket) => {
         if (!room.narratorHistory) room.narratorHistory = [];
         const response = await callLLM(actionContext, playerData.name, playerApiKey, room.narratorHistory, wantsDetailed);
 
-        // Zapisz TYLKO akcję gracza i odpowiedź AI do historii narracji (pamięć bota)
-        // Zwiększamy limit do 50 wiadomości (25 par) żeby bot pamiętał więcej
-        const shortAction = action.length > 150 ? action.substring(0, 150) + '...' : action;
+        // Zapisz akcję gracza i odpowiedź AI do historii narracji (pamięć bota) - BEZ LIMITU
+        const shortAction = action.length > 200 ? action.substring(0, 200) + '...' : action;
         room.narratorHistory.push({ role: 'user', content: shortAction });
         room.narratorHistory.push({ role: 'assistant', content: response });
-        // Ogranicz historię do ostatnich 50 wiadomości dla lepszej pamięci
-        if (room.narratorHistory.length > 50) {
-            room.narratorHistory = room.narratorHistory.slice(-50);
-        }
+        // Bez limitu - bot pamięta całą historię!
 
         // Phase 1-2: Przesuwamy czas i przetwarzamy wydarzenia
         world.advanceWorldTime(15);   // realistyczny koszt akcji
@@ -576,8 +572,8 @@ JAK PISAĆ (ZAWSZE stosuj):
 Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
         };
         // Weź ostatnie 25 tur (50 wiadomości) z historii
-        const historySlice = narratorHistory.slice(-50);
-        const messages = [systemMessage, ...historySlice, { role: 'user', content: context }];
+        // Bierzemy całą historię - bot pamięta wszystko!
+        const messages = [systemMessage, ...narratorHistory, { role: 'user', content: context }];
 
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
