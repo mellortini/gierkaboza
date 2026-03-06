@@ -27,21 +27,35 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: '10mb' }));
 
-// Socket.io configuration for Railway
+// Socket.io configuration for Railway - optimized for free tier limits
 const io = new Server(server, {
     transports: ['polling'],
-    pingTimeout: 30000,
-    pingInterval: 10000,
+    pingTimeout: 20000,        // Reduced from 30000 to free up connections faster
+    pingInterval: 15000,       // Increased from 10000 to reduce traffic
     allowEIO3: true,
     perMessageDeflate: false,
     cookie: false,
     serveClient: true,
-    maxHttpBufferSize: 1e6
+    maxHttpBufferSize: 1e6,
+    connectTimeout: 10000,     // 10s timeout for new connections
+    // Cleanup settings to prevent connection buildup
+    cleanupEmptyChildNamespaces: true
 });
 
 // Log all Socket.io errors
 io.engine.on('connection_error', (err) => {
     console.log('Connection error:', err.req, err.code, err.message, err.context);
+});
+
+// Limit connections to prevent Railway backend.max_conn errors
+const MAX_CONNECTIONS = 25;
+io.use((socket, next) => {
+    const currentConnections = io.engine.clientsCount;
+    if (currentConnections >= MAX_CONNECTIONS) {
+        console.log(`Connection rejected: max connections (${MAX_CONNECTIONS}) reached`);
+        return next(new Error('Server is full. Please try again later.'));
+    }
+    next();
 });
 
 // Trust proxy for Railway
