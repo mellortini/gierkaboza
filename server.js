@@ -340,8 +340,7 @@ io.on('connection', (socket) => {
         const response = await callLLM(actionContext, playerData.name, playerApiKey, room.narratorHistory, wantsDetailed);
 
         // Zapisz akcję gracza i odpowiedź AI do historii narracji (pamięć bota) - BEZ LIMITU
-        const shortAction = action.length > 200 ? action.substring(0, 200) + '...' : action;
-        room.narratorHistory.push({ role: 'user', content: shortAction });
+        room.narratorHistory.push({ role: 'user', content: action });
         room.narratorHistory.push({ role: 'assistant', content: response });
         // Bez limitu - bot pamięta całą historię!
 
