@@ -483,10 +483,18 @@ async function joinRoom(serverUrl, roomId) {
     characterData.name = charNameInput;
     characterData.setting = elements.charSetting.value;
     characterData.description = elements.charDescription.value.trim();
-    
-    try {
-        await connectToServer(serverUrl);
+        characterData.adventureType = elements.adventureType.value;
+        characterData.tone = elements.toneTon.value;
         
+        // Zbierz wartości suwaków
+        characterData.sliders = {
+            violence: parseInt(elements.violenceLevel.value),
+            sexual: parseInt(elements.sexualLevel.value),
+            darkness: parseInt(elements.darknessLevel.value),
+            realism: parseInt(elements.realismLevel.value),
+            language: parseInt(elements.languageLevel.value),
+            psychological: parseInt(elements.psychologicalLevel.value)
+        };
         const playerName = characterData.name;
         
         // Include API key for LLM calls on server

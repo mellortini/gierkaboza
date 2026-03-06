@@ -302,6 +302,18 @@ io.on('connection', (socket) => {
         // Sprawdź czy gracz prosi o szczegółowy opis
         const wantsDetailed = /szczeg[oó]łowo|opisz dokładnie|rozwiń|detale|wiecej szczeg[oó][lł]ow|bardziej szczeg[oó]łowo/i.test(action);
         
+        // Dodaj ustawienia suwaków gracza do kontekstu
+        const sliders = playerData.characterData?.sliders;
+        if (sliders) {
+            actionContext += `\n\n## USTAWIENIA TREŚCI (skala 1-10) - STOSUJ SIĘ DO TEGO!\n`;
+            actionContext += `💀 Brutalność: ${sliders.violence}/10 ${getSliderDescription('violence', sliders.violence)}\n`;
+            actionContext += `🔞 Erotyka: ${sliders.sexual}/10 ${getSliderDescription('sexual', sliders.sexual)}\n`;
+            actionContext += `🌑 Mroczność: ${sliders.darkness}/10 ${getSliderDescription('darkness', sliders.darkness)}\n`;
+            actionContext += `🎭 Realizm: ${sliders.realism}/10 ${getSliderDescription('realism', sliders.realism)}\n`;
+            actionContext += `🗣️ Język: ${sliders.language}/10 ${getSliderDescription('language', sliders.language)}\n`;
+            actionContext += `🧠 Psychologia: ${sliders.psychological}/10 ${getSliderDescription('psychological', sliders.psychological)}\n`;
+        }
+        
         actionContext += `\n\nINSTRUKCJE DLA NARRATORA:
 - Opisz SZCZEGÓŁOWO co się dzieje w tej scenie
 - POKAŻ konkretne działania postaci, nie ogólniki
@@ -593,6 +605,55 @@ Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
         console.error('LLM error:', error);
         return `${playerName} wykonuje akcję, ale narrator ma problemy techniczne...`;
     }
+}
+
+// ============================================================================
+// CONTENT SLIDER HELPER
+// ============================================================================
+
+/**
+ * Get description for slider value based on type
+ */
+function getSliderDescription(type, value) {
+    const descriptions = {
+        violence: {
+            low: '(opisowa, bez szczegółów)',
+            mid: '(realistyczna, widoczne obrażenia)',
+            high: '(ekstremalna, szczegółowe rany, krew)'
+        },
+        sexual: {
+            low: '(wulg. tylko sugestie)',
+            mid: '(szczegółowe opisy)',
+            high: '(ekstremalne, szczegółowe akty)'
+        },
+        darkness: {
+            low: '(lekki klimat)',
+            mid: '(ponury, niebezpieczny)',
+            high: '(beznadziejny, koszmary)'
+        },
+        realism: {
+            low: '(heroiczny, szczęście)',
+            mid: '(realistyczne konsekwencje)',
+            high: '(brutalny, śmierć)'
+        },
+        language: {
+            low: '(czysty)',
+            mid: '(okazjonalne wulgaryzmy)',
+            high: '(brutalny, ciągłe)'
+        },
+        psychological: {
+            low: '(prosta)',
+            mid: '(złożona, motywacje)',
+            high: '(pokrętna, trauma)'
+        }
+    };
+    
+    const d = descriptions[type];
+    if (!d) return '';
+    
+    if (value <= 3) return d.low;
+    if (value <= 7) return d.mid;
+    return d.high;
 }
 
 // ============================================================================
