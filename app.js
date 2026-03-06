@@ -1553,10 +1553,14 @@ function addStoryEntry(type, text) {
             <div class="story-text">${formatStoryText(text)}</div>
         `;
     } else if (type === 'player') {
+        // For multiplayer chat messages (format: "💬 [Nick]: message"), extract the sender name
+        const chatMatch = text.match(/^💬 \[(.+?)\]: (.+)$/s);
+        const playerLabel = chatMatch ? chatMatch[1] : characterData.name;
+        const playerText = chatMatch ? `💬 ${chatMatch[2]}` : text;
         entryDiv.innerHTML = `
             <div class="story-player">
-                <div class="story-player-label">⚔️ ${characterData.name}</div>
-                <div>${escapeHtml(text)}</div>
+                <div class="story-player-label">⚔️ ${escapeHtml(playerLabel)}</div>
+                <div>${escapeHtml(playerText)}</div>
             </div>
         `;
     } else if (type === 'system') {
