@@ -129,7 +129,8 @@ io.on('connection', (socket) => {
                 players: new Map(),   // playerId -> player data
                 createdAt: Date.now(),
                 hostId: socket.id,
-                chatHistory: []       // Historia czatu graczy (dla kontekstu AI)
+                chatHistory: [],      // Historia czatu graczy (dla kontekstu AI)
+                narratorHistory: []   // Historia narracji AI (akcja + odpowiedź) dla pamięci bota
             });
         }
 
@@ -284,7 +285,16 @@ io.on('connection', (socket) => {
 
         // Call LLM with player's API key
         const playerApiKey = playerData.characterData?.apiKey || '';
-        const response = await callLLM(actionContext, playerData.name, playerApiKey);
+        if (!room.narratorHistory) room.narratorHistory = [];
+        const response = await callLLM(actionContext, playerData.name, playerApiKey, room.narratorHistory);
+
+        // Zapisz akcję i odpowiedź AI do historii narracji (pamięć bota)
+        room.narratorHistory.push({ role: 'user', content: actionContext });
+        room.narratorHistory.push({ role: 'assistant', content: response });
+        // Ogranicz historię do ostatnich 20 par (40 wiadomości) żeby nie przekroczyć limitu tokenów
+        if (room.narratorHistory.length > 40) {
+            room.narratorHistory = room.narratorHistory.slice(-40);
+        }
 
         // Phase 1-2: Przesuwamy czas i przetwarzamy wydarzenia
         world.advanceWorldTime(15);   // realistyczny koszt akcji
@@ -482,12 +492,21 @@ function serializeWorld(world) {
  * Call OpenRouter API for LLM response
  * Each player uses their own API key
  */
-async function callLLM(context, playerName, apiKey) {
+async function callLLM(context, playerName, apiKey, narratorHistory = []) {
     if (!apiKey) {
         return `${playerName} wykonuje akcję... (brak klucza API - dodaj swój klucz OpenRouter)`;
     }
     
     try {
+        // Buduj messages z historią narracji żeby bot pamiętał poprzednie tury
+        const systemMessage = {
+            role: 'system',
+            content: `Jesteś narratorem w grze RPG. Opisuj akcje gracza i ich konsekwencje. NIE opisuj ciągle tej samej lokacji - zakładaj, że gracz ją zna. Skup się na tym CO się dzieje, nie GDZIE się dzieje. Postać nazywa się ${playerName}. Pamiętaj o poprzednich wydarzeniach z tej sesji i nawiązuj do nich. Odpowiadaj po polsku.`
+        };
+        // Weź ostatnie 20 wiadomości z historii żeby nie przekroczyć limitu tokenów
+        const historySlice = narratorHistory.slice(-20);
+        const messages = [systemMessage, ...historySlice, { role: 'user', content: context }];
+
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -498,10 +517,7 @@ async function callLLM(context, playerName, apiKey) {
             },
             body: JSON.stringify({
                 model: 'openai/gpt-3.5-turbo',
-                messages: [
-                    { role: 'system', content: `Jesteś narratorem w grze RPG. Opisuj akcje gracza i ich konsekwencje. NIE opisuj ciągle tej samej lokacji - zakładaj, że gracz ją zna. Skup się na tym CO się dzieje, nie GDZIE się dzieje. Postać nazywa się ${playerName}. Odpowiadaj po polsku.` },
-                    { role: 'user', content: context }
-                ],
+                messages,
                 temperature: 0.8,
                 max_tokens: 400
             })
