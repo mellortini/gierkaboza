@@ -570,10 +570,6 @@ async function joinRoom(serverUrl, roomId) {
             startMultiplayerGame(data);
         });
 
-        state.socket.once('roomJoined', (data) => {
-            // This is handled above
-        }, { once: true });
-
         // Handle errors
         state.socket.once('joinError', (data) => {
             statusEl.textContent = data.message || 'Błąd dołączania do pokoju';
