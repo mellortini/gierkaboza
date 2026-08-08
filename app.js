@@ -133,6 +133,7 @@ const elements = {
     playerStamina: document.getElementById('player-stamina'),
     playerMana: document.getElementById('player-mana'),
     playerGold: document.getElementById('player-gold'),
+    playerInventory: document.getElementById('player-inventory'),
     playerHunger: document.getElementById('player-hunger'),
     playerThirst: document.getElementById('player-thirst'),
     playerFatigue: document.getElementById('player-fatigue')
@@ -792,6 +793,9 @@ function setupMultiplayerListeners() {
 
     // Action result from server
     state.socket.on('actionResult', (data) => {
+        if (data.playerId === state.playerId && data.mechanics?.message) {
+            addStoryEntry('system', `Mechanika: ${data.mechanics.message}`);
+        }
         // Add story response
         addStoryEntry('narrator', data.response);
         
@@ -1652,6 +1656,9 @@ async function generateStory(userAction = null) {
         }
 
         // Wyświetl w grze
+        if (mechanicalResult?.message) {
+            addStoryEntry('system', `Mechanika: ${mechanicalResult.message}`);
+        }
         addStoryEntry('narrator', storyText);
 
     } catch (error) {
@@ -1765,6 +1772,14 @@ function updateGameHUD() {
     
     // Gold
     elements.playerGold.textContent = player.gold;
+
+    if (elements.playerInventory) {
+        const inventory = (player.inventory || [])
+            .filter(item => item && item.quantity > 0)
+            .map(item => `${window.RPGEngine?.ITEM_CATALOG?.[item.id]?.name || item.id} x${item.quantity}`)
+            .join(', ');
+        elements.playerInventory.textContent = inventory || '-';
+    }
     
     // Survival stats
     elements.playerHunger.textContent = `${Math.round(player.hunger)}%`;

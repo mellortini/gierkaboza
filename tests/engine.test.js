@@ -58,8 +58,42 @@ function testEventQueueCountersAndCancellation() {
     assert.strictEqual(queue.countByFaction('faction_b'), 1);
 }
 
+function testTradeCombatAndQuestLoop() {
+    const world = World.createStarterWorld('Tester', 'town_central');
+    world.config.regenRates.hp = 0;
+    world.config.regenRates.stamina = 0;
+    const player = world.player;
+
+    const quest = world.performPlayerAction('przyjmij zadanie', player);
+    assert.strictEqual(quest.success, true);
+    assert.strictEqual(player.getQuest('forest_threat').status, 'active');
+
+    world.performPlayerAction('idz do market_square', player);
+    const purchase = world.performPlayerAction('kup healing_potion', player);
+    assert.strictEqual(purchase.success, true);
+    assert.strictEqual(player.getItemQuantity('healing_potion'), 2);
+    assert.strictEqual(player.gold, 75);
+
+    player.hp = 50;
+    const use = world.performPlayerAction('uzyj healing_potion', player);
+    assert.strictEqual(use.success, true);
+    assert.strictEqual(player.hp, 80);
+    assert.strictEqual(player.getItemQuantity('healing_potion'), 1);
+
+    world.performPlayerAction('idz do forest_entrance', player);
+    let combat;
+    for (let i = 0; i < 7; i += 1) {
+        combat = world.performPlayerAction('atak npc_forest_bandit', player);
+    }
+    assert.strictEqual(combat.success, true);
+    assert.strictEqual(world.getNPC('npc_forest_bandit').isAlive, false);
+    assert.strictEqual(player.getQuest('forest_threat').status, 'completed');
+    assert.strictEqual(player.gold, 155);
+}
+
 testTimeValidation();
 testPlayerActionsAndRoundTrip();
 testStatusEffectDuration();
 testEventQueueCountersAndCancellation();
+testTradeCombatAndQuestLoop();
 console.log('engine tests passed');

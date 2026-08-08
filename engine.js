@@ -30,6 +30,15 @@ const IMPORTANCE_TABLE = {
     "status_effect_removed": 0.20,
     "trade_happened": 0.08,
     "travel_happened": 0.15,
+    "item_used": 0.08,
+    "item_bought": 0.08,
+    "item_sold": 0.06,
+    "player_healed": 0.10,
+    "player_damaged": 0.20,
+    "combat_happened": 0.35,
+    "xp_gained": 0.10,
+    "quest_accepted": 0.25,
+    "quest_completed": 0.45,
     // Phase 2: Event-related changes
     "war_battle": 0.75,
     "war_ended": 0.65,
@@ -76,6 +85,15 @@ const EVENT_LIMITS = {
 };
 
 const STRATEGIC_UPDATE_INTERVAL = 10080; // 7 days in minutes
+
+// Small deterministic item catalogue used by the starter game and the
+// action resolver. Items are data, so saves remain stable as the rules grow.
+const ITEM_CATALOG = Object.freeze({
+    bread: { id: "bread", name: "bread", aliases: ["bread", "chleb"], price: 5, type: "food", hungerRestore: 15 },
+    healing_potion: { id: "healing_potion", name: "healing potion", aliases: ["healing potion", "potion", "mikstura", "lecznicza"], price: 25, type: "consumable", heal: 30 },
+    iron_sword: { id: "iron_sword", name: "iron sword", aliases: ["iron sword", "sword", "miecz"], price: 75, type: "weapon", attack: 5 },
+    leather_armor: { id: "leather_armor", name: "leather armor", aliases: ["leather armor", "armor", "zbroja"], price: 60, type: "armor", defense: 2 }
+});
 
 // Phase 3: Goal types
 const GOAL_TYPES = [
@@ -802,6 +820,14 @@ class NPC {
         // Combat stats (optional for Phase 1)
         this.hp = 50;
         this.maxHp = 50;
+        this.attack = 5;
+        this.defense = 0;
+        this.goldReward = 0;
+        this.xpReward = 10;
+        this.isAlive = true;
+        this.isMerchant = false;
+        this.isQuestGiver = false;
+        this.inventory = [];
     }
 
     addStatusEffect(effect) {
@@ -831,7 +857,15 @@ class NPC {
                 magnitude: e.magnitude
             })),
             hp: this.hp,
-            maxHp: this.maxHp
+            maxHp: this.maxHp,
+            attack: this.attack,
+            defense: this.defense,
+            goldReward: this.goldReward,
+            xpReward: this.xpReward,
+            isAlive: this.isAlive,
+            isMerchant: this.isMerchant,
+            isQuestGiver: this.isQuestGiver,
+            inventory: this.inventory
         };
     }
 
@@ -847,8 +881,16 @@ class NPC {
         npc.statusEffects = (json.statusEffects || []).map(e => 
             new StatusEffect(e.name, e.remainingMinutes, e.effectType, e.magnitude)
         );
-        npc.hp = json.hp;
-        npc.maxHp = json.maxHp;
+        npc.hp = Number.isFinite(json.hp) ? json.hp : npc.hp;
+        npc.maxHp = Number.isFinite(json.maxHp) ? json.maxHp : npc.maxHp;
+        npc.attack = Number.isFinite(json.attack) ? json.attack : npc.attack;
+        npc.defense = Number.isFinite(json.defense) ? json.defense : npc.defense;
+        npc.goldReward = Number.isFinite(json.goldReward) ? json.goldReward : npc.goldReward;
+        npc.xpReward = Number.isFinite(json.xpReward) ? json.xpReward : npc.xpReward;
+        npc.isAlive = json.isAlive !== false;
+        npc.isMerchant = json.isMerchant === true;
+        npc.isQuestGiver = json.isQuestGiver === true;
+        npc.inventory = Array.isArray(json.inventory) ? json.inventory : [];
         return npc;
     }
 }
@@ -886,6 +928,80 @@ class Player {
         
         // Inventory (Phase 2+)
         this.inventory = [];
+
+        // Minimal D&D-like progression used by deterministic actions.
+        this.level = 1;
+        this.xp = 0;
+        this.attack = 8;
+        this.defense = 0;
+        this.quests = [];
+    }
+
+    getItem(itemId) {
+        return this.inventory.find(item => item.id === itemId) || null;
+    }
+
+    addItem(itemId, quantity = 1) {
+        const amount = Number.isInteger(quantity) ? quantity : 0;
+        if (amount <= 0 || !ITEM_CATALOG[itemId]) return false;
+        const existing = this.getItem(itemId);
+        if (existing) existing.quantity += amount;
+        else this.inventory.push({ id: itemId, quantity: amount });
+        return true;
+    }
+
+    removeItem(itemId, quantity = 1) {
+        const amount = Number.isInteger(quantity) ? quantity : 0;
+        const existing = this.getItem(itemId);
+        if (amount <= 0 || !existing || existing.quantity < amount) return false;
+        existing.quantity -= amount;
+        if (existing.quantity <= 0) {
+            this.inventory = this.inventory.filter(item => item.id !== itemId);
+        }
+        return true;
+    }
+
+    getItemQuantity(itemId) {
+        return this.getItem(itemId)?.quantity || 0;
+    }
+
+    getAttackPower() {
+        const weaponBonus = this.inventory
+            .filter(item => item.quantity > 0)
+            .reduce((total, item) => total + (ITEM_CATALOG[item.id]?.attack || 0), 0);
+        return Math.max(1, this.attack + weaponBonus);
+    }
+
+    getDefensePower() {
+        const armorBonus = this.inventory
+            .filter(item => item.quantity > 0)
+            .reduce((total, item) => total + (ITEM_CATALOG[item.id]?.defense || 0), 0);
+        return Math.max(0, this.defense + armorBonus);
+    }
+
+    addQuest(quest) {
+        if (!quest?.id || this.quests.some(existing => existing.id === quest.id)) return false;
+        this.quests.push({ ...quest });
+        return true;
+    }
+
+    getQuest(questId) {
+        return this.quests.find(quest => quest.id === questId) || null;
+    }
+
+    gainXp(amount) {
+        const safeAmount = Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0;
+        this.xp += safeAmount;
+        let levelsGained = 0;
+        while (this.xp >= this.level * 100) {
+            this.xp -= this.level * 100;
+            this.level += 1;
+            this.maxHp += 10;
+            this.hp = this.maxHp;
+            this.attack += 2;
+            levelsGained += 1;
+        }
+        return levelsGained;
     }
 
     addStatusEffect(effect) {
@@ -931,6 +1047,10 @@ class Player {
             hunger: this.hunger,
             thirst: this.thirst,
             fatigue: this.fatigue,
+            level: this.level,
+            xp: this.xp,
+            attack: this.attack,
+            defense: this.defense,
             reputation: Object.fromEntries(this.reputation),
             statusEffects: this.statusEffects.map(e => ({
                 name: e.name,
@@ -939,7 +1059,8 @@ class Player {
                 magnitude: e.magnitude
             })),
             storyFlags: Array.from(this.storyFlags),
-            inventory: this.inventory
+            inventory: this.inventory,
+            quests: this.quests
         };
     }
 
@@ -955,6 +1076,10 @@ class Player {
         player.hunger = Number.isFinite(json.hunger) ? json.hunger : player.hunger;
         player.thirst = Number.isFinite(json.thirst) ? json.thirst : player.thirst;
         player.fatigue = Number.isFinite(json.fatigue) ? json.fatigue : player.fatigue;
+        player.level = Number.isFinite(json.level) ? Math.max(1, Math.floor(json.level)) : player.level;
+        player.xp = Number.isFinite(json.xp) ? Math.max(0, Math.floor(json.xp)) : player.xp;
+        player.attack = Number.isFinite(json.attack) ? json.attack : player.attack;
+        player.defense = Number.isFinite(json.defense) ? json.defense : player.defense;
         // FIX: Handle both Map (array of entries) and plain object
         if (Array.isArray(json.reputation)) {
             player.reputation = new Map(json.reputation);
@@ -967,7 +1092,12 @@ class Player {
             new StatusEffect(e.name, e.remainingMinutes, e.effectType, e.magnitude)
         );
         player.storyFlags = new Set(json.storyFlags || []);
-        player.inventory = json.inventory || [];
+        player.inventory = Array.isArray(json.inventory)
+            ? json.inventory
+                .filter(item => item && ITEM_CATALOG[item.id] && Number.isInteger(item.quantity) && item.quantity > 0)
+                .map(item => ({ id: item.id, quantity: item.quantity }))
+            : [];
+        player.quests = Array.isArray(json.quests) ? json.quests : [];
         return player;
     }
 }
@@ -1270,6 +1400,159 @@ class World {
     // PLAYER ACTIONS - DETERMINISTIC MECHANICS
     // ========================================================================
 
+    _resolveItemInAction(normalizedAction) {
+        const items = Object.values(ITEM_CATALOG).sort((a, b) => b.name.length - a.name.length);
+        return items.find(item => item.aliases.some(alias => normalizedAction.includes(alias))) || null;
+    }
+
+    _findNpcInAction(normalizedAction, player, allowSingleFallback = false) {
+        const available = Array.from(this.npcs.values()).filter(npc =>
+            npc.locationId === player.locationId && npc.isAlive !== false
+        );
+        const named = available.find(npc => {
+            const id = String(npc.id || '').toLocaleLowerCase('pl-PL');
+            const name = String(npc.name || '').toLocaleLowerCase('pl-PL');
+            return (id && normalizedAction.includes(id)) || (name && normalizedAction.includes(name));
+        });
+        if (named) return named;
+        return allowSingleFallback && available.length === 1 ? available[0] : null;
+    }
+
+    _findMerchant(player) {
+        return Array.from(this.npcs.values()).find(npc =>
+            npc.locationId === player.locationId && npc.isAlive !== false && npc.isMerchant
+        ) || null;
+    }
+
+    _findQuestGiver(player) {
+        return Array.from(this.npcs.values()).find(npc =>
+            npc.locationId === player.locationId && npc.isAlive !== false && npc.isQuestGiver
+        ) || null;
+    }
+
+    _getStarterQuest() {
+        return {
+            id: 'forest_threat',
+            title: 'Zagrozenie w lesie',
+            description: 'Pokonaj bandyte grasujacego przy wejsciu do lasu.',
+            status: 'active',
+            objective: { type: 'kill_npc', targetId: 'npc_forest_bandit', required: 1, progress: 0 },
+            reward: { gold: 50, xp: 40 }
+        };
+    }
+
+    _tryUseItem(normalizedAction, player) {
+        if (!/(use|uzyj|zjedz|zjedz)/i.test(normalizedAction)) return null;
+        const item = this._resolveItemInAction(normalizedAction);
+        if (!item) return { success: false, message: 'Nie rozpoznaje przedmiotu do uzycia.', timeCostMinutes: 1, changes: [] };
+        if (player.getItemQuantity(item.id) < 1) {
+            return { success: false, message: `Nie masz przedmiotu: ${item.name}.`, timeCostMinutes: 1, changes: [] };
+        }
+        player.removeItem(item.id, 1);
+        const changes = [new WorldChange('item_used', item.id, -1, `Used ${item.name}`, 'local')];
+        if (item.heal) {
+            const before = player.hp;
+            player.hp = Math.min(player.maxHp, player.hp + item.heal);
+            changes.push(new WorldChange('player_healed', player.name, player.hp - before, `Healed ${player.hp - before} HP`, 'local'));
+        }
+        if (item.hungerRestore) {
+            player.hunger = Math.max(0, player.hunger - item.hungerRestore);
+            changes.push(new WorldChange('survival_stat_changed', player.name, -item.hungerRestore, 'Food restored hunger', 'local'));
+        }
+        return { success: true, message: `Uzywasz: ${item.name}.`, timeCostMinutes: 1, changes };
+    }
+
+    _tryTradeAction(normalizedAction, player) {
+        const merchant = this._findMerchant(player);
+        if (!merchant) return { success: false, message: 'W tej lokacji nie ma kupca.', timeCostMinutes: 1, changes: [] };
+        const item = this._resolveItemInAction(normalizedAction);
+        if (!item) return { success: false, message: 'Podaj przedmiot, ktory chcesz kupic albo sprzedac.', timeCostMinutes: 1, changes: [] };
+        const changes = [];
+        const isSell = /(sell|sprzed|oddaj)/i.test(normalizedAction);
+        const stock = merchant.inventory.find(entry => entry.id === item.id);
+        if (isSell) {
+            if (player.getItemQuantity(item.id) < 1) {
+                return { success: false, message: `Nie masz przedmiotu: ${item.name}.`, timeCostMinutes: 1, changes: [] };
+            }
+            const value = Math.max(1, Math.floor(item.price * 0.5));
+            player.removeItem(item.id, 1);
+            player.gold += value;
+            changes.push(new WorldChange('item_sold', item.id, -1, `Sold ${item.name}`, 'local'));
+            changes.push(new WorldChange('gold_changed', player.name, value, `Received ${value} gold`, 'local'));
+            return { success: true, message: `Sprzedajesz ${item.name} za ${value} zlota.`, timeCostMinutes: 5, changes };
+        }
+        if (!stock || stock.quantity < 1) {
+            return { success: false, message: `Kupiec nie ma przedmiotu: ${item.name}.`, timeCostMinutes: 1, changes: [] };
+        }
+        if (player.gold < item.price) {
+            return { success: false, message: `Brakuje ci zlota. Cena to ${item.price}.`, timeCostMinutes: 1, changes: [] };
+        }
+        player.gold -= item.price;
+        player.addItem(item.id, 1);
+        stock.quantity -= 1;
+        changes.push(new WorldChange('item_bought', item.id, 1, `Bought ${item.name}`, 'local'));
+        changes.push(new WorldChange('gold_changed', player.name, -item.price, `Spent ${item.price} gold`, 'local'));
+        return { success: true, message: `Kupujesz ${item.name} za ${item.price} zlota.`, timeCostMinutes: 5, changes };
+    }
+
+    _tryQuestAction(normalizedAction, player) {
+        if (!/(quest|zadanie|misja|przyjmij|accept|nagrod|reward)/i.test(normalizedAction)) return null;
+        const questGiver = this._findQuestGiver(player);
+        if (!questGiver) return { success: false, message: 'Nie ma tu osoby, ktora oferuje zadanie.', timeCostMinutes: 1, changes: [] };
+        const existing = player.getQuest('forest_threat');
+        if (existing) {
+            return { success: true, message: `Zadanie "${existing.title}" ma status: ${existing.status}.`, timeCostMinutes: 1, changes: [] };
+        }
+        const quest = this._getStarterQuest();
+        player.addQuest(quest);
+        return {
+            success: true,
+            message: `Przyjmujesz zadanie: ${quest.title}.`,
+            timeCostMinutes: 2,
+            changes: [new WorldChange('quest_accepted', quest.id, true, quest.title, 'local')]
+        };
+    }
+
+    _tryCombatAction(normalizedAction, player) {
+        if (player.stamina < 5) return { success: false, message: 'Brakuje ci staminy na atak.', timeCostMinutes: 1, changes: [] };
+        const target = this._findNpcInAction(normalizedAction, player, true);
+        if (!target) return { success: false, message: 'Nie ma tu celu walki.', timeCostMinutes: 1, changes: [] };
+        player.stamina -= 5;
+        const changes = [];
+        const damage = Math.max(1, player.getAttackPower() - target.defense);
+        target.hp = Math.max(0, target.hp - damage);
+        changes.push(new WorldChange('combat_happened', target.id, damage, `Dealt ${damage} damage to ${target.name}`, 'local'));
+        if (target.hp <= 0) {
+            target.isAlive = false;
+            player.gold += target.goldReward;
+            const levelsGained = player.gainXp(target.xpReward);
+            changes.push(new WorldChange('npc_killed', target.id, true, `${target.name} was defeated`, 'local'));
+            if (target.goldReward > 0) changes.push(new WorldChange('gold_changed', player.name, target.goldReward, 'Looted gold', 'local'));
+            if (target.xpReward > 0) changes.push(new WorldChange('xp_gained', player.name, target.xpReward, 'Gained experience', 'local'));
+            this._completeKillQuests(player, target, changes);
+            return { success: true, message: `Pokonujesz przeciwnika: ${target.name}.`, timeCostMinutes: 2, changes };
+        }
+        const retaliation = Math.max(1, target.attack - player.getDefensePower());
+        player.hp = Math.max(0, player.hp - retaliation);
+        changes.push(new WorldChange('player_damaged', player.name, -retaliation, `${target.name} hits back`, 'local'));
+        return { success: true, message: `Ranisz ${target.name}, ale przeciwnik odpowiada ciosem za ${retaliation} HP.`, timeCostMinutes: 2, changes };
+    }
+
+    _completeKillQuests(player, target, changes) {
+        for (const quest of player.quests) {
+            if (quest.status !== 'active' || quest.objective?.type !== 'kill_npc' || quest.objective.targetId !== target.id) continue;
+            quest.objective.progress = 1;
+            quest.status = 'completed';
+            const gold = quest.reward?.gold || 0;
+            const xp = quest.reward?.xp || 0;
+            player.gold += gold;
+            player.gainXp(xp);
+            changes.push(new WorldChange('quest_completed', quest.id, true, quest.title, 'local'));
+            if (gold) changes.push(new WorldChange('gold_changed', player.name, gold, 'Quest reward', 'local'));
+            if (xp) changes.push(new WorldChange('xp_gained', player.name, xp, 'Quest reward experience', 'local'));
+        }
+    }
+
     /**
      * Resolve the small set of actions that the engine can currently prove.
      * The narrator may embellish the result, but it cannot invent a state
@@ -1345,6 +1628,25 @@ class World {
             success = false;
             message = "Walka wymaga celu i statystyk przeciwnika; akcja nie zmieni HP bez mechaniki walki.";
             timeCostMinutes = 5;
+        }
+
+        // Resolve richer mechanics after the legacy travel/dialogue branches so
+        // old saves and clients keep working while trade/combat/quests become real.
+        let mechanicOverride = null;
+        if (/\b(quest|zadanie|misja|przyjmij|accept|nagrod|reward)\b/i.test(normalized)) {
+            mechanicOverride = this._tryQuestAction(normalized, player);
+        } else if (/\b(use|uzyj|zjedz|zjedz)\b/i.test(normalized)) {
+            mechanicOverride = this._tryUseItem(normalized, player);
+        } else if (/\b(kup|kupuj|sprzed|handel|targuj|buy|sell)\b/i.test(normalized)) {
+            mechanicOverride = this._tryTradeAction(normalized, player);
+        } else if (/\b(atak|walcz|uderz|zabij|strzel|attack|fight)\b/i.test(normalized)) {
+            mechanicOverride = this._tryCombatAction(normalized, player);
+        }
+        if (mechanicOverride) {
+            success = mechanicOverride.success;
+            message = mechanicOverride.message;
+            timeCostMinutes = mechanicOverride.timeCostMinutes;
+            changes.splice(0, changes.length, ...mechanicOverride.changes);
         }
 
         const result = new ActionResult(success, message, timeCostMinutes, changes);
@@ -3310,8 +3612,37 @@ class World {
             centralTown.controllingFactionId = "kingdom";
         }
         
+        // Starter NPCs make the deterministic mechanics immediately playable.
+        const merchant = new NPC('npc_market_merchant', 'market_square', 'merchants_guild');
+        merchant.name = 'Market Merchant';
+        merchant.isMerchant = true;
+        merchant.inventory = [
+            { id: 'bread', quantity: 10 },
+            { id: 'healing_potion', quantity: 5 },
+            { id: 'iron_sword', quantity: 1 },
+            { id: 'leather_armor', quantity: 1 }
+        ];
+        world.addNPC(merchant);
+
+        const warden = new NPC('npc_town_warden', 'town_central', 'kingdom');
+        warden.name = 'Town Warden';
+        warden.isQuestGiver = true;
+        world.addNPC(warden);
+
+        const bandit = new NPC('npc_forest_bandit', 'forest_entrance', 'thieves_guild');
+        bandit.name = 'Forest Bandit';
+        bandit.hp = 45;
+        bandit.maxHp = 45;
+        bandit.attack = 7;
+        bandit.defense = 1;
+        bandit.goldReward = 30;
+        bandit.xpReward = 25;
+        world.addNPC(bandit);
+
         // Create player
         const player = new Player(playerName, playerLocationId);
+        player.addItem('bread', 2);
+        player.addItem('healing_potion', 1);
         world.setPlayer(player);
         
         // Set initial reputation
@@ -3346,7 +3677,8 @@ if (typeof module !== 'undefined' && module.exports) {
         DEFAULT_CONSUMPTION,
         STATUS_THRESHOLDS,
         EVENT_LIMITS,
-        STRATEGIC_UPDATE_INTERVAL
+        STRATEGIC_UPDATE_INTERVAL,
+        ITEM_CATALOG
     };
 }
 
@@ -3369,6 +3701,7 @@ if (typeof window !== 'undefined') {
         DEFAULT_CONSUMPTION,
         STATUS_THRESHOLDS,
         EVENT_LIMITS,
-        STRATEGIC_UPDATE_INTERVAL
+        STRATEGIC_UPDATE_INTERVAL,
+        ITEM_CATALOG
     };
 }

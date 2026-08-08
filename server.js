@@ -267,9 +267,12 @@ io.on('connection', (socket) => {
             ? requestedPlayerId
             : `player_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
         const savedPlayer = room.savedPlayers.get(playerId);
+        const isFirstActivePlayer = room.players.size === 0;
         const gamePlayer = savedPlayer
             ? Player.fromJSON(savedPlayer)
-            : new Player(playerName, room.world.player?.locationId || 'town_central');
+            : (isFirstActivePlayer && room.world.player
+                ? room.world.player
+                : new Player(playerName, room.world.player?.locationId || 'town_central'));
         gamePlayer.name = playerName;
         room.savedPlayers.delete(playerId);
         if (!room.hostId) room.hostId = socket.id;

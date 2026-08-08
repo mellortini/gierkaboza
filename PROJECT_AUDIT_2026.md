@@ -15,10 +15,18 @@ Projekt jest działającym prototypem tekstowego RPG z narratorem AI i trybem So
 - Ograniczono podstawowe ścieżki XSS w historii, liście graczy i zapisach oraz dodano limit akcji na socket.
 - Zapis lokalny używa jednego klucza (`rpg_save`), a plan wygenerowanego świata jest zachowywany w snapshotach.
 
+## Mechaniki dodane w kolejnym etapie
+
+- starter world zawiera kupca, zleceniodawcę zadania i przeciwnika w lesie;
+- gracz ma przedmioty, złoto, XP, poziom, atak, obronę i listę questów;
+- działają komendy kupna, sprzedaży, użycia przedmiotu, przyjęcia zadania i walki;
+- nagrody, obrażenia, śmierć NPC, XP i postęp questa trafiają do `WorldChange` oraz zapisów;
+- HUD pokazuje zawartość ekwipunku, a multiplayer otrzymuje pełny snapshot z NPC-ami.
+
 ## Nadal do zaprojektowania przed wersją gry
 
 1. Prawdziwy model świata z generatora: plan AI powinien zwracać walidowany JSON lokacji, frakcji, NPC-ów i questów, a nie tylko Markdown.
-2. Reguły D&D: statystyki, rzuty, inicjatywa, walka, przedmioty, handel, questy i warunki zwycięstwa.
+2. Głębsze reguły D&D: rzuty kośćmi, inicjatywa, pancerz, klasy, umiejętności, warunki zwycięstwa i rozbudowany sklep.
 3. Trwała baza danych i migracje zamiast pliku JSON, jeśli gra ma działać na wielu instancjach Railway.
 4. Uwierzytelnianie graczy i bezpieczny model kluczy AI. Obecnie klient przekazuje klucz serwerowi na czas narracji; nie należy traktować tego jako rozwiązania produkcyjnego.
 5. Testy integracyjne przeglądarki i multiplayera uruchamiane automatycznie w CI.
