@@ -8,16 +8,17 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
 
 // Global CORS - must be first
 app.use((req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Origin', process.env.CLIENT_ORIGIN || '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
     res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With,content-type');
-    res.setHeader('Access-Control-Allow-Credentials', true);
+    res.setHeader('Access-Control-Allow-Credentials', 'false');
     if (req.method === 'OPTIONS') {
         res.sendStatus(200);
     } else {
@@ -91,12 +92,15 @@ const rooms = new Map();
 
 // Player sessions - keyed by socket ID
 const players = new Map();
+const actionRateLimits = new Map();
 
 // ====================== PEŁNY SILNIK (fazy 1-5) ======================
 let World;
+let Player;
 try {
     const engineModule = require('./engine.js');
     World = engineModule.World;
+    Player = engineModule.Player;
     console.log('✅ PEŁNY SILNIK RPG (fazy 1-5) ZAŁADOWANY POMYŚLNIE');
 } catch (err) {
     console.error('❌ BŁĄD ŁADOWANIA ENGINE.JS:');
@@ -104,6 +108,85 @@ try {
     console.error(err.stack);
     process.exit(1); // zatrzymujemy serwer, bo bez silnika nie ma sensu
 }
+
+// Prototype persistence. For Railway, mount a volume or replace this adapter
+// with a real database before running multiple replicas.
+const DATA_DIR = path.join(__dirname, 'data');
+const ROOMS_FILE = path.join(DATA_DIR, 'rooms.json');
+const rejoinSessions = new Map();
+
+function createRoom(roomId, world = null, persisted = {}) {
+    return {
+        id: roomId,
+        world,
+        players: new Map(),
+        savedPlayers: new Map(Object.entries(persisted.savedPlayers || {})),
+        createdAt: persisted.createdAt || Date.now(),
+        lastActiveAt: persisted.lastActiveAt || Date.now(),
+        hostId: null,
+        chatHistory: Array.isArray(persisted.chatHistory) ? persisted.chatHistory.slice(-50) : [],
+        playerHistories: persisted.playerHistories || {},
+        actionQueue: Promise.resolve()
+    };
+}
+
+function restoreWorldSnapshot(snapshot, playerName) {
+    if (!snapshot || !Array.isArray(snapshot.locations) || !Array.isArray(snapshot.factions)) {
+        throw new Error('Incomplete world snapshot');
+    }
+    const world = World.fromJSON(snapshot);
+    if (world.locations.size === 0) throw new Error('World snapshot has no locations');
+    if (!world.player) world.setPlayer(new Player(playerName, 'town_central'));
+    return world;
+}
+
+function allowAction(socketId) {
+    const now = Date.now();
+    const current = actionRateLimits.get(socketId);
+    if (!current || now - current.startedAt >= 60000) {
+        actionRateLimits.set(socketId, { startedAt: now, count: 1 });
+        return true;
+    }
+    if (current.count >= 20) return false;
+    current.count += 1;
+    return true;
+}
+
+function persistRooms() {
+    try {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        const data = Array.from(rooms.values()).map(room => ({
+            id: room.id,
+            world: room.world ? room.world.toJSON() : null,
+            savedPlayers: Object.fromEntries(room.savedPlayers || []),
+            createdAt: room.createdAt,
+            lastActiveAt: room.lastActiveAt,
+            chatHistory: room.chatHistory.slice(-50),
+            playerHistories: Object.fromEntries(
+                Object.entries(room.playerHistories || {}).map(([id, history]) => [id, history.slice(-100)])
+            )
+        }));
+        fs.writeFileSync(ROOMS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (error) {
+        console.error('Could not persist rooms:', error.message);
+    }
+}
+
+function loadPersistedRooms() {
+    if (!fs.existsSync(ROOMS_FILE)) return;
+    try {
+        const data = JSON.parse(fs.readFileSync(ROOMS_FILE, 'utf8'));
+        for (const savedRoom of Array.isArray(data) ? data : []) {
+            if (!savedRoom.id || !savedRoom.world) continue;
+            rooms.set(savedRoom.id, createRoom(savedRoom.id, World.fromJSON(savedRoom.world), savedRoom));
+        }
+        console.log(`Loaded ${rooms.size} persisted room(s)`);
+    } catch (error) {
+        console.error('Could not load persisted rooms:', error.message);
+    }
+}
+
+loadPersistedRooms();
 
 // ============================================================================
 // SOCKET.IO HANDLERS
@@ -125,45 +208,49 @@ io.on('connection', (socket) => {
     // Create or join a game room
     socket.on('joinRoom', (data) => {
         try {
-            const { roomId, playerName, characterData, worldData, worldOption } = data;
-            
+            const { roomId: rawRoomId, playerName: rawPlayerName, characterData, worldData, worldOption, playerId: requestedPlayerId } = data || {};
+            const roomId = String(rawRoomId || '').trim();
+            const playerName = String(rawPlayerName || '').trim();
+
             console.log(`Join room request: ${roomId}, player: ${playerName}, worldOption: ${worldOption}`);
             
             // Validate data
-            if (!roomId || !playerName) {
-                socket.emit('joinError', { message: 'Brak ID pokoju lub nazwy gracza' });
+            if (!roomId || !playerName || roomId.length > 64 || playerName.length > 80) {
+                socket.emit('joinError', { message: 'Podaj poprawne ID pokoju i nazwę gracza (maks. 64/80 znaków).' });
                 return;
             }
             
             // Create room if it doesn't exist
             if (!rooms.has(roomId)) {
-            rooms.set(roomId, {
-                id: roomId,
+            rooms.set(roomId, createRoom(roomId));
+                /* id: roomId,
                 world: null,          // Will be created when first player joins
                 players: new Map(),   // playerId -> player data
                 createdAt: Date.now(),
                 hostId: socket.id,
                 chatHistory: [],      // Historia czatu graczy (dla kontekstu AI)
                 playerHistories: {}   // Historia narracji dla KAŻDEGO gracza osobno
-            });
+            }); */
         }
 
         const room = rooms.get(roomId);
+        room.lastActiveAt = Date.now();
+        const incomingWorld = worldData && worldData.world ? worldData.world : worldData;
         
         // Create or load world based on option
         if (!room.world) {
-            if (worldData && worldOption === 'current') {
+            if (incomingWorld && worldOption === 'current') {
                 // Load world from client data
                 try {
-                    room.world = World.fromJSON(worldData);
+                    room.world = restoreWorldSnapshot(incomingWorld, playerName);
                     console.log('World loaded from client data');
                 } catch (e) {
                     console.error('Error loading world from client:', e);
                     room.world = World.createStarterWorld(playerName, 'town_central');
                 }
-            } else if (worldOption === 'saved' && worldData) {
+            } else if (worldOption === 'saved' && incomingWorld) {
                 try {
-                    room.world = World.fromJSON(worldData);
+                    room.world = restoreWorldSnapshot(incomingWorld, playerName);
                     console.log('World loaded from saved game');
                 } catch (e) {
                     console.error('Error loading saved world:', e);
@@ -175,13 +262,24 @@ io.on('connection', (socket) => {
             }
         }
 
-        // Add player to room
-        const playerId = `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        // Add or restore a player. The world remains shared, while character state is per socket/player.
+        const playerId = (requestedPlayerId && room.savedPlayers.has(requestedPlayerId))
+            ? requestedPlayerId
+            : `player_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+        const savedPlayer = room.savedPlayers.get(playerId);
+        const gamePlayer = savedPlayer
+            ? Player.fromJSON(savedPlayer)
+            : new Player(playerName, room.world.player?.locationId || 'town_central');
+        gamePlayer.name = playerName;
+        room.savedPlayers.delete(playerId);
+        if (!room.hostId) room.hostId = socket.id;
+        if (!room.world.player) room.world.player = gamePlayer;
         room.players.set(socket.id, {
             id: playerId,
             socketId: socket.id,
             name: playerName,
-            characterData: characterData, // API key should be included in characterData from client
+            characterData: characterData || {},
+            player: gamePlayer,
             joinedAt: Date.now(),
             isHost: room.hostId === socket.id
         });
@@ -194,7 +292,8 @@ io.on('connection', (socket) => {
         players.set(socket.id, {
             roomId,
             playerId,
-            playerName
+            playerName,
+            characterData: characterData || {}
         });
 
         // Send room info to player
@@ -209,7 +308,7 @@ io.on('connection', (socket) => {
                 name: p.name,
                 isHost: p.isHost
             })),
-            worldState: serializeWorld(room.world)
+            worldState: serializeWorld(room.world, gamePlayer)
         });
 
         // Notify other players
@@ -223,6 +322,8 @@ io.on('connection', (socket) => {
             }))
         });
 
+        room.lastActiveAt = Date.now();
+        persistRooms();
         console.log(`${playerName} joined room ${roomId}`);
         } catch (err) {
             console.error('Error in joinRoom:', err);
@@ -230,19 +331,54 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Handle player action
-    socket.on('playerAction', async (data) => {
-        const { action, sceneType, sceneTags, model: actionModel } = data;
+    // Serialize actions per room so simultaneous requests cannot overwrite world state.
+    socket.on('playerAction', (data) => {
         const player = players.get(socket.id);
-        
         if (!player || !rooms.has(player.roomId)) {
             socket.emit('actionError', { message: 'Not in a room' });
+            return;
+        }
+        if (!allowAction(socket.id)) {
+            socket.emit('actionError', { message: 'Za dużo akcji. Odczekaj chwilę.' });
+            return;
+        }
+        const room = rooms.get(player.roomId);
+        room.actionQueue = (room.actionQueue || Promise.resolve())
+            .then(() => processPlayerAction(socket, data))
+            .catch((err) => {
+                console.error('Error processing player action:', err);
+                socket.emit('actionError', { message: 'Nie udało się wykonać akcji.' });
+            });
+    });
+
+    async function processPlayerAction(socket, data) {
+        const { action: rawAction, sceneType, sceneTags, model: actionModel } = data || {};
+        const action = typeof rawAction === 'string' ? rawAction.trim() : '';
+        const player = players.get(socket.id);
+        if (!player || !rooms.has(player.roomId)) {
+            socket.emit('actionError', { message: 'Not in a room' });
+            return;
+        }
+        if (!action || action.length > 2000) {
+            socket.emit('actionError', { message: 'Akcja musi mieć od 1 do 2000 znaków.' });
             return;
         }
 
         const room = rooms.get(player.roomId);
         const world = room.world;
         const playerData = room.players.get(socket.id);
+        if (!playerData || !playerData.player) {
+            socket.emit('actionError', { message: 'Stan gracza nie jest dostępny.' });
+            return;
+        }
+
+        const currentPlayer = playerData.player;
+        // Context builders use World.player as the viewpoint; switch it to the actor
+        // for this serialized turn while the character sheet remains per player.
+        world.player = currentPlayer;
+        const mechanicalResult = world.performPlayerAction
+            ? world.performPlayerAction(action, currentPlayer)
+            : null;
 
         // Build context for the action
         let context = '';
@@ -261,12 +397,15 @@ io.on('connection', (socket) => {
         }
 
         // Get current player state for context
-        const currentPlayer = world.player;
         const location = world.getLocation(currentPlayer.locationId);
+        const mechanicsContext = mechanicalResult
+            ? `Mechanika: ${mechanicalResult.success ? 'akcja wykonana' : 'brak zmiany stanu'} — ${mechanicalResult.message}. `
+            : '';
 
         // Build action context - be brief, don't describe location every time
         let actionContext = `Jesteś ${playerData.name}. `;
         actionContext += `Akcja: "${action}". `;
+        actionContext += mechanicsContext;
         actionContext += `To dzieje się w ${location ? location.name : currentPlayer.locationId}. `;
         actionContext += `Jest ${world.getFormattedTime()}, dzień ${world.getDayNumber()}. `;
         
@@ -342,15 +481,15 @@ io.on('connection', (socket) => {
         const playerModel = actionModel || playerData.characterData?.model || 'openai/gpt-3.5-turbo';
         console.log(`Using model: ${playerModel} for player: ${playerData.name}`);
         
-        const response = await callLLM(actionContext, playerData.name, playerApiKey, playerModel, playerHistory, wantsDetailed);
+        const response = await callLLM(actionContext, playerData.name, playerApiKey, playerModel, playerHistory.slice(-40), wantsDetailed);
 
         // Zapisz akcję gracza i odpowiedź AI do jego osobistej historii (pamięć bota) - BEZ LIMITU
         playerHistory.push({ role: 'user', content: action });
         playerHistory.push({ role: 'assistant', content: response });
+        room.playerHistories[socket.id] = playerHistory.slice(-100);
         // Bez limitu - bot pamięta całą historię tego gracza!
 
         // Phase 1-2: Przesuwamy czas i przetwarzamy wydarzenia
-        world.advanceWorldTime(15);   // realistyczny koszt akcji
 
         // Phase 4: Zapisujemy akcję do pamięci kontekstowej
         if (world.recordPlayerAction) {
@@ -360,21 +499,27 @@ io.on('connection', (socket) => {
             });
         }
 
-        // Broadcast response to all players
-        io.to(player.roomId).emit('actionResult', {
-            playerId: playerData.id,
-            playerName: playerData.name,
-            response,
-            worldState: serializeWorld(world)
-        });
-    });
+        // Each client receives the shared world with its own player snapshot.
+        for (const [socketId, roomPlayer] of room.players.entries()) {
+            io.to(socketId).emit('actionResult', {
+                playerId: playerData.id,
+                playerName: playerData.name,
+                action,
+                response,
+                mechanics: mechanicalResult?.toJSON ? mechanicalResult.toJSON() : mechanicalResult,
+                worldState: serializeWorld(world, roomPlayer.player)
+            });
+        }
+        room.lastActiveAt = Date.now();
+        persistRooms();
+    }
 
     // Handle chat message
     socket.on('chatMessage', (data) => {
-        const { message } = data;
+        const message = typeof data?.message === 'string' ? data.message.trim() : '';
         const player = players.get(socket.id);
         
-        if (!player || !rooms.has(player.roomId)) return;
+        if (!player || !rooms.has(player.roomId) || !message || message.length > 1000) return;
 
         const room = rooms.get(player.roomId);
         const playerData = room.players.get(socket.id);
@@ -400,8 +545,22 @@ io.on('connection', (socket) => {
             const wasHost = room.hostId === socket.id;
             const characterData = playerData?.characterData;
 
-            // Remove player from room immediately
+            if (playerData?.player) {
+                room.savedPlayers.set(playerId, playerData.player.toJSON());
+                rejoinSessions.set(`${roomId}:${playerId}`, {
+                    roomId,
+                    playerId,
+                    playerName,
+                    characterData: characterData || {},
+                    player: playerData.player.toJSON(),
+                    isHost: wasHost,
+                    expiresAt: Date.now() + 60000
+                });
+            }
+
+            // Remove active socket while preserving the player's saved state.
             room.players.delete(socket.id);
+            room.lastActiveAt = Date.now();
 
             // Notify others
             io.to(roomId).emit('playerLeft', {
@@ -414,11 +573,8 @@ io.on('connection', (socket) => {
                 }))
             });
 
-            // Clean up empty rooms
-            if (room.players.size === 0) {
-                rooms.delete(roomId);
-                console.log(`Room ${roomId} deleted (empty)`);
-            } else if (wasHost) {
+            // Keep empty rooms persisted so players can reconnect and continue later.
+            if (wasHost && room.players.size > 0) {
                 // Transfer host to next player
                 const newHost = room.players.keys().next().value;
                 room.hostId = newHost;
@@ -451,11 +607,12 @@ io.on('connection', (socket) => {
         }
 
         players.delete(socket.id);
+        actionRateLimits.delete(socket.id);
         console.log(`Player disconnected: ${socket.id}`);
     });
 
     // Rejoin room after reconnect
-    socket.on('rejoinRoom', (data) => {
+    socket.on('legacyRejoinRoom', (data) => {
         const { roomId } = data;
         
         // Sprawdź czy są dane do ponownego dołączenia
@@ -534,13 +691,70 @@ io.on('connection', (socket) => {
         delete socket.rejoinData;
     });
 
+    // Rejoin using the persisted session key, since a new socket cannot carry old socket properties.
+    socket.on('rejoinRoom', (data) => {
+        const roomId = String(data?.roomId || '').trim();
+        const playerId = String(data?.playerId || '').trim();
+        const key = `${roomId}:${playerId}`;
+        const rejoinData = rejoinSessions.get(key);
+        if (!roomId || !playerId || !rejoinData || rejoinData.expiresAt < Date.now() || !rooms.has(roomId)) {
+            rejoinSessions.delete(key);
+            socket.emit('joinError', { message: 'Nie można ponownie dołączyć — sesja wygasła albo pokój nie istnieje.' });
+            return;
+        }
+
+        const room = rooms.get(roomId);
+        const savedPlayer = room.savedPlayers.get(playerId) || rejoinData.player;
+        const restoredPlayer = Player.fromJSON(savedPlayer);
+        room.savedPlayers.delete(playerId);
+        if (!room.hostId) room.hostId = socket.id;
+        room.players.set(socket.id, {
+            id: playerId,
+            socketId: socket.id,
+            name: rejoinData.playerName,
+            characterData: rejoinData.characterData || {},
+            player: restoredPlayer,
+            joinedAt: Date.now(),
+            isHost: room.hostId === socket.id
+        });
+        room.lastActiveAt = Date.now();
+        socket.join(roomId);
+        socket.roomId = roomId;
+        players.set(socket.id, {
+            roomId,
+            playerId,
+            playerName: rejoinData.playerName,
+            characterData: rejoinData.characterData || {}
+        });
+
+        const playerList = Array.from(room.players.values()).map(p => ({ id: p.id, name: p.name, isHost: p.isHost }));
+        socket.emit('roomRejoined', {
+            success: true,
+            roomId,
+            playerId,
+            playerName: rejoinData.playerName,
+            isHost: room.hostId === socket.id,
+            players: playerList,
+            worldState: serializeWorld(room.world, restoredPlayer)
+        });
+        socket.to(roomId).emit('playerRejoined', {
+            playerId,
+            playerName: rejoinData.playerName,
+            players: playerList
+        });
+        rejoinSessions.delete(key);
+        persistRooms();
+        console.log(`${rejoinData.playerName} reconnected to room ${roomId}`);
+    });
+
     // Player-to-player chat (AI sees but doesn't respond)
     socket.on('playerChat', (data) => {
         try {
-            const { message, type } = data;
+            const message = typeof data?.message === 'string' ? data.message.trim() : '';
+            const type = typeof data?.type === 'string' ? data.type.slice(0, 32) : 'player_dialogue';
             const player = players.get(socket.id);
             
-            if (!player || !rooms.has(player.roomId)) {
+            if (!player || !rooms.has(player.roomId) || !message || message.length > 1000) {
                 socket.emit('chatError', { message: 'Not in a room' });
                 return;
             }
@@ -595,7 +809,7 @@ io.on('connection', (socket) => {
                 name: p.name,
                 isHost: p.isHost
             })),
-            worldState: serializeWorld(room.world)
+            worldState: serializeWorld(room.world, room.players.get(socket.id)?.player)
         });
     });
 });
@@ -607,40 +821,13 @@ io.on('connection', (socket) => {
 /**
  * Serialize world state for client
  */
-function serializeWorld(world) {
+function serializeWorld(world, viewerPlayer = null) {
     if (!world) return null;
-    
-    return {
-        currentTimeMinutes: world.currentTimeMinutes,
-        formattedTime: world.getFormattedTime(),
-        dayNumber: world.getDayNumber(),
-        timeOfDay: world.getTimeOfDay(),
-        locations: Array.from(world.locations.values()).map(l => ({
-            id: l.id,
-            name: l.name,
-            population: l.population,
-            wealth: l.wealth,
-            stability: l.stability,
-            dangerLevel: l.dangerLevel,
-            controllingFactionId: l.controllingFactionId
-        })),
-        factions: Array.from(world.factions.values()).map(f => ({
-            id: f.id,
-            name: f.name,
-            power: f.power,
-            resources: f.resources
-        })),
-        player: world.player ? {
-            name: world.player.name,
-            locationId: world.player.locationId,
-            hp: world.player.hp,
-            maxHp: world.player.maxHp,
-            gold: world.player.gold,
-            hunger: world.player.hunger,
-            thirst: world.player.thirst,
-            fatigue: world.player.fatigue
-        } : null
-    };
+    const snapshot = world.toJSON();
+    if (viewerPlayer && typeof viewerPlayer.toJSON === 'function') {
+        snapshot.player = viewerPlayer.toJSON();
+    }
+    return snapshot;
 }
 
 /**

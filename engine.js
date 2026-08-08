@@ -197,7 +197,9 @@ class ActionResult {
     constructor(success, message, timeCostMinutes, worldChanges = []) {
         this.success = success;
         this.message = message;
-        this.timeCostMinutes = Math.max(1, timeCostMinutes); // Minimum 1 minute
+        this.timeCostMinutes = Number.isFinite(timeCostMinutes)
+            ? Math.max(1, Math.floor(timeCostMinutes))
+            : 1; // Minimum 1 minute
         this.worldChanges = worldChanges;
     }
 
@@ -551,8 +553,10 @@ class EventQueue {
      * @returns {number}
      */
     countByType(eventType) {
-        // Note: MinHeap doesn't support iteration, so we track counts separately
-        return 0;
+        return this._heap.heap.reduce(
+            (count, entry) => count + (entry[3]?.type === eventType ? 1 : 0),
+            0
+        );
     }
 
     /**
@@ -561,7 +565,10 @@ class EventQueue {
      * @returns {number}
      */
     countByFaction(factionId) {
-        return 0;
+        return this._heap.heap.reduce(
+            (count, entry) => count + (entry[3]?.scheduledBy === factionId ? 1 : 0),
+            0
+        );
     }
 
     toJSON() {
@@ -578,8 +585,8 @@ class EventQueue {
 
     static fromJSON(json) {
         const queue = new EventQueue();
-        queue._counter = json.counter;
-        for (const entry of json.heap) {
+        queue._counter = Number.isSafeInteger(json?.counter) ? json.counter : 0;
+        for (const entry of Array.isArray(json?.heap) ? json.heap : []) {
             queue._heap.heap.push([
                 entry[0],
                 entry[1],
@@ -937,17 +944,17 @@ class Player {
     }
 
     static fromJSON(json) {
-        const player = new Player(json.name, json.locationId);
-        player.gold = json.gold;
-        player.hp = json.hp;
-        player.maxHp = json.maxHp;
-        player.stamina = json.stamina;
-        player.maxStamina = json.maxStamina;
-        player.mana = json.mana;
-        player.maxMana = json.maxMana;
-        player.hunger = json.hunger;
-        player.thirst = json.thirst;
-        player.fatigue = json.fatigue;
+        const player = new Player(json.name || 'Player', json.locationId || 'town_central');
+        player.gold = Number.isFinite(json.gold) ? json.gold : player.gold;
+        player.hp = Number.isFinite(json.hp) ? json.hp : player.hp;
+        player.maxHp = Number.isFinite(json.maxHp) ? json.maxHp : player.maxHp;
+        player.stamina = Number.isFinite(json.stamina) ? json.stamina : player.stamina;
+        player.maxStamina = Number.isFinite(json.maxStamina) ? json.maxStamina : player.maxStamina;
+        player.mana = Number.isFinite(json.mana) ? json.mana : player.mana;
+        player.maxMana = Number.isFinite(json.maxMana) ? json.maxMana : player.maxMana;
+        player.hunger = Number.isFinite(json.hunger) ? json.hunger : player.hunger;
+        player.thirst = Number.isFinite(json.thirst) ? json.thirst : player.thirst;
+        player.fatigue = Number.isFinite(json.fatigue) ? json.fatigue : player.fatigue;
         // FIX: Handle both Map (array of entries) and plain object
         if (Array.isArray(json.reputation)) {
             player.reputation = new Map(json.reputation);
@@ -1011,6 +1018,13 @@ class World {
         
         // RNG seed (optional)
         this.seed = null;
+
+        // Generated world brief. Keeping it in the engine makes saves and multiplayer snapshots self-contained.
+        this.worldMetadata = {
+            name: null,
+            description: null,
+            plan: null
+        };
     }
 
     // ========================================================================
@@ -1023,8 +1037,8 @@ class World {
      * @throws {Error} If minutes is negative
      */
     advanceWorldTime(minutes) {
-        if (minutes < 0) {
-            throw new Error("Cannot rewind time");
+        if (!Number.isInteger(minutes) || minutes < 0 || !Number.isSafeInteger(minutes)) {
+            throw new Error("Time advance must be a non-negative safe integer");
         }
         
         this.currentTimeMinutes += minutes;
@@ -1042,16 +1056,51 @@ class World {
     }
 
     /**
+     * Advance global time while applying player-specific survival effects.
+     * Multiplayer rooms use this method so every connected player can keep
+     * an independent character sheet inside one shared world clock.
+     */
+    advanceWorldTimeForPlayer(player, minutes) {
+        if (!player) throw new Error("A player is required");
+        if (!Number.isInteger(minutes) || minutes < 0 || !Number.isSafeInteger(minutes)) {
+            throw new Error("Time advance must be a non-negative safe integer");
+        }
+
+        this.currentTimeMinutes += minutes;
+        this.updatePlayerTimeDependentSystems(player, minutes);
+
+        for (const npc of this.npcs.values()) {
+            this._updateStatusEffects(npc, minutes);
+        }
+        this._updateEconomicState(minutes);
+        if (this.eventQueue) {
+            this.eventQueue.processUpTo(this, this.currentTimeMinutes);
+        }
+        this.strategicUpdate();
+    }
+
+    /**
      * Update all systems that depend on time passage
      * Called after every time advancement
      * @param {number} minutes - Minutes that passed
      */
     updateTimeDependentSystems(minutes) {
         if (!this.player) return;
-        
-        const player = this.player;
+
+        this.updatePlayerTimeDependentSystems(this.player, minutes);
+
+        // NPC effects and global systems are updated once per world advance.
+        for (const npc of this.npcs.values()) {
+            this._updateStatusEffects(npc, minutes);
+        }
+        this._updateEconomicState(minutes);
+    }
+
+    /** Update resources and survival state for one player. */
+    updatePlayerTimeDependentSystems(player, minutes) {
+        if (!player) return;
         const cfg = this.config;
-        
+
         // 1. Regeneration of HP/Stamina/Mana
         this._updateResource(player, 'hp', cfg.regenRates.hp, minutes, player.maxHp);
         this._updateResource(player, 'stamina', cfg.regenRates.stamina, minutes, player.maxStamina);
@@ -1062,19 +1111,11 @@ class World {
         
         // 3. Update status effects duration
         this._updateStatusEffects(player, minutes);
-        
-        // 4. Update NPC status effects
-        for (const npc of this.npcs.values()) {
-            this._updateStatusEffects(npc, minutes);
-        }
-        
-        // 5. Natural economic refresh (optional - very small multiplier)
-        this._updateEconomicState(minutes);
-        
-        // 6. Weather change (optional - if implemented)
+
+        // 4. Weather change (optional - if implemented)
         // this._updateWeather(minutes);
-        
-        // 7. NPC aging (optional - if age matters)
+
+        // 5. NPC aging (optional - if age matters)
         // this._updateNPCAges(minutes);
     }
 
@@ -1152,15 +1193,20 @@ class World {
      */
     _updateStatusEffects(entity, minutes) {
         const expired = [];
-        
+
         for (const effect of entity.statusEffects) {
+            const activeMinutes = Math.min(minutes, Math.max(0, effect.remainingMinutes));
             const isExpired = effect.tick(minutes);
             if (isExpired) {
                 expired.push(effect.name);
             }
-            
-            // Apply continuous effects
-            this._applyStatusEffect(entity, effect);
+
+            // Apply continuous effects for the time during which the effect
+            // was actually active. Previously this ran once per action,
+            // making a 60-minute effect almost harmless on long actions.
+            if (activeMinutes > 0) {
+                this._applyStatusEffect(entity, effect, activeMinutes);
+            }
         }
         
         // Remove expired effects
@@ -1172,17 +1218,17 @@ class World {
     /**
      * Apply a status effect's continuous modifiers
      */
-    _applyStatusEffect(entity, effect) {
+    _applyStatusEffect(entity, effect, minutes = 1) {
         switch (effect.effectType) {
             case 'hp_drain':
-                entity.hp = Math.max(0, entity.hp - (effect.magnitude * 0.1));
+                entity.hp = Math.max(0, entity.hp - (effect.magnitude * 0.1 * minutes));
                 break;
             case 'stamina_drain':
-                entity.stamina = Math.max(0, entity.stamina - (effect.magnitude * 0.1));
+                entity.stamina = Math.max(0, entity.stamina - (effect.magnitude * 0.1 * minutes));
                 break;
             case 'all_stats_drain':
-                entity.hp = Math.max(0, entity.hp - (effect.magnitude * 0.05));
-                entity.stamina = Math.max(0, entity.stamina - (effect.magnitude * 0.05));
+                entity.hp = Math.max(0, entity.hp - (effect.magnitude * 0.05 * minutes));
+                entity.stamina = Math.max(0, entity.stamina - (effect.magnitude * 0.05 * minutes));
                 break;
             // Add more effect types as needed
         }
@@ -1221,6 +1267,106 @@ class World {
     }
 
     // ========================================================================
+    // PLAYER ACTIONS - DETERMINISTIC MECHANICS
+    // ========================================================================
+
+    /**
+     * Resolve the small set of actions that the engine can currently prove.
+     * The narrator may embellish the result, but it cannot invent a state
+     * change that was not returned here.
+     */
+    performPlayerAction(action, player = this.player) {
+        if (!player) {
+            return new ActionResult(false, "Brak aktywnego gracza.", 1);
+        }
+
+        const text = String(action || '').trim();
+        if (!text) {
+            return new ActionResult(false, "Akcja nie może być pusta.", 1);
+        }
+
+        const normalized = text.toLocaleLowerCase('pl-PL');
+        const changes = [];
+        let success = true;
+        let message = "Akcja została przekazana narratorowi.";
+        let timeCostMinutes = 10;
+
+        const targetLocation = this._findLocationInAction(normalized);
+        const travelIntent = /\b(idź|idz|udaj|podąż|podaz|przenieś|przenies|jedź|jedz|wędruj|wedruj|podróżuj|podrozuj)\b/i.test(normalized);
+
+        if (travelIntent && targetLocation) {
+            if (player.locationId === targetLocation.id) {
+                success = false;
+                message = `Jesteś już w lokacji „${targetLocation.name}”.`;
+                timeCostMinutes = 1;
+            } else {
+                const previousLocationId = player.locationId;
+                player.locationId = targetLocation.id;
+                timeCostMinutes = 30;
+                message = `Docierasz do lokacji „${targetLocation.name}”.`;
+                changes.push(new WorldChange(
+                    'travel_happened',
+                    targetLocation.id,
+                    { from: previousLocationId, to: targetLocation.id },
+                    message,
+                    'local'
+                ));
+            }
+        } else if (travelIntent) {
+            success = false;
+            message = "Nie rozpoznaję celu podróży. Wskaż nazwę istniejącej lokacji.";
+            timeCostMinutes = 1;
+        } else if (/\b(odpocznij|śpij|spij|prześpij|przespij|połóż się|poloz sie)\b/i.test(normalized)) {
+            player.fatigue = Math.max(0, player.fatigue - 35);
+            timeCostMinutes = 60;
+            message = "Odpoczywasz przez godzinę i odzyskujesz część sił.";
+            changes.push(new WorldChange(
+                'rest_completed',
+                player.name,
+                -35,
+                message,
+                'local'
+            ));
+        } else if (/\b(rozmaw|pytaj|powiedz|witaj|przywitaj)\w*/i.test(normalized)) {
+            timeCostMinutes = 10;
+            message = "Rozmowa została zarejestrowana jako akcja fabularna.";
+            changes.push(new WorldChange(
+                'conversation_happened',
+                null,
+                true,
+                text.substring(0, 120),
+                'local'
+            ));
+        } else if (/\b(kup|kupuję|kupuje|sprzed|handel|targuj)\w*/i.test(normalized)) {
+            success = false;
+            message = "Handel wymaga jeszcze zdefiniowanego przedmiotu i kupca; narrator nie zmieni złota samym opisem.";
+            timeCostMinutes = 5;
+        } else if (/\b(atak|walcz|uderz|zabij|strzel)\w*/i.test(normalized)) {
+            success = false;
+            message = "Walka wymaga celu i statystyk przeciwnika; akcja nie zmieni HP bez mechaniki walki.";
+            timeCostMinutes = 5;
+        }
+
+        const result = new ActionResult(success, message, timeCostMinutes, changes);
+        this.advanceWorldTimeForPlayer(player, result.timeCostMinutes);
+        for (const change of result.worldChanges) {
+            this.logWorldChange(change);
+        }
+        return result;
+    }
+
+    _findLocationInAction(normalizedAction) {
+        for (const location of this.locations.values()) {
+            const id = String(location.id).toLocaleLowerCase('pl-PL');
+            const name = String(location.name).toLocaleLowerCase('pl-PL');
+            if (normalizedAction.includes(id) || normalizedAction.includes(name)) {
+                return location;
+            }
+        }
+        return null;
+    }
+
+    // ========================================================================
     // PHASE 2: EVENT SYSTEM
     // ========================================================================
 
@@ -1239,7 +1385,17 @@ class World {
             "assassination_attempt": this._resolveAssassination.bind(this),
             "rebellion": this._resolveRebellion.bind(this),
             "famine": this._resolveFamine.bind(this),
-            "plague": this._resolvePlague.bind(this)
+            "plague": this._resolvePlague.bind(this),
+            "troop_mobilization": this._resolveStrategicEvent.bind(this),
+            "full_mobilization": this._resolveStrategicEvent.bind(this),
+            "tax_increase": this._resolveStrategicEvent.bind(this),
+            "propaganda_campaign": this._resolveStrategicEvent.bind(this),
+            "fortification": this._resolveStrategicEvent.bind(this),
+            "troop_repositioning": this._resolveStrategicEvent.bind(this),
+            "trade_agreement": this._resolveStrategicEvent.bind(this),
+            "resource_boost": this._resolveStrategicEvent.bind(this),
+            "espionage": this._resolveStrategicEvent.bind(this),
+            "alliance_proposal": this._resolveStrategicEvent.bind(this)
         };
 
         const handler = handlers[event.type];
@@ -1260,9 +1416,9 @@ class World {
      * @returns {WorldChange[]}
      */
     _resolveWarBattle(event) {
-        const attacker = this.factions.get(event.data.attacker_faction_id);
-        const defender = this.factions.get(event.data.defender_faction_id);
-        const location = this.locations.get(event.data.location_id);
+        const attacker = this.factions.get(event.data.attacker_faction_id || event.data.attackerFactionId || event.data.attackerId);
+        const defender = this.factions.get(event.data.defender_faction_id || event.data.defenderFactionId || event.data.targetFactionId);
+        const location = this.locations.get(event.data.location_id || event.data.locationId);
 
         if (!attacker || !defender) {
             console.warn(`Battle aborted: missing faction(s)`);
@@ -1340,8 +1496,8 @@ class World {
      * @returns {WorldChange[]}
      */
     _resolveWarDeclared(event) {
-        const attacker = this.factions.get(event.data.attacker_faction_id);
-        const defender = this.factions.get(event.data.defender_faction_id);
+        const attacker = this.factions.get(event.data.attacker_faction_id || event.data.attackerFactionId || event.data.attackerId);
+        const defender = this.factions.get(event.data.defender_faction_id || event.data.defenderFactionId || event.data.targetFactionId);
 
         if (!attacker || !defender) return [];
 
@@ -1358,7 +1514,8 @@ class World {
         return [
             new WorldChange(
                 "war_declared",
-                event.data.location_id || null,
+                attacker.id,
+                defender.id,
                 `${attacker.name} declares war on ${defender.name}`,
                 "global"
             )
@@ -1371,8 +1528,8 @@ class World {
      * @returns {WorldChange[]}
      */
     _resolveWarEnded(event) {
-        const attacker = this.factions.get(event.data.attacker_faction_id);
-        const defender = this.factions.get(event.data.defender_faction_id);
+        const attacker = this.factions.get(event.data.attacker_faction_id || event.data.attackerFactionId || event.data.attackerId);
+        const defender = this.factions.get(event.data.defender_faction_id || event.data.defenderFactionId || event.data.targetFactionId);
 
         if (!attacker || !defender) return [];
 
@@ -1389,10 +1546,72 @@ class World {
             new WorldChange(
                 "war_ended",
                 null,
+                true,
                 `${attacker.name} and ${defender.name} end hostilities`,
                 "global"
             )
         ];
+    }
+
+    /** Resolve strategy events that modify faction-level state. */
+    _resolveStrategicEvent(event) {
+        const data = event.data || {};
+        const factionId = data.factionId || data.faction_id || data.requesterFactionId || data.attackerFactionId;
+        const faction = factionId ? this.factions.get(factionId) : null;
+        const changes = [];
+
+        if (faction) {
+            switch (event.type) {
+                case 'troop_mobilization':
+                    faction.resources = Math.max(0, faction.resources - 5);
+                    faction.power = Math.min(100, faction.power + 3);
+                    break;
+                case 'full_mobilization':
+                    faction.resources = Math.max(0, faction.resources - 12);
+                    faction.power = Math.min(100, faction.power + 8);
+                    break;
+                case 'tax_increase':
+                    faction.resources = Math.min(100, faction.resources + 8);
+                    faction.stability = Math.max(0, faction.stability - 4);
+                    break;
+                case 'propaganda_campaign':
+                    faction.stability = Math.min(100, faction.stability + 6);
+                    break;
+                case 'fortification':
+                    faction.resources = Math.max(0, faction.resources - 6);
+                    faction.stability = Math.min(100, faction.stability + 5);
+                    break;
+                case 'troop_repositioning':
+                    faction.power = Math.min(100, faction.power + 1);
+                    break;
+                case 'trade_agreement':
+                    faction.resources = Math.min(100, faction.resources + 5);
+                    break;
+                case 'resource_boost':
+                    faction.resources = Math.min(100, faction.resources + 10);
+                    break;
+                case 'espionage':
+                    faction.resources = Math.max(0, faction.resources - 2);
+                    break;
+                case 'alliance_proposal':
+                    if (data.targetFactionId) {
+                        faction.setRelation(data.targetFactionId, Math.min(100, faction.getRelation(data.targetFactionId) + 10));
+                    }
+                    break;
+                default:
+                    break;
+            }
+
+            changes.push(new WorldChange(
+                event.type,
+                faction.id,
+                true,
+                `${event.type} resolved for ${faction.name}`,
+                'regional'
+            ));
+        }
+
+        return changes;
     }
 
     /**
@@ -1467,7 +1686,7 @@ class World {
      * @returns {WorldChange[]}
      */
     _resolveAssassination(event) {
-        const target = this.npcs.get(event.data.target_npc_id);
+        const target = this.npcs.get(event.data.target_npc_id || event.data.targetNpcId);
         if (!target) return [];
 
         // 50% success chance
@@ -1795,6 +2014,7 @@ class World {
 
             case "internal_stabilization":
                 plan.push(this.createEvent("tax_increase", now + 2 * 1440, { 
+                    factionId: faction.id,
                     locationId: this._getControlledLocations(faction.id)[0]?.id 
                 }));
                 plan.push(this.createEvent("propaganda_campaign", now + 5 * 1440, { 
@@ -1951,7 +2171,7 @@ class World {
             data,
             priorityMap[type] || 100,
             false,
-            "system",
+            data.factionId || data.faction_id || data.attackerFactionId || data.attackerId || data.requesterFactionId || "system",
             importanceMap[type] || 0.3
         );
     }
@@ -2049,7 +2269,7 @@ class World {
         const eventsToKeep = [];
         let removed = 0;
         
-        while (this.eventQueue.heap && this.eventQueue.heap.length > 0) {
+        while (this.eventQueue._heap && this.eventQueue._heap.heap.length > 0) {
             const event = this.eventQueue.popEarliest();
             if (event && event.scheduledBy === factionId && event.executeAt > this.currentTimeMinutes) {
                 removed++;
@@ -2382,6 +2602,14 @@ class World {
             timestamp: this.currentTimeMinutes,
             change: worldChange.toJSON()
         });
+        if (this.worldLog.length > 1000) {
+            this.worldLog = this.worldLog.slice(-1000);
+        }
+        if (!Array.isArray(this.rawChangeLog)) this.rawChangeLog = [];
+        this.rawChangeLog.push(worldChange);
+        if (this.rawChangeLog.length > 500) {
+            this.rawChangeLog = this.rawChangeLog.slice(-500);
+        }
     }
 
     /**
@@ -2422,6 +2650,8 @@ class World {
             worldLog: this.worldLog,
             config: this.config,
             seed: this.seed,
+            worldMetadata: this.worldMetadata,
+            lastGlobalStrategicUpdate: this.lastGlobalStrategicUpdate,
             // Phase 2: Serialize event queue
             eventQueue: this.eventQueue ? this.eventQueue.toJSON() : null,
             activeWars: Array.from(this.activeWars.entries()).map(([k, v]) => [k, Array.from(v)]),
@@ -2437,10 +2667,27 @@ class World {
      * Deserialize world from JSON
      */
     static fromJSON(json) {
+        if (!json || typeof json !== 'object') {
+            throw new Error('Invalid world save: expected an object');
+        }
         const world = new World();
-        
-        world.currentTimeMinutes = json.currentTimeMinutes || 0;
+
+        const savedTime = Number(json.currentTimeMinutes);
+        world.currentTimeMinutes = Number.isSafeInteger(savedTime) && savedTime >= 0
+            ? savedTime
+            : 0;
         world.seed = json.seed;
+        if (json.worldMetadata && typeof json.worldMetadata === 'object') {
+            world.worldMetadata = {
+                ...world.worldMetadata,
+                name: typeof json.worldMetadata.name === 'string' ? json.worldMetadata.name : null,
+                description: typeof json.worldMetadata.description === 'string' ? json.worldMetadata.description : null,
+                plan: typeof json.worldMetadata.plan === 'string' ? json.worldMetadata.plan : null
+            };
+        }
+        world.lastGlobalStrategicUpdate = Number.isSafeInteger(json.lastGlobalStrategicUpdate)
+            ? json.lastGlobalStrategicUpdate
+            : 0;
         
         // Restore locations
         if (json.locations) {
@@ -2470,7 +2717,14 @@ class World {
         
         // Restore config
         if (json.config) {
-            world.config = { ...world.config, ...json.config };
+            world.config = {
+                ...world.config,
+                ...json.config,
+                regenRates: { ...world.config.regenRates, ...(json.config.regenRates || {}) },
+                consumptionRates: { ...world.config.consumptionRates, ...(json.config.consumptionRates || {}) },
+                statusThresholds: { ...world.config.statusThresholds, ...(json.config.statusThresholds || {}) },
+                eventLimits: { ...world.config.eventLimits, ...(json.config.eventLimits || {}) }
+            };
         }
         
         // Restore world log

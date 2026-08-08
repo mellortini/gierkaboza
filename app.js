@@ -17,7 +17,8 @@ const state = {
     roomId: null,
     playerId: null,
     isHost: false,
-    players: []
+    players: [],
+    multiplayerListenersSetup: false
 };
 
 // Dane postaci
@@ -427,6 +428,7 @@ function connectToServer(serverUrl) {
         console.log('Connecting to:', url);
 
         try {
+            state.multiplayerListenersSetup = false;
             state.socket = io(url, {
                 transports: ['polling'],
                 reconnection: true,
@@ -441,9 +443,9 @@ function connectToServer(serverUrl) {
                 console.log('Connected to server:', url, 'ID:', state.socket.id);
                 
                 // Jeśli byliśmy wcześniej w pokoju, spróbuj wrócić
-                if (state.roomId && state.isMultiplayer) {
+                if (state.roomId && state.playerId) {
                     console.log('Attempting to rejoin room:', state.roomId);
-                    state.socket.emit('rejoinRoom', { roomId: state.roomId });
+                    state.socket.emit('rejoinRoom', { roomId: state.roomId, playerId: state.playerId });
                 }
                 
                 resolve(state.socket);
@@ -475,6 +477,14 @@ function connectToServer(serverUrl) {
                 state.playerName = data.playerName;
                 state.isHost = data.isHost;
                 state.players = data.players;
+                if (data.worldState) {
+                    try {
+                        state.world = World.fromJSON(data.worldState);
+                        updateGameHUD();
+                    } catch (error) {
+                        console.error('Error restoring rejoined world:', error);
+                    }
+                }
                 
                 updateMultiplayerStatus(`Połączono ponownie! Jesteś w pokoju: ${data.roomId}`, 'success');
                 updatePlayersList(data.players);
@@ -571,10 +581,11 @@ async function joinRoom(serverUrl, roomId) {
             worldData = state.world.toJSON();
         } else if (worldOption === 'saved') {
             // Load from localStorage
-            const savedGame = localStorage.getItem('rpg_current_save');
+            const savedGame = localStorage.getItem('rpg_save');
             if (savedGame) {
                 try {
-                    worldData = JSON.parse(savedGame);
+                    const parsedSave = JSON.parse(savedGame);
+                    worldData = parsedSave.world || parsedSave;
                 } catch (e) {
                     console.error('Error parsing saved game:', e);
                 }
@@ -586,7 +597,8 @@ async function joinRoom(serverUrl, roomId) {
             playerName: playerName,
             characterData: characterDataWithApi,
             worldData: worldData,
-            worldOption: worldOption
+            worldOption: worldOption,
+            playerId: state.playerId || null
         });
 
         // Wait for roomJoined event
@@ -624,7 +636,7 @@ async function joinRoom(serverUrl, roomId) {
 /**
  * Create a new room
  */
-async function createRoom(serverUrl, roomId) {
+async function legacyCreateRoom(serverUrl, roomId) {
     const statusEl = document.getElementById('multiplayer-status');
     
     // Validate character name first
@@ -680,10 +692,15 @@ function updatePlayersList(players) {
     
     for (const player of players) {
         const li = document.createElement('li');
-        li.innerHTML = `
-            <span>${player.name}</span>
-            ${player.isHost ? '<span class="host-badge">HOST</span>' : ''}
-        `;
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = String(player.name || 'Gracz');
+        li.appendChild(nameSpan);
+        if (player.isHost) {
+            const hostSpan = document.createElement('span');
+            hostSpan.className = 'host-badge';
+            hostSpan.textContent = 'HOST';
+            li.appendChild(hostSpan);
+        }
         playersInRoomEl.appendChild(li);
     }
     
@@ -713,12 +730,14 @@ function startMultiplayerGame(roomData) {
     elements.gameCharacterName.textContent = characterData.name || 'Gracz';
     elements.gameSetting.textContent = settingNames[characterData.setting] || characterData.setting;
     
-    // Initialize game state - always create local world (server doesn't send full world data)
-    state.world = World.createStarterWorld(characterData.name, 'town_central');
-    
-    // If server sent world state, we could sync some data here in the future
-    if (roomData.worldState && roomData.worldState.formattedTime) {
-        state.world.currentTimeMinutes = roomData.worldState.currentTimeMinutes || 0;
+    // Restore the authoritative server snapshot, with a safe fallback for old servers.
+    try {
+        state.world = roomData.worldState
+            ? World.fromJSON(roomData.worldState)
+            : World.createStarterWorld(characterData.name, 'town_central');
+    } catch (error) {
+        console.error('Error restoring multiplayer world:', error);
+        state.world = World.createStarterWorld(characterData.name, 'town_central');
     }
     
     // Initialize game state for LLM
@@ -748,7 +767,8 @@ function startMultiplayerGame(roomData) {
  * Setup socket event listeners for multiplayer
  */
 function setupMultiplayerListeners() {
-    if (!state.socket) return;
+    if (!state.socket || state.multiplayerListenersSetup) return;
+    state.multiplayerListenersSetup = true;
 
     // Player joined
     state.socket.on('playerJoined', (data) => {
@@ -1189,6 +1209,7 @@ function buildNarratorPrompt() {
     };
 
     const s = characterData.sliders;
+    worldData.plan = worldData.plan || state.world?.worldMetadata?.plan || null;
 
     let prompt = `Jesteś Mistrzem Gry (Narratorem) w grze RPG. Twoim zadaniem jest prowadzenie immersyjnej, szczegółowej przygody.
 
@@ -1457,6 +1478,18 @@ function buildMemoryContext(world, sceneType, sceneTags) {
 }
 
 // Rozpoczęcie gry
+function createGameWorld(playerName) {
+    const world = World.createStarterWorld(playerName, 'town_central');
+    if (worldData.generated && worldData.plan) {
+        world.worldMetadata = {
+            name: worldData.name || null,
+            description: worldData.description || null,
+            plan: worldData.plan
+        };
+    }
+    return world;
+}
+
 async function startGame() {
     // Zbierz dane postaci
     characterData.name = elements.charName.value.trim();
@@ -1508,7 +1541,7 @@ async function startGame() {
 
     // ========== PHASE 1: Initialize World Engine ==========
     // Create starter world with default locations and factions
-    state.world = World.createStarterWorld(characterData.name, 'town_central');
+    state.world = createGameWorld(characterData.name);
     
     // Update HUD with initial world state
     updateGameHUD();
@@ -1535,8 +1568,15 @@ async function generateStory(userAction = null) {
     elements.suggestActionsBtn.disabled = true;
 
     // Dodaj akcję gracza jeśli istnieje
+    let mechanicalResult = null;
     if (userAction) {
-        state.gameState.push({ role: 'user', content: userAction });
+        if (state.world && typeof state.world.performPlayerAction === 'function') {
+            mechanicalResult = state.world.performPlayerAction(userAction, state.world.player);
+        }
+        const mechanicsNote = mechanicalResult
+            ? `\n\n## STAN MECHANIKI\n${mechanicalResult.success ? 'Akcja wykonana' : 'Brak zmiany stanu'}: ${mechanicalResult.message}`
+            : '';
+        state.gameState.push({ role: 'user', content: userAction + mechanicsNote });
     }
 
     // Pokaż wskaźnik ładowania
@@ -1598,22 +1638,7 @@ async function generateStory(userAction = null) {
         // Dodaj do historii
         state.gameState.push({ role: 'assistant', content: storyText });
 
-        // ========== PHASE 1: Advance World Time ==========
-        // Simulate time passage for this action (default: 10 minutes per narrative turn)
         if (state.world) {
-            const timeAdvance = 10; // minutes
-            state.world.advanceWorldTime(timeAdvance);
-            
-            // Log the action as a world change
-            const worldChange = new WorldChange(
-                'conversation_happened',
-                null,
-                true,
-                `Player action: ${userAction ? userAction.substring(0, 50) : 'narrative turn'}`,
-                'local'
-            );
-            state.world.logWorldChange(worldChange);
-            
             // Phase 4: Record player action for memory system
             if (userAction && state.world.recordPlayerAction) {
                 state.world.recordPlayerAction('player_action', {
@@ -1673,6 +1698,12 @@ function addStoryEntry(type, text) {
 
 // Formatowanie tekstu historii (markdown)
 function formatStoryText(text) {
+    const safeText = escapeHtml(String(text ?? ''));
+    return safeText
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/\n/g, '<br>');
+
     // Zamień **tekst** na <strong>
     text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     // Zamień *tekst* na <em>
@@ -1687,6 +1718,22 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function sanitizeStoryHtml(html) {
+    const template = document.createElement('template');
+    template.innerHTML = String(html || '');
+    template.content.querySelectorAll('script, style, iframe, object, embed, form').forEach(node => node.remove());
+    template.content.querySelectorAll('*').forEach(node => {
+        Array.from(node.attributes).forEach(attribute => {
+            const name = attribute.name.toLowerCase();
+            const value = attribute.value.trim().toLowerCase();
+            if (name.startsWith('on') || ['src', 'href', 'xlink:href'].includes(name) && value.startsWith('javascript:')) {
+                node.removeAttribute(attribute.name);
+            }
+        });
+    });
+    return template.innerHTML;
 }
 
 // ========== PHASE 1: HUD Update Function ==========
@@ -1849,13 +1896,13 @@ function showCharacterModal() {
     const s = characterData.sliders;
     elements.characterDetails.innerHTML = `
         <h3>🧙 Imię</h3>
-        <p>${characterData.name}</p>
+        <p>${escapeHtml(characterData.name || '')}</p>
         
         <h3>🌍 Świat</h3>
-        <p>${characterData.settingName}</p>
+        <p>${escapeHtml(characterData.settingName || '')}</p>
         
         <h3>📝 Opis</h3>
-        <p>${characterData.description.replace(/\n/g, '<br>')}</p>
+        <p>${escapeHtml(characterData.description || '').replace(/\n/g, '<br>')}</p>
         
         <h3>🎯 Typ przygody</h3>
         <p>${elements.adventureType.options[elements.adventureType.selectedIndex].text}</p>
@@ -1972,7 +2019,7 @@ function importGameFromFile(e) {
 
 // Zastosowanie wczytanych danych gry
 function applyLoadedGame(saveData) {
-    if (!saveData.character || !saveData.gameState) {
+    if (!saveData || typeof saveData !== 'object' || !saveData.character || !Array.isArray(saveData.gameState)) {
         alert('Nieprawidłowy plik zapisu!');
         return;
     }
@@ -1982,11 +2029,14 @@ function applyLoadedGame(saveData) {
     state.gameState = saveData.gameState;
     
     // ========== PHASE 1: Restore World State ==========
-    if (saveData.world) {
-        state.world = World.fromJSON(saveData.world);
-    } else {
-        // Fallback: create new world if not in save file
-        state.world = World.createStarterWorld(characterData.name, 'town_central');
+    try {
+        state.world = saveData.world
+            ? World.fromJSON(saveData.world)
+            : World.createStarterWorld(characterData.name, 'town_central');
+    } catch (error) {
+        console.error('Error restoring save world:', error);
+        alert('Nieprawidłowy stan świata w pliku zapisu.');
+        return;
     }
     
     // Pokaż sekcję gry
@@ -2000,7 +2050,7 @@ function applyLoadedGame(saveData) {
     
     // Przywróć historię
     if (saveData.story) {
-        elements.gameStory.innerHTML = saveData.story;
+        elements.gameStory.innerHTML = sanitizeStoryHtml(saveData.story);
     } else {
         elements.gameStory.innerHTML = '';
         // Odtwórz historię z gameState
@@ -2040,10 +2090,15 @@ function displaySavedGames() {
     elements.savedGamesList.innerHTML = saves.map((save, index) => {
         const date = new Date(save.timestamp);
         const s = save.character.sliders || {};
+        save.character.settingName = escapeHtml(save.character.settingName || 'Własny świat');
+        s.violence = escapeHtml(String(s.violence ?? '?'));
+        s.sexual = escapeHtml(String(s.sexual ?? '?'));
+        s.darkness = escapeHtml(String(s.darkness ?? '?'));
+        s.realism = escapeHtml(String(s.realism ?? '?'));
         return `
             <div class="saved-game-item">
                 <div class="saved-game-info">
-                    <h4>${save.character.name}</h4>
+                    <h4>${escapeHtml(save.character.name || 'Bez nazwy')}</h4>
                     <p>${save.character.settingName || 'Własny świat'} • ${date.toLocaleString()}</p>
                     <div class="saved-game-sliders">
                         💀${s.violence || '?'} 🔞${s.sexual || '?'} 🌑${s.darkness || '?'} 🎭${s.realism || '?'}
