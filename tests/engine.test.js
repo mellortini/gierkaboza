@@ -20,16 +20,21 @@ function testPlayerActionsAndRoundTrip() {
     const world = World.createStarterWorld('Tester', 'town_central');
     world.worldMetadata = { name: 'Testland', description: 'Opis', plan: '### Lokacje' };
     const player = world.player;
+    const blocked = world.performPlayerAction('idz do forest_entrance', player);
+    assert.strictEqual(blocked.success, false);
+    assert.strictEqual(player.locationId, 'town_central');
+
+    world.performPlayerAction('idz do city_gate_north', player);
     const result = world.performPlayerAction('idz do forest_entrance', player);
 
     assert.strictEqual(result.success, true);
     assert.strictEqual(player.locationId, 'forest_entrance');
-    assert.strictEqual(world.currentTimeMinutes, 30);
+    assert.strictEqual(world.currentTimeMinutes, 61);
     assert.ok(world.worldLog.some(entry => entry.change.type === 'travel_happened'));
 
     const snapshot = JSON.parse(JSON.stringify(world.toJSON()));
     const restored = World.fromJSON(snapshot);
-    assert.strictEqual(restored.currentTimeMinutes, 30);
+    assert.strictEqual(restored.currentTimeMinutes, 61);
     assert.strictEqual(restored.player.locationId, 'forest_entrance');
     assert.strictEqual(restored.player.name, 'Tester');
     assert.strictEqual(restored.worldMetadata.plan, '### Lokacje');
@@ -80,6 +85,8 @@ function testTradeCombatAndQuestLoop() {
     assert.strictEqual(player.hp, 80);
     assert.strictEqual(player.getItemQuantity('healing_potion'), 1);
 
+    world.performPlayerAction('idz do town_central', player);
+    world.performPlayerAction('idz do city_gate_north', player);
     world.performPlayerAction('idz do forest_entrance', player);
     let combat;
     for (let i = 0; i < 7; i += 1) {

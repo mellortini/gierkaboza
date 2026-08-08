@@ -1591,7 +1591,15 @@ class World {
         const travelIntent = /\b(idź|idz|udaj|podąż|podaz|przenieś|przenies|jedź|jedz|wędruj|wedruj|podróżuj|podrozuj)\b/i.test(normalized);
 
         if (travelIntent && targetLocation) {
-            if (player.locationId === targetLocation.id) {
+            const currentLocation = this.getLocation(player.locationId);
+            const hasTravelGraph = Array.isArray(currentLocation?.connections) && currentLocation.connections.length > 0;
+            const isConnected = !hasTravelGraph || currentLocation.connections.includes(targetLocation.id);
+
+            if (!isConnected) {
+                success = false;
+                message = `Nie mo\u017cna przej\u015b\u0107 bezpo\u015brednio z lokacji "${currentLocation?.name || player.locationId}" do "${targetLocation.name}". Wybierz lokacj\u0119 po\u015bredni\u0105.`;
+                timeCostMinutes = 1;
+            } else if (player.locationId === targetLocation.id) {
                 success = false;
                 message = `Jesteś już w lokacji „${targetLocation.name}”.`;
                 timeCostMinutes = 1;
@@ -3736,12 +3744,12 @@ class World {
         
         // Create default locations
         const locations = [
-            { id: "town_central", name: "Central Town", population: 500, wealth: 60, stability: 70, dangerLevel: 10 },
-            { id: "tavern_golden_dragon", name: "Golden Dragon Tavern", population: 50, wealth: 40, stability: 60, dangerLevel: 5 },
-            { id: "market_square", name: "Market Square", population: 200, wealth: 80, stability: 75, dangerLevel: 15 },
-            { id: "city_gate_north", name: "North City Gate", population: 100, wealth: 30, stability: 50, dangerLevel: 25 },
-            { id: "forest_entrance", name: "Forest Entrance", population: 0, wealth: 10, stability: 40, dangerLevel: 40 },
-            { id: "dungeon_entrance", name: "Ancient Ruins", population: 0, wealth: 20, stability: 30, dangerLevel: 60 }
+            { id: "town_central", name: "Central Town", population: 500, wealth: 60, stability: 70, dangerLevel: 10, connections: ["tavern_golden_dragon", "market_square", "city_gate_north"] },
+            { id: "tavern_golden_dragon", name: "Golden Dragon Tavern", population: 50, wealth: 40, stability: 60, dangerLevel: 5, connections: ["town_central"] },
+            { id: "market_square", name: "Market Square", population: 200, wealth: 80, stability: 75, dangerLevel: 15, connections: ["town_central"] },
+            { id: "city_gate_north", name: "North City Gate", population: 100, wealth: 30, stability: 50, dangerLevel: 25, connections: ["town_central", "forest_entrance"] },
+            { id: "forest_entrance", name: "Forest Entrance", population: 0, wealth: 10, stability: 40, dangerLevel: 40, connections: ["city_gate_north", "dungeon_entrance"] },
+            { id: "dungeon_entrance", name: "Ancient Ruins", population: 0, wealth: 20, stability: 30, dangerLevel: 60, connections: ["forest_entrance"] }
         ];
         
         for (const locData of locations) {
@@ -3750,6 +3758,7 @@ class World {
             loc.wealth = locData.wealth;
             loc.stability = locData.stability;
             loc.dangerLevel = locData.dangerLevel;
+            loc.connections = locData.connections;
             world.addLocation(loc);
         }
         

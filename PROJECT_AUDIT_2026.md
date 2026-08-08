@@ -44,3 +44,9 @@ node --check app.js
 - model otrzymuje schemat JSON zamiast samego Markdownu;
 - silnik waliduje blueprint i tworzy z niego lokacje, polaczenia, frakcje, NPC-ow i questy;
 - serwer multiplayer potrafi utworzyc pokoj bezposrednio z blueprintu.
+
+## Graf podrozy dodany
+
+- starter world ma jawne polaczenia miedzy lokacjami: miasto, rynek, brama, las i ruiny;
+- `World.performPlayerAction()` odrzuca probe przejscia do niepolaczonej lokacji;
+- blueprinty bez zdefiniowanej topologii zachowuja kompatybilnosc wsteczna i pozwalaja na swobodna podroz.
