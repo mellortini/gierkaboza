@@ -545,6 +545,12 @@ async function joinRoom(serverUrl, roomId) {
     // Get world selection
     const worldSelect = document.getElementById('world-select');
     const worldOption = worldSelect ? worldSelect.value : 'new';
+
+    if (worldOption === 'new' && worldData.generated && !worldData.blueprint) {
+        statusEl.textContent = 'Ten plan świata nie jest jeszcze grywalny. Wygeneruj go ponownie.';
+        statusEl.className = 'multiplayer-status error';
+        return;
+    }
     
     // Update character data
     characterData.name = charNameInput;
@@ -1055,6 +1061,8 @@ async function generateWorldPlan() {
         return;
     }
 
+    worldData.blueprint = null;
+    worldData.generated = false;
     elements.generateWorldPlanBtn.disabled = true;
     elements.worldPlanContent.innerHTML = '<div style="text-align: center; padding: 40px; color: #ffd700;">🎲 Generuję plan świata...</div>';
 
@@ -1132,12 +1140,33 @@ Dla każdej postaci:
 
 Wygeneruj kompletny plan świata:`;
 
-        const structuredPrompt = prompt + `
+        let structuredPrompt = prompt + `
 
 IMPORTANT FORMAT: return only one valid JSON object, with no Markdown and no commentary.
 Required shape:
 {"version":1,"world":{"name":"...","description":"..."},"startLocationId":"...","locations":[{"id":"...","name":"...","description":"...","population":1000,"wealth":50,"stability":50,"dangerLevel":20,"connections":[]}],"factions":[{"id":"...","name":"...","description":"...","power":50,"resources":50,"aggression":50,"stability":50,"relations":{}}],"npcs":[{"id":"...","name":"...","role":"merchant|quest_giver|enemy|citizen","description":"...","locationId":"...","factionId":null,"hp":50,"maxHp":50,"attack":5,"defense":0,"goldReward":0,"xpReward":10,"isMerchant":false,"isQuestGiver":false,"inventory":[]}],"quests":[{"id":"...","title":"...","description":"...","objective":{"type":"kill_npc","targetId":"...","required":1},"reward":{"gold":50,"xp":40}}]}
 Use stable ASCII ids. Include at least 3 connected locations, 2 factions, 1 merchant, 1 quest giver, 1 enemy and 1 quest.`;
+
+        structuredPrompt = `You are the structured world generator for a persistent text RPG.
+Return exactly one valid JSON object. Do not return Markdown, headings, commentary, or code fences.
+
+WORLD NAME: ${worldData.name}
+WORLD DESCRIPTION: ${worldData.description || 'Create an original setting matching the requested genre.'}
+SCALE: ${worldData.scope}
+COMPLEXITY: ${worldData.complexity}
+
+Treat the user's world name and description as canonical. Preserve recognizable setting identity, races, cultures, geography, factions, and tone when the user references an existing fictional universe. Do not replace the requested setting with generic defaults such as Central Town, Golden Dragon Tavern, or Kingdom of Valdoria.
+
+Requirements:
+- create 3 to 12 locations with stable ASCII ids and meaningful names/descriptions;
+- every connection must reference another location id; make the starting location reachable;
+- create at least 2 factions, 1 merchant, 1 quest giver, 1 enemy, and 1 quest;
+- quest targetId must match an enemy NPC id, and every NPC locationId must match a location id;
+- keep the JSON compact enough to fit the output limit;
+- answer all human-readable fields in Polish.
+
+Required JSON shape:
+{"version":1,"world":{"name":"...","description":"..."},"startLocationId":"...","locations":[{"id":"...","name":"...","description":"...","population":1000,"wealth":50,"stability":50,"dangerLevel":20,"connections":[]}],"factions":[{"id":"...","name":"...","description":"...","power":50,"resources":50,"aggression":50,"stability":50,"relations":{}}],"npcs":[{"id":"...","name":"...","role":"merchant|quest_giver|enemy|citizen","description":"...","locationId":"...","factionId":null,"hp":50,"maxHp":50,"attack":5,"defense":0,"goldReward":0,"xpReward":10,"isMerchant":false,"isQuestGiver":false,"inventory":[]}],"quests":[{"id":"...","title":"...","description":"...","objective":{"type":"kill_npc","targetId":"...","required":1},"reward":{"gold":50,"xp":40}}]}`;
 
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
@@ -1150,8 +1179,8 @@ Use stable ASCII ids. Include at least 3 connected locations, 2 factions, 1 merc
             body: JSON.stringify({
                 model: worldData.model,
                 messages: [{ role: 'user', content: structuredPrompt }],
-                temperature: 0.9,
-                max_tokens: 4000
+                temperature: 0.35,
+                max_tokens: 6000
             })
         });
 
@@ -1169,6 +1198,9 @@ Use stable ASCII ids. Include at least 3 connected locations, 2 factions, 1 merc
         } catch (blueprintError) {
             console.warn('Structured world parsing failed; keeping text plan:', blueprintError.message);
             worldData.plan = rawPlan;
+            worldData.generated = false;
+            elements.worldPlanContent.innerHTML = `<div style="color: #e74c3c; padding: 20px;">Nie udało się zbudować grywalnego świata z odpowiedzi modelu. Wygeneruj plan ponownie. Szczegóły: ${escapeHtml(blueprintError.message)}</div><hr><div style="white-space: pre-wrap; color: #aaa;">${escapeHtml(rawPlan)}</div>`;
+            return;
         }
         worldData.generated = true;
 
@@ -1212,6 +1244,10 @@ function updateWorldPreview() {
 function startGameWithWorld() {
     if (!worldData.generated || !worldData.plan) {
         alert('Wygeneruj plan świata najpierw!');
+        return;
+    }
+    if (!worldData.blueprint) {
+        alert('Model zwrócił opis świata, ale nie grywalny blueprint JSON. Wygeneruj plan ponownie.');
         return;
     }
     

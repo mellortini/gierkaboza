@@ -50,3 +50,9 @@ node --check app.js
 - starter world ma jawne polaczenia miedzy lokacjami: miasto, rynek, brama, las i ruiny;
 - `World.performPlayerAction()` odrzuca probe przejscia do niepolaczonej lokacji;
 - blueprinty bez zdefiniowanej topologii zachowuja kompatybilnosc wsteczna i pozwalaja na swobodna podroz.
+
+## Generator swiata: poprawka
+
+- generator wysyla teraz jednoznaczny prompt JSON bez sprzecznych instrukcji Markdown;
+- nazwa i opis wskazanego uniwersum maja pierwszenstwo przed domyslnym fantasy;
+- niepoprawna odpowiedz modelu nie uruchamia juz po cichu `Central Town` — uzytkownik dostaje komunikat i moze ponowic generowanie.
