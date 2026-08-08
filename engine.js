@@ -633,6 +633,7 @@ class Location {
         this.stability = 50;     // 0-100
         this.dangerLevel = 0;    // 0-100
         this.description = "";
+        this.connections = [];
         
         // Optional: buildings, garrison, tradeRoutes (Phase 2+)
     }
@@ -646,7 +647,8 @@ class Location {
             wealth: this.wealth,
             stability: this.stability,
             dangerLevel: this.dangerLevel,
-            description: this.description
+            description: this.description,
+            connections: this.connections
         };
     }
 
@@ -658,6 +660,7 @@ class Location {
         loc.stability = json.stability;
         loc.dangerLevel = json.dangerLevel;
         loc.description = json.description || "";
+        loc.connections = Array.isArray(json.connections) ? json.connections : [];
         return loc;
     }
 }
@@ -1137,6 +1140,7 @@ class World {
         this.rawChangeLog = [];              // WorldChange[] (Raw Archive layer)
         this.actionCountSinceLastCompression = 0;
         this.currentNpcMemory = new Map();   // npcId -> recent interactions
+        this.questDefinitions = [];
         
         // Configuration
         this.config = {
@@ -1431,6 +1435,15 @@ class World {
     }
 
     _getStarterQuest() {
+        if (this.questDefinitions.length > 0) {
+            const blueprintQuest = this.questDefinitions[0];
+            return {
+                ...blueprintQuest,
+                status: 'active',
+                objective: { ...(blueprintQuest.objective || {}), progress: 0 },
+                reward: { ...(blueprintQuest.reward || {}) }
+            };
+        }
         return {
             id: 'forest_threat',
             title: 'Zagrozenie w lesie',
@@ -2961,7 +2974,8 @@ class World {
             historyNodes: this.historyNodes.map(node => node.toJSON()),
             rawChangeLog: this.rawChangeLog.map(wc => wc.toJSON ? wc.toJSON() : wc),
             actionCountSinceLastCompression: this.actionCountSinceLastCompression,
-            currentNpcMemory: Object.fromEntries(this.currentNpcMemory)
+            currentNpcMemory: Object.fromEntries(this.currentNpcMemory),
+            questDefinitions: this.questDefinitions
         };
     }
 
@@ -3060,6 +3074,7 @@ class World {
         if (json.currentNpcMemory) {
             world.currentNpcMemory = new Map(Object.entries(json.currentNpcMemory));
         }
+        world.questDefinitions = Array.isArray(json.questDefinitions) ? json.questDefinitions : [];
         
         return world;
     }
@@ -3560,6 +3575,157 @@ class World {
      */
     getDayNumber() {
         return Math.floor(this.currentTimeMinutes / (24 * 60)) + 1;
+    }
+
+    static validateBlueprint(blueprint) {
+        if (!blueprint || typeof blueprint !== 'object') throw new Error('World blueprint must be an object');
+        const source = blueprint.world && typeof blueprint.world === 'object' ? blueprint.world : blueprint;
+        const clamp = (value, min, max, fallback) => {
+            const number = Number(value);
+            return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
+        };
+        const makeId = (value, fallback) => String(value || fallback)
+            .trim().toLocaleLowerCase('en-US').normalize('NFKD')
+            .replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 64) || fallback;
+        const uniqueId = (value, fallback, used) => {
+            const base = makeId(value, fallback);
+            let id = base;
+            let counter = 2;
+            while (used.has(id)) id = `${base}_${counter++}`;
+            used.add(id);
+            return id;
+        };
+        const rawLocations = Array.isArray(source.locations) ? source.locations : (Array.isArray(blueprint.locations) ? blueprint.locations : []);
+        if (rawLocations.length === 0) throw new Error('World blueprint needs at least one location');
+        const locationIds = new Set();
+        const locations = rawLocations.slice(0, 100).map((entry, index) => ({
+            id: uniqueId(entry?.id || entry?.name, `location_${index + 1}`, locationIds),
+            name: String(entry?.name || entry?.id || `Location ${index + 1}`).slice(0, 120),
+            description: String(entry?.description || '').slice(0, 2000),
+            population: Math.floor(clamp(entry?.population, 0, 100000000, 0)),
+            wealth: clamp(entry?.wealth, 0, 100, 50),
+            stability: clamp(entry?.stability, 0, 100, 50),
+            dangerLevel: clamp(entry?.dangerLevel ?? entry?.danger, 0, 100, 0),
+            controllingFactionId: entry?.controllingFactionId ? makeId(entry.controllingFactionId, '') : null,
+            connections: Array.isArray(entry?.connections) ? entry.connections.map(id => makeId(id, '')).filter(Boolean) : []
+        }));
+        const validLocationIds = new Set(locations.map(location => location.id));
+        locations.forEach(location => {
+            location.connections = location.connections.filter(id => validLocationIds.has(id) && id !== location.id);
+        });
+
+        const factionIds = new Set();
+        const factions = (Array.isArray(source.factions) ? source.factions : (Array.isArray(blueprint.factions) ? blueprint.factions : [])).slice(0, 50).map((entry, index) => {
+            const id = uniqueId(entry?.id || entry?.name, `faction_${index + 1}`, factionIds);
+            const rawRelations = entry?.relations && typeof entry.relations === 'object' ? entry.relations : {};
+            const relations = Object.fromEntries(Object.entries(rawRelations).map(([key, value]) => [makeId(key, key), clamp(value, -100, 100, 0)]));
+            return {
+                id,
+                name: String(entry?.name || id).slice(0, 120),
+                description: String(entry?.description || entry?.goal || '').slice(0, 2000),
+                power: clamp(entry?.power, 0, 100, 50),
+                resources: clamp(entry?.resources, 0, 100, 50),
+                aggression: clamp(entry?.aggression, 0, 100, 50),
+                stability: clamp(entry?.stability, 0, 100, 50),
+                relations
+            };
+        });
+
+        const npcIds = new Set();
+        const npcs = (Array.isArray(source.npcs) ? source.npcs : Array.isArray(blueprint.npcs) ? blueprint.npcs : Array.isArray(source.characters) ? source.characters : [])
+            .slice(0, 200).map((entry, index) => {
+                const id = uniqueId(entry?.id || entry?.name, `npc_${index + 1}`, npcIds);
+                const locationId = validLocationIds.has(makeId(entry?.locationId, '')) ? makeId(entry.locationId, '') : locations[0].id;
+                const inventory = Array.isArray(entry?.inventory) ? entry.inventory
+                    .filter(item => item && ITEM_CATALOG[item.id] && Number.isInteger(item.quantity) && item.quantity > 0)
+                    .map(item => ({ id: item.id, quantity: Math.min(100, item.quantity) })) : [];
+                return {
+                    id,
+                    name: String(entry?.name || id).slice(0, 120),
+                    description: String(entry?.description || '').slice(0, 2000),
+                    role: String(entry?.role || '').slice(0, 80),
+                    locationId,
+                    factionId: entry?.factionId ? makeId(entry.factionId, '') : null,
+                    hp: clamp(entry?.hp ?? entry?.maxHp, 1, 10000, 50),
+                    maxHp: clamp(entry?.maxHp ?? entry?.hp, 1, 10000, 50),
+                    attack: clamp(entry?.attack, 0, 500, 5),
+                    defense: clamp(entry?.defense, 0, 500, 0),
+                    goldReward: Math.floor(clamp(entry?.goldReward, 0, 100000, 0)),
+                    xpReward: Math.floor(clamp(entry?.xpReward, 0, 100000, 10)),
+                    isMerchant: entry?.isMerchant === true || /merchant|kupiec|trader/i.test(String(entry?.role || '')),
+                    isQuestGiver: entry?.isQuestGiver === true || /quest|zadanie|warden|elder|gospodarz/i.test(String(entry?.role || '')),
+                    inventory
+                };
+            });
+
+        const questIds = new Set();
+        const quests = (Array.isArray(source.quests) ? source.quests : (Array.isArray(blueprint.quests) ? blueprint.quests : [])).slice(0, 100).map((entry, index) => ({
+            id: uniqueId(entry?.id || entry?.title, `quest_${index + 1}`, questIds),
+            title: String(entry?.title || entry?.name || `Quest ${index + 1}`).slice(0, 160),
+            description: String(entry?.description || '').slice(0, 2000),
+            objective: entry?.objective && typeof entry.objective === 'object' ? {
+                type: String(entry.objective.type || 'explore'),
+                targetId: entry.objective.targetId ? makeId(entry.objective.targetId, '') : null,
+                required: Math.max(1, Math.floor(clamp(entry.objective.required, 1, 1000, 1)))
+            } : { type: 'explore', targetId: null, required: 1 },
+            reward: {
+                gold: Math.floor(clamp(entry?.reward?.gold, 0, 100000, 0)),
+                xp: Math.floor(clamp(entry?.reward?.xp, 0, 100000, 0))
+            }
+        }));
+
+        return {
+            version: 1,
+            world: {
+                name: String(source.name || blueprint.name || 'Generated World').slice(0, 160),
+                description: String(source.description || blueprint.description || '').slice(0, 3000)
+            },
+            startLocationId: validLocationIds.has(makeId(source.startLocationId || blueprint.startLocationId, '')) ? makeId(source.startLocationId || blueprint.startLocationId, '') : locations[0].id,
+            locations,
+            factions,
+            npcs,
+            quests
+        };
+    }
+
+    static createFromBlueprint(blueprint, playerName, playerLocationId = null) {
+        const data = World.validateBlueprint(blueprint);
+        const world = new World();
+        world.worldMetadata = {
+            name: data.world.name,
+            description: data.world.description,
+            plan: JSON.stringify(data, null, 2)
+        };
+        for (const entry of data.locations) {
+            const location = new Location(entry.id, entry.name);
+            Object.assign(location, entry);
+            world.addLocation(location);
+        }
+        for (const entry of data.factions) {
+            const faction = new Faction(entry.id, entry.name);
+            faction.description = entry.description;
+            faction.power = entry.power;
+            faction.resources = entry.resources;
+            faction.aggression = entry.aggression;
+            faction.stability = entry.stability;
+            for (const [factionId, relation] of Object.entries(entry.relations || {})) faction.setRelation(factionId, relation);
+            world.addFaction(faction);
+        }
+        for (const entry of data.npcs) {
+            const npc = new NPC(entry.id, entry.locationId, entry.factionId);
+            Object.assign(npc, entry);
+            world.addNPC(npc);
+        }
+        world.questDefinitions = data.quests;
+        const startId = playerLocationId && world.locations.has(playerLocationId)
+            ? playerLocationId
+            : data.startLocationId;
+        const player = new Player(playerName, startId);
+        player.addItem('bread', 2);
+        player.addItem('healing_potion', 1);
+        for (const faction of world.factions.values()) player.setReputation(faction.id, 0);
+        world.setPlayer(player);
+        return world;
     }
 
     /**

@@ -46,6 +46,7 @@ let worldData = {
     scope: 'medium',
     complexity: 'moderate',
     plan: null,
+    blueprint: null,
     model: '',
     generated: false
 };
@@ -577,16 +578,16 @@ async function joinRoom(serverUrl, roomId) {
         console.log('Sending to server - API Key:', state.apiKey ? 'YES' : 'NO', 'Model:', state.model);
         
         // Prepare world data based on selection
-        let worldData = null;
+        let incomingWorldData = null;
         if (worldOption === 'current' && state.world) {
-            worldData = state.world.toJSON();
+            incomingWorldData = state.world.toJSON();
         } else if (worldOption === 'saved') {
             // Load from localStorage
             const savedGame = localStorage.getItem('rpg_save');
             if (savedGame) {
                 try {
                     const parsedSave = JSON.parse(savedGame);
-                    worldData = parsedSave.world || parsedSave;
+                    incomingWorldData = parsedSave.world || parsedSave;
                 } catch (e) {
                     console.error('Error parsing saved game:', e);
                 }
@@ -597,7 +598,8 @@ async function joinRoom(serverUrl, roomId) {
             roomId: roomId,
             playerName: playerName,
             characterData: characterDataWithApi,
-            worldData: worldData,
+            worldData: incomingWorldData,
+            worldBlueprint: worldOption === 'new' ? worldData.blueprint : null,
             worldOption: worldOption,
             playerId: state.playerId || null
         });
@@ -1024,6 +1026,19 @@ function getLevelDescription(type, level) {
 }
 
 // Generowanie planu świata
+function parseWorldBlueprint(content) {
+    const text = String(content || '').replace(/```json|```/gi, '').trim();
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace < 0 || lastBrace <= firstBrace) throw new Error('Model nie zwrocil obiektu JSON swiata.');
+    const parsed = JSON.parse(text.slice(firstBrace, lastBrace + 1));
+    return World.validateBlueprint(parsed);
+}
+
+function blueprintToPlan(blueprint) {
+    return JSON.stringify(blueprint, null, 2);
+}
+
 async function generateWorldPlan() {
     worldData.name = elements.worldName.value.trim();
     worldData.description = elements.worldDescription.value.trim();
@@ -1117,6 +1132,13 @@ Dla każdej postaci:
 
 Wygeneruj kompletny plan świata:`;
 
+        const structuredPrompt = prompt + `
+
+IMPORTANT FORMAT: return only one valid JSON object, with no Markdown and no commentary.
+Required shape:
+{"version":1,"world":{"name":"...","description":"..."},"startLocationId":"...","locations":[{"id":"...","name":"...","description":"...","population":1000,"wealth":50,"stability":50,"dangerLevel":20,"connections":[]}],"factions":[{"id":"...","name":"...","description":"...","power":50,"resources":50,"aggression":50,"stability":50,"relations":{}}],"npcs":[{"id":"...","name":"...","role":"merchant|quest_giver|enemy|citizen","description":"...","locationId":"...","factionId":null,"hp":50,"maxHp":50,"attack":5,"defense":0,"goldReward":0,"xpReward":10,"isMerchant":false,"isQuestGiver":false,"inventory":[]}],"quests":[{"id":"...","title":"...","description":"...","objective":{"type":"kill_npc","targetId":"...","required":1},"reward":{"gold":50,"xp":40}}]}
+Use stable ASCII ids. Include at least 3 connected locations, 2 factions, 1 merchant, 1 quest giver, 1 enemy and 1 quest.`;
+
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -1127,7 +1149,7 @@ Wygeneruj kompletny plan świata:`;
             },
             body: JSON.stringify({
                 model: worldData.model,
-                messages: [{ role: 'user', content: prompt }],
+                messages: [{ role: 'user', content: structuredPrompt }],
                 temperature: 0.9,
                 max_tokens: 4000
             })
@@ -1139,7 +1161,15 @@ Wygeneruj kompletny plan świata:`;
         }
 
         const data = await response.json();
-        worldData.plan = data.choices[0].message.content;
+        const rawPlan = data.choices[0].message.content;
+        worldData.blueprint = null;
+        try {
+            worldData.blueprint = parseWorldBlueprint(rawPlan);
+            worldData.plan = blueprintToPlan(worldData.blueprint);
+        } catch (blueprintError) {
+            console.warn('Structured world parsing failed; keeping text plan:', blueprintError.message);
+            worldData.plan = rawPlan;
+        }
         worldData.generated = true;
 
         // Wyświetl plan
@@ -1483,7 +1513,15 @@ function buildMemoryContext(world, sceneType, sceneTags) {
 
 // Rozpoczęcie gry
 function createGameWorld(playerName) {
-    const world = World.createStarterWorld(playerName, 'town_central');
+    let world;
+    if (worldData.blueprint) {
+        try {
+            world = World.createFromBlueprint(worldData.blueprint, playerName);
+        } catch (error) {
+            console.error('Structured world creation failed:', error);
+        }
+    }
+    if (!world) world = World.createStarterWorld(playerName, 'town_central');
     if (worldData.generated && worldData.plan) {
         world.worldMetadata = {
             name: worldData.name || null,

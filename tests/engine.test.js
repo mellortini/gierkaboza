@@ -91,9 +91,34 @@ function testTradeCombatAndQuestLoop() {
     assert.strictEqual(player.gold, 155);
 }
 
+function testStructuredBlueprintWorld() {
+    const blueprint = {
+        version: 1,
+        world: { name: 'Ash Coast', description: 'A test world' },
+        startLocationId: 'harbor',
+        locations: [
+            { id: 'harbor', name: 'Harbor', connections: ['forest'] },
+            { id: 'forest', name: 'Forest', connections: ['harbor'], dangerLevel: 50 }
+        ],
+        factions: [{ id: 'guild', name: 'Guild', power: 70, relations: {} }],
+        npcs: [{ id: 'merchant', name: 'Merchant', role: 'merchant', locationId: 'harbor', isMerchant: true, inventory: [{ id: 'bread', quantity: 3 }] }],
+        quests: [{ id: 'test_quest', title: 'Test quest', objective: { type: 'explore', required: 1 }, reward: { gold: 10, xp: 5 } }]
+    };
+    const world = World.createFromBlueprint(blueprint, 'Blueprint Player');
+    assert.strictEqual(world.worldMetadata.name, 'Ash Coast');
+    assert.strictEqual(world.player.locationId, 'harbor');
+    assert.strictEqual(world.locations.get('harbor').connections[0], 'forest');
+    assert.strictEqual(world.getNPC('merchant').isMerchant, true);
+    assert.strictEqual(world.questDefinitions[0].id, 'test_quest');
+    const roundTrip = World.fromJSON(JSON.parse(JSON.stringify(world.toJSON())));
+    assert.strictEqual(roundTrip.locations.size, 2);
+    assert.strictEqual(roundTrip.getNPC('merchant').inventory[0].id, 'bread');
+}
+
 testTimeValidation();
 testPlayerActionsAndRoundTrip();
 testStatusEffectDuration();
 testEventQueueCountersAndCancellation();
 testTradeCombatAndQuestLoop();
+testStructuredBlueprintWorld();
 console.log('engine tests passed');

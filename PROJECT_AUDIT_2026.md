@@ -25,11 +25,10 @@ Projekt jest działającym prototypem tekstowego RPG z narratorem AI i trybem So
 
 ## Nadal do zaprojektowania przed wersją gry
 
-1. Prawdziwy model świata z generatora: plan AI powinien zwracać walidowany JSON lokacji, frakcji, NPC-ów i questów, a nie tylko Markdown.
-2. Głębsze reguły D&D: rzuty kośćmi, inicjatywa, pancerz, klasy, umiejętności, warunki zwycięstwa i rozbudowany sklep.
-3. Trwała baza danych i migracje zamiast pliku JSON, jeśli gra ma działać na wielu instancjach Railway.
-4. Uwierzytelnianie graczy i bezpieczny model kluczy AI. Obecnie klient przekazuje klucz serwerowi na czas narracji; nie należy traktować tego jako rozwiązania produkcyjnego.
-5. Testy integracyjne przeglądarki i multiplayera uruchamiane automatycznie w CI.
+1. Głębsze reguły D&D: rzuty kośćmi, inicjatywa, pancerz, klasy, umiejętności, warunki zwycięstwa i rozbudowany sklep.
+2. Trwała baza danych i migracje zamiast pliku JSON, jeśli gra ma działać na wielu instancjach Railway.
+3. Uwierzytelnianie graczy i bezpieczny model kluczy AI. Obecnie klient przekazuje klucz serwerowi na czas narracji; nie należy traktować tego jako rozwiązania produkcyjnego.
+4. Testy integracyjne przeglądarki i multiplayera uruchamiane automatycznie w CI.
 
 ## Uruchamianie testów
 
@@ -39,3 +38,9 @@ node --check engine.js
 node --check server.js
 node --check app.js
 ```
+
+## Generator swiata dodany
+
+- model otrzymuje schemat JSON zamiast samego Markdownu;
+- silnik waliduje blueprint i tworzy z niego lokacje, polaczenia, frakcje, NPC-ow i questy;
+- serwer multiplayer potrafi utworzyc pokoj bezposrednio z blueprintu.

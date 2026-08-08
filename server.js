@@ -208,7 +208,7 @@ io.on('connection', (socket) => {
     // Create or join a game room
     socket.on('joinRoom', (data) => {
         try {
-            const { roomId: rawRoomId, playerName: rawPlayerName, characterData, worldData, worldOption, playerId: requestedPlayerId } = data || {};
+            const { roomId: rawRoomId, playerName: rawPlayerName, characterData, worldData, worldBlueprint, worldOption, playerId: requestedPlayerId } = data || {};
             const roomId = String(rawRoomId || '').trim();
             const playerName = String(rawPlayerName || '').trim();
 
@@ -239,7 +239,15 @@ io.on('connection', (socket) => {
         
         // Create or load world based on option
         if (!room.world) {
-            if (incomingWorld && worldOption === 'current') {
+            if (worldBlueprint && worldOption !== 'current' && worldOption !== 'saved') {
+                try {
+                    room.world = World.createFromBlueprint(worldBlueprint, playerName);
+                    console.log('World created from structured blueprint');
+                } catch (e) {
+                    console.error('Error creating world from blueprint:', e);
+                    room.world = World.createStarterWorld(playerName, 'town_central');
+                }
+            } else if (incomingWorld && worldOption === 'current') {
                 // Load world from client data
                 try {
                     room.world = restoreWorldSnapshot(incomingWorld, playerName);
