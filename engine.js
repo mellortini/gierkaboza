@@ -1140,6 +1140,9 @@ class World {
         this.rawChangeLog = [];              // WorldChange[] (Raw Archive layer)
         this.actionCountSinceLastCompression = 0;
         this.currentNpcMemory = new Map();   // npcId -> recent interactions
+        // NarrativeMemory V1 is a separate, structured story layer. It never
+        // authoritatively changes the simulation fields above.
+        this.narrativeMemory = new NarrativeMemory();
         this.questDefinitions = [];
         
         // Configuration
@@ -2983,8 +2986,21 @@ class World {
             rawChangeLog: this.rawChangeLog.map(wc => wc.toJSON ? wc.toJSON() : wc),
             actionCountSinceLastCompression: this.actionCountSinceLastCompression,
             currentNpcMemory: Object.fromEntries(this.currentNpcMemory),
+            narrativeMemory: this.narrativeMemory ? this.narrativeMemory.toJSON() : new NarrativeMemory().toJSON(),
             questDefinitions: this.questDefinitions
         };
+    }
+
+    /**
+     * Snapshot intended for a player client. Narrative secrets and facts that
+     * this viewer does not know are intentionally excluded.
+     */
+    toViewerJSON(viewerId) {
+        const snapshot = this.toJSON();
+        snapshot.narrativeMemory = this.narrativeMemory
+            ? this.narrativeMemory.toViewerJSON(viewerId)
+            : new NarrativeMemory().toViewerJSON(viewerId);
+        return snapshot;
     }
 
     /**
@@ -3082,6 +3098,11 @@ class World {
         if (json.currentNpcMemory) {
             world.currentNpcMemory = new Map(Object.entries(json.currentNpcMemory));
         }
+        // Saves made before NarrativeMemory V1 keep loading. Legacy history
+        // summaries become episodes, while no old prose is guessed into facts.
+        world.narrativeMemory = json.narrativeMemory
+            ? NarrativeMemory.fromJSON(json.narrativeMemory)
+            : NarrativeMemory.migrateLegacy(world.historyNodes);
         world.questDefinitions = Array.isArray(json.questDefinitions) ? json.questDefinitions : [];
         
         return world;
@@ -3509,6 +3530,42 @@ class World {
     }
 
     /**
+     * Record one completed player/narrator exchange in the structured
+     * narrative layer. The caller should invoke this only after a narrator
+     * response exists; it has no mechanical side effects.
+     */
+    recordNarrativeTurn(turn = {}) {
+        if (!this.narrativeMemory) this.narrativeMemory = new NarrativeMemory();
+        return this.narrativeMemory.recordTurn({
+            ...turn,
+            gameTime: Number.isFinite(Number(turn.gameTime)) ? Number(turn.gameTime) : this.currentTimeMinutes
+        });
+    }
+
+    /**
+     * Return relevance-selected narrative facts for an LLM prompt or UI. By
+     * default it is viewer-safe; pass includeDirectorSecrets only in trusted
+     * server/local narrator code.
+     */
+    buildNarrativeContext(query = {}) {
+        if (!this.narrativeMemory) this.narrativeMemory = new NarrativeMemory();
+        return this.narrativeMemory.buildContext({
+            ...query,
+            locationId: query.locationId || this.player?.locationId || null
+        });
+    }
+
+    buildMemoryConsolidationInput() {
+        if (!this.narrativeMemory) this.narrativeMemory = new NarrativeMemory();
+        return this.narrativeMemory.buildConsolidationInput();
+    }
+
+    applyNarrativeMemoryPatch(patch) {
+        if (!this.narrativeMemory) this.narrativeMemory = new NarrativeMemory();
+        return this.narrativeMemory.applyPatch(patch);
+    }
+
+    /**
      * Phase 4: Record a player action for memory system
      * @param {string} actionType - Type of action
      * @param {Object} actionData - Action details
@@ -3830,10 +3887,478 @@ class World {
 }
 
 // ============================================================================
+// NARRATIVE MEMORY V1
+// ============================================================================
+// This layer is deliberately separate from the simulation. It records only
+// narrative facts and never changes Player/NPC/quest mechanics.
+
+const NARRATIVE_MEMORY_VERSION = 1;
+const NARRATIVE_MEMORY_CONSOLIDATION_TURNS = 6;
+const NARRATIVE_MEMORY_MAX_TURNS = 240;
+const NARRATIVE_MEMORY_MAX_CONTEXT_CHARS = 12000;
+const NARRATIVE_FACT_KINDS = new Set([
+    'appearance', 'relationship', 'promise', 'knowledge', 'event',
+    'location_detail', 'rumor', 'secret'
+]);
+const NARRATIVE_SUBJECT_TYPES = new Set(['player', 'npc', 'location', 'faction', 'quest']);
+const NARRATIVE_CERTAINTIES = new Set(['confirmed', 'claimed', 'rumor', 'false']);
+const NARRATIVE_THREAD_STATUSES = new Set(['active', 'resolved', 'abandoned']);
+
+function narrativeClone(value) {
+    return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function narrativeStableStringify(value) {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) return `[${value.map(narrativeStableStringify).join(',')}]`;
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${narrativeStableStringify(value[key])}`).join(',')}}`;
+}
+
+function narrativeStringList(value, maxItems = 32, maxLength = 120) {
+    if (!Array.isArray(value)) return [];
+    return [...new Set(value
+        .filter(item => typeof item === 'string')
+        .map(item => item.trim().slice(0, maxLength))
+        .filter(Boolean))].slice(0, maxItems);
+}
+
+/**
+ * Persisted long-term narrative memory. Facts are a ledger: superseded facts
+ * remain in the ledger for history, while indexes point to the active version.
+ */
+class NarrativeMemory {
+    constructor() {
+        this.schemaVersion = NARRATIVE_MEMORY_VERSION;
+        this.revision = 0;
+        this.lastConsolidatedTurn = 0;
+        this.turns = [];
+        this.facts = new Map();
+        this.episodes = [];
+        this.threads = new Map();
+        this.indexes = {
+            bySubject: new Map(),
+            byLocation: new Map(),
+            byTag: new Map(),
+            byCanonicalKey: new Map()
+        };
+        this._idCounter = 0;
+    }
+
+    _makeId(prefix) {
+        this._idCounter += 1;
+        return `${prefix}_${Date.now().toString(36)}_${this._idCounter.toString(36)}`;
+    }
+
+    _subjectKey(subject) {
+        return subject && subject.type && subject.id ? `${subject.type}:${subject.id}` : null;
+    }
+
+    _indexAdd(index, key, id) {
+        if (!key) return;
+        if (!index.has(key)) index.set(key, new Set());
+        index.get(key).add(id);
+    }
+
+    _indexFact(fact) {
+        this._indexAdd(this.indexes.bySubject, this._subjectKey(fact.subject), fact.id);
+        this._indexAdd(this.indexes.byLocation, fact.locationId, fact.id);
+        for (const tag of fact.tags) this._indexAdd(this.indexes.byTag, tag, fact.id);
+        if (fact.state === 'active') this.indexes.byCanonicalKey.set(fact.canonicalKey, fact.id);
+    }
+
+    _rebuildIndexes() {
+        this.indexes = {
+            bySubject: new Map(), byLocation: new Map(), byTag: new Map(), byCanonicalKey: new Map()
+        };
+        for (const fact of this.facts.values()) this._indexFact(fact);
+    }
+
+    _isMechanicalKey(value) {
+        const key = String(value || '').toLocaleLowerCase('en-US');
+        return /(^|[._:\-\s])(hp|maxhp|gold|inventory|xp|level|stats?|strength|dexterity|constitution|intelligence|wisdom|charisma|quest[._:\-\s]*(status|reward)|rewards?|isalive|alive|dead|death|killed)([._:\-\s]|$)/.test(key);
+    }
+
+    _validateFact(rawFact) {
+        if (!rawFact || typeof rawFact !== 'object') return { ok: false, error: 'Fact must be an object.' };
+        if (!NARRATIVE_FACT_KINDS.has(rawFact.kind)) return { ok: false, error: 'Unsupported narrative fact kind.' };
+        const subject = rawFact.subject;
+        if (!subject || !NARRATIVE_SUBJECT_TYPES.has(subject.type) || typeof subject.id !== 'string' || !subject.id.trim()) {
+            return { ok: false, error: 'Fact subject is invalid.' };
+        }
+        if (typeof rawFact.predicate !== 'string' || !rawFact.predicate.trim() || rawFact.predicate.length > 160) {
+            return { ok: false, error: 'Fact predicate is invalid.' };
+        }
+        const canonicalKey = String(rawFact.canonicalKey || `${subject.type}:${subject.id}:${rawFact.predicate}`).trim();
+        if (!canonicalKey || canonicalKey.length > 240 || this._isMechanicalKey(rawFact.predicate) || this._isMechanicalKey(canonicalKey)) {
+            return { ok: false, error: 'Narrative memory cannot change mechanical state.' };
+        }
+        if (!NARRATIVE_CERTAINTIES.has(rawFact.certainty || 'claimed')) return { ok: false, error: 'Fact certainty is invalid.' };
+        const importance = Number(rawFact.importance);
+        if (!Number.isFinite(importance) || importance < 0 || importance > 1) return { ok: false, error: 'Fact importance must be between 0 and 1.' };
+        if (!Object.prototype.hasOwnProperty.call(rawFact, 'value')) return { ok: false, error: 'Fact value is required.' };
+        try { narrativeStableStringify(rawFact.value); } catch (error) { return { ok: false, error: 'Fact value must be JSON serializable.' }; }
+        return {
+            ok: true,
+            value: {
+                id: typeof rawFact.id === 'string' && rawFact.id ? rawFact.id : this._makeId('fact'),
+                kind: rawFact.kind,
+                subject: { type: subject.type, id: subject.id.trim().slice(0, 120) },
+                predicate: rawFact.predicate.trim(),
+                value: narrativeClone(rawFact.value),
+                canonicalKey,
+                certainty: rawFact.certainty || 'claimed',
+                importance,
+                tags: narrativeStringList(rawFact.tags),
+                relatedIds: narrativeStringList(rawFact.relatedIds),
+                locationId: typeof rawFact.locationId === 'string' && rawFact.locationId.trim() ? rawFact.locationId.trim().slice(0, 120) : null,
+                knownBy: narrativeStringList(rawFact.knownBy),
+                directorOnly: rawFact.directorOnly === true,
+                source: {
+                    turnId: typeof rawFact.source?.turnId === 'string' ? rawFact.source.turnId.slice(0, 120) : null,
+                    speakerId: typeof rawFact.source?.speakerId === 'string' ? rawFact.source.speakerId.slice(0, 120) : null,
+                    kind: typeof rawFact.source?.kind === 'string' ? rawFact.source.kind.slice(0, 80) : 'narrative_patch',
+                    gameTime: Number.isFinite(Number(rawFact.source?.gameTime)) ? Number(rawFact.source.gameTime) : 0
+                },
+                state: 'active',
+                validFrom: Number.isFinite(Number(rawFact.source?.gameTime)) ? Number(rawFact.source.gameTime) : 0,
+                validTo: null,
+                supersedes: [],
+                supersededBy: null,
+                createdAtRevision: this.revision + 1,
+                updatedAtRevision: this.revision + 1
+            }
+        };
+    }
+
+    _isCurrentFact(fact) {
+        return /(^|\.)current(\.|$)/i.test(fact.predicate) || /^appearance\.current\./i.test(fact.predicate);
+    }
+
+    _upsertFact(incoming) {
+        const activeId = this.indexes.byCanonicalKey.get(incoming.canonicalKey);
+        const active = activeId ? this.facts.get(activeId) : null;
+        if (!active) {
+            this.facts.set(incoming.id, incoming);
+            this._indexFact(incoming);
+            return { status: 'created', id: incoming.id };
+        }
+
+        if (narrativeStableStringify(active.value) === narrativeStableStringify(incoming.value)) {
+            active.importance = Math.max(active.importance, incoming.importance);
+            active.tags = narrativeStringList(active.tags.concat(incoming.tags));
+            active.relatedIds = narrativeStringList(active.relatedIds.concat(incoming.relatedIds));
+            active.knownBy = narrativeStringList(active.knownBy.concat(incoming.knownBy));
+            active.updatedAtRevision = this.revision + 1;
+            this._rebuildIndexes();
+            return { status: 'unchanged', id: active.id };
+        }
+
+        const incomingCanReplace = incoming.certainty === 'confirmed' && (active.certainty !== 'confirmed' || this._isCurrentFact(incoming));
+        if (incomingCanReplace) {
+            active.state = 'superseded';
+            active.validTo = incoming.validFrom;
+            active.supersededBy = incoming.id;
+            active.updatedAtRevision = this.revision + 1;
+            incoming.supersedes = [active.id];
+            this.facts.set(incoming.id, incoming);
+            this._rebuildIndexes();
+            return { status: 'superseded', id: incoming.id, previousId: active.id };
+        }
+
+        // A rumor or claim must never overwrite a confirmed fact. Preserve it as
+        // a disputed historical assertion instead of silently losing it.
+        incoming.state = 'disputed';
+        incoming.canonicalKey = `${incoming.canonicalKey}#disputed:${incoming.id}`;
+        this.facts.set(incoming.id, incoming);
+        this._indexFact(incoming);
+        return { status: 'disputed', id: incoming.id, previousId: active.id };
+    }
+
+    recordTurn(turn = {}) {
+        const userText = typeof turn.userText === 'string' ? turn.userText.trim() : '';
+        const narratorText = typeof turn.narratorText === 'string' ? turn.narratorText.trim() : '';
+        if (!userText || !narratorText) return { recorded: false, error: 'A complete turn requires userText and narratorText.' };
+        const id = typeof turn.id === 'string' && turn.id.trim() ? turn.id.trim().slice(0, 120) : this._makeId('turn');
+        const existing = this.turns.find(item => item.id === id);
+        if (existing) return { recorded: true, id: existing.id, duplicate: true };
+        const entry = {
+            id,
+            actorId: typeof turn.actorId === 'string' ? turn.actorId.slice(0, 120) : null,
+            userText: userText.slice(0, 8000),
+            narratorText: narratorText.slice(0, 12000),
+            locationId: typeof turn.locationId === 'string' ? turn.locationId.slice(0, 120) : null,
+            participantIds: narrativeStringList(turn.participantIds),
+            gameTime: Number.isFinite(Number(turn.gameTime)) ? Number(turn.gameTime) : 0,
+            complete: true,
+            consolidated: false
+        };
+        this.turns.push(entry);
+        if (this.turns.length > NARRATIVE_MEMORY_MAX_TURNS) this.turns.splice(0, this.turns.length - NARRATIVE_MEMORY_MAX_TURNS);
+        this.revision += 1;
+        return { recorded: true, id };
+    }
+
+    getPendingTurns(limit = NARRATIVE_MEMORY_CONSOLIDATION_TURNS) {
+        return this.turns.filter(turn => turn.complete && !turn.consolidated).slice(0, limit);
+    }
+
+    shouldConsolidate() {
+        return this.getPendingTurns().length >= NARRATIVE_MEMORY_CONSOLIDATION_TURNS;
+    }
+
+    buildConsolidationInput() {
+        const turns = this.getPendingTurns();
+        const entityIds = new Set();
+        const locationIds = new Set();
+        for (const turn of turns) {
+            if (turn.actorId) entityIds.add(turn.actorId);
+            for (const participantId of turn.participantIds) entityIds.add(participantId);
+            if (turn.locationId) locationIds.add(turn.locationId);
+        }
+        const activeFacts = Array.from(this.facts.values()).filter(fact =>
+            fact.state === 'active' && (
+                entityIds.has(fact.subject.id) || fact.relatedIds.some(id => entityIds.has(id)) || locationIds.has(fact.locationId)
+            )
+        ).map(narrativeClone);
+        return { version: NARRATIVE_MEMORY_VERSION, turns: narrativeClone(turns), activeFacts };
+    }
+
+    _validatePatch(patch) {
+        if (!patch || typeof patch !== 'object' || patch.version !== NARRATIVE_MEMORY_VERSION) {
+            return { ok: false, error: 'Unsupported narrative memory patch version.' };
+        }
+        if (patch.facts !== undefined && !Array.isArray(patch.facts)) return { ok: false, error: 'Patch facts must be an array.' };
+        if (patch.retractions !== undefined && !Array.isArray(patch.retractions)) return { ok: false, error: 'Patch retractions must be an array.' };
+        if (patch.threads !== undefined && !Array.isArray(patch.threads)) return { ok: false, error: 'Patch threads must be an array.' };
+        const facts = [];
+        for (const rawFact of patch.facts || []) {
+            const checked = this._validateFact(rawFact);
+            if (!checked.ok) return checked;
+            facts.push(checked.value);
+        }
+        for (const retraction of patch.retractions || []) {
+            const key = typeof retraction?.canonicalKey === 'string' ? retraction.canonicalKey.trim() : '';
+            if (!key || this._isMechanicalKey(key)) return { ok: false, error: 'Retraction key is invalid or mechanical.' };
+        }
+        if (patch.episode !== undefined && patch.episode !== null) {
+            const episode = patch.episode;
+            if (typeof episode.title !== 'string' || typeof episode.summary !== 'string' || !Array.isArray(episode.turnIds) || !Number.isFinite(Number(episode.importance)) || Number(episode.importance) < 0 || Number(episode.importance) > 1) {
+                return { ok: false, error: 'Episode is invalid.' };
+            }
+        }
+        // A consolidation patch is only successful when it actually consumes
+        // the exact batch it was asked to summarize. Without this guard a
+        // valid-looking empty patch would leave six turns pending forever and
+        // cause every later action to retry the same batch.
+        const pendingTurnIds = this.getPendingTurns().map(turn => turn.id);
+        if (pendingTurnIds.length >= NARRATIVE_MEMORY_CONSOLIDATION_TURNS) {
+            if (!patch.episode) return { ok: false, error: 'A consolidation patch must include an episode.' };
+            const episodeTurnIds = narrativeStringList(patch.episode.turnIds, NARRATIVE_MEMORY_CONSOLIDATION_TURNS + 1);
+            const expectedTurnIds = new Set(pendingTurnIds);
+            if (episodeTurnIds.length !== pendingTurnIds.length || episodeTurnIds.some(id => !expectedTurnIds.has(id))) {
+                return { ok: false, error: 'Episode turnIds must match the pending consolidation batch.' };
+            }
+        }
+        for (const thread of patch.threads || []) {
+            if (!thread || typeof thread.id !== 'string' || !thread.id.trim() || typeof thread.title !== 'string' || typeof thread.summary !== 'string' || !NARRATIVE_THREAD_STATUSES.has(thread.status) || !Number.isFinite(Number(thread.importance)) || Number(thread.importance) < 0 || Number(thread.importance) > 1) {
+                return { ok: false, error: 'Thread is invalid.' };
+            }
+        }
+        return { ok: true, facts };
+    }
+
+    applyPatch(patch) {
+        const validation = this._validatePatch(patch);
+        if (!validation.ok) return { success: false, error: validation.error, retainedPendingTurns: this.getPendingTurns().length };
+        const changes = validation.facts.map(fact => this._upsertFact(fact));
+        for (const retraction of patch.retractions || []) {
+            for (const fact of this.facts.values()) {
+                if (fact.canonicalKey === retraction.canonicalKey && fact.state === 'active') {
+                    fact.state = 'retracted';
+                    fact.validTo = Number.isFinite(Number(retraction.gameTime)) ? Number(retraction.gameTime) : fact.validFrom;
+                }
+            }
+        }
+        if (patch.episode) {
+            const episode = {
+                id: typeof patch.episode.id === 'string' && patch.episode.id ? patch.episode.id : this._makeId('episode'),
+                title: patch.episode.title.slice(0, 160),
+                summary: patch.episode.summary.slice(0, 2400),
+                turnIds: narrativeStringList(patch.episode.turnIds, 32),
+                importance: Number(patch.episode.importance),
+                tags: narrativeStringList(patch.episode.tags),
+                entityIds: narrativeStringList(patch.episode.entityIds),
+                locationId: typeof patch.episode.locationId === 'string' ? patch.episode.locationId.slice(0, 120) : null,
+                // The public patch contract has no audience field on episodes;
+                // it is public unless the caller explicitly supplies one.
+                knownBy: Object.prototype.hasOwnProperty.call(patch.episode, 'knownBy')
+                    ? narrativeStringList(patch.episode.knownBy)
+                    : ['public'],
+                directorOnly: patch.episode.directorOnly === true
+            };
+            this.episodes.push(episode);
+            const consolidatedIds = new Set(episode.turnIds);
+            for (const turn of this.turns) if (consolidatedIds.has(turn.id)) turn.consolidated = true;
+            this.lastConsolidatedTurn = this.turns.filter(turn => turn.consolidated).length;
+        }
+        for (const rawThread of patch.threads || []) {
+            this.threads.set(rawThread.id, {
+                id: rawThread.id.slice(0, 120), title: rawThread.title.slice(0, 160), summary: rawThread.summary.slice(0, 1600),
+                status: rawThread.status, importance: Number(rawThread.importance),
+                entityIds: narrativeStringList(rawThread.entityIds),
+                locationId: typeof rawThread.locationId === 'string' ? rawThread.locationId.slice(0, 120) : null,
+                knownBy: Object.prototype.hasOwnProperty.call(rawThread, 'knownBy')
+                    ? narrativeStringList(rawThread.knownBy)
+                    : ['public'],
+                directorOnly: rawThread.directorOnly === true
+            });
+        }
+        this.revision += 1;
+        this._rebuildIndexes();
+        return { success: true, changes, consolidatedTurns: patch.episode?.turnIds?.length || 0 };
+    }
+
+    _appearanceNeeds(query) {
+        const text = `${query.action || ''} ${query.text || ''} ${query.sceneType || ''} ${(query.tags || []).join(' ')}`.toLocaleLowerCase('pl-PL');
+        return {
+            face: /recognition|mirror|portrait|identity|disguise|first[ -]?impression|rozpozn|lust|portret|tożsamo|przebran|pierwsz.{0,8}wraż/.test(text),
+            clothing: /clothing|weather|damage|combat|disguise|inspection|first[ -]?impression|ubran|strój|płaszcz|pogod|deszcz|walka|obraż|przebran|oględzin|inspek|pierwsz.{0,8}wraż/.test(text)
+        };
+    }
+
+    _isClothingAppearanceFact(fact) {
+        const descriptor = `${fact?.predicate || ''} ${(fact?.tags || []).join(' ')}`.toLocaleLowerCase('pl-PL');
+        return /clothing|clothes|outfit|outerwear|armor|armour|wearing|garment|attire|wardrobe|dress|robe|cloak|cape|uniform|boots?|shoes?|\bwear\b|ubran|strój|odzież|płaszcz|zbroj|pancerz|nosz|szat|but|kurtk|mundur|sukni/.test(descriptor);
+    }
+
+    _visibleTo(fact, viewerId, includeDirectorSecrets) {
+        if (includeDirectorSecrets && fact.directorOnly) return true;
+        if (fact.directorOnly || !viewerId) return false;
+        return fact.knownBy.includes(viewerId) || fact.knownBy.includes('*') || fact.knownBy.includes('public');
+    }
+
+    _scoreItem(item, query, type) {
+        const entityIds = new Set(narrativeStringList([].concat(query.entityIds || [], query.npcIds || [], query.playerId || [])));
+        const tags = new Set(narrativeStringList(query.tags));
+        let score = 0;
+        const ids = type === 'fact' ? [item.subject.id].concat(item.relatedIds) : item.entityIds || [];
+        if (ids.some(id => entityIds.has(id))) score += 0.30;
+        if (query.locationId && item.locationId === query.locationId) score += 0.20;
+        if (type === 'thread' && item.status === 'active') score += 0.20;
+        score += Math.max(0, Math.min(1, Number(item.importance) || 0)) * 0.15;
+        const itemTags = item.tags || [];
+        if (itemTags.some(tag => tags.has(tag))) score += 0.10;
+        if (type === 'fact' && item.state === 'active') score += 0.10;
+        if (type === 'episode' && item.turnIds?.some(id => this.turns.find(turn => turn.id === id && !turn.consolidated))) score += 0.05;
+        return score;
+    }
+
+    buildContext(query = {}) {
+        const maxChars = Math.max(200, Math.min(Number(query.maxChars) || NARRATIVE_MEMORY_MAX_CONTEXT_CHARS, NARRATIVE_MEMORY_MAX_CONTEXT_CHARS));
+        const appearance = this._appearanceNeeds(query);
+        const viewerId = typeof query.viewerId === 'string' ? query.viewerId : null;
+        const includeDirectorSecrets = query.includeDirectorSecrets === true;
+        const candidates = [];
+        for (const fact of this.facts.values()) {
+            if (fact.state !== 'active' || !this._visibleTo(fact, viewerId, includeDirectorSecrets)) continue;
+            // Models do not reliably follow canonical predicate names. Every
+            // appearance fact is scene-gated by kind; clothing keywords in its
+            // predicate/tags choose the clothing gate, everything else is an
+            // identity (face/body) detail.
+            if (fact.kind === 'appearance') {
+                if (this._isClothingAppearanceFact(fact) && !appearance.clothing) continue;
+                if (!this._isClothingAppearanceFact(fact) && !appearance.face) continue;
+            }
+            candidates.push({ type: fact.directorOnly ? 'directorSecret' : 'fact', item: fact, score: this._scoreItem(fact, query, 'fact') });
+        }
+        for (const episode of this.episodes) {
+            if (!this._visibleTo(episode, viewerId, includeDirectorSecrets)) continue;
+            candidates.push({ type: episode.directorOnly ? 'directorSecret' : 'episode', item: episode, score: this._scoreItem(episode, query, 'episode') });
+        }
+        for (const thread of this.threads.values()) {
+            if (!this._visibleTo(thread, viewerId, includeDirectorSecrets)) continue;
+            candidates.push({ type: thread.directorOnly ? 'directorSecret' : 'thread', item: thread, score: this._scoreItem(thread, query, 'thread') });
+        }
+        candidates.sort((a, b) => b.score - a.score || String(a.item.id).localeCompare(String(b.item.id)));
+        const context = { facts: [], episodes: [], threads: [], directorSecrets: [], charsUsed: 0, maxChars };
+        for (const candidate of candidates) {
+            const size = JSON.stringify(candidate.item).length;
+            if (context.charsUsed + size > maxChars) continue;
+            context.charsUsed += size;
+            context[candidate.type === 'directorSecret' ? 'directorSecrets' : `${candidate.type}s`].push(narrativeClone(candidate.item));
+        }
+        return context;
+    }
+
+    toViewerJSON(viewerId) {
+        const visibleFacts = Array.from(this.facts.values()).filter(fact => this._visibleTo(fact, viewerId, false));
+        const visibleEpisodes = this.episodes.filter(episode => this._visibleTo(episode, viewerId, false));
+        const visibleThreads = Array.from(this.threads.values()).filter(thread => this._visibleTo(thread, viewerId, false));
+        return {
+            schemaVersion: this.schemaVersion, revision: this.revision, lastConsolidatedTurn: this.lastConsolidatedTurn,
+            turns: [], facts: narrativeClone(visibleFacts), episodes: narrativeClone(visibleEpisodes), threads: narrativeClone(visibleThreads)
+        };
+    }
+
+    toJSON() {
+        return {
+            schemaVersion: this.schemaVersion, revision: this.revision, lastConsolidatedTurn: this.lastConsolidatedTurn,
+            turns: narrativeClone(this.turns), facts: narrativeClone(Array.from(this.facts.values())),
+            episodes: narrativeClone(this.episodes), threads: narrativeClone(Array.from(this.threads.values()))
+        };
+    }
+
+    static fromJSON(json) {
+        const memory = new NarrativeMemory();
+        if (!json || typeof json !== 'object') return memory;
+        memory.schemaVersion = NARRATIVE_MEMORY_VERSION;
+        memory.revision = Number.isSafeInteger(json.revision) && json.revision >= 0 ? json.revision : 0;
+        memory.lastConsolidatedTurn = Number.isSafeInteger(json.lastConsolidatedTurn) && json.lastConsolidatedTurn >= 0 ? json.lastConsolidatedTurn : 0;
+        for (const turn of Array.isArray(json.turns) ? json.turns : []) {
+            if (turn && typeof turn.id === 'string' && typeof turn.userText === 'string' && typeof turn.narratorText === 'string') {
+                memory.turns.push({ ...narrativeClone(turn), complete: turn.complete !== false, consolidated: turn.consolidated === true });
+            }
+        }
+        for (const rawFact of Array.isArray(json.facts) ? json.facts : []) {
+            const checked = memory._validateFact(rawFact);
+            if (!checked.ok) continue;
+            const fact = { ...checked.value, ...narrativeClone(rawFact), id: checked.value.id, subject: checked.value.subject, tags: narrativeStringList(rawFact.tags), relatedIds: narrativeStringList(rawFact.relatedIds), knownBy: narrativeStringList(rawFact.knownBy) };
+            fact.state = ['active', 'historical', 'superseded', 'retracted', 'disputed'].includes(rawFact.state) ? rawFact.state : 'active';
+            memory.facts.set(fact.id, fact);
+        }
+        memory.episodes = (Array.isArray(json.episodes) ? json.episodes : []).filter(item => item && typeof item.summary === 'string').map(item => ({
+            ...narrativeClone(item),
+            knownBy: Object.prototype.hasOwnProperty.call(item, 'knownBy') ? narrativeStringList(item.knownBy) : ['public']
+        }));
+        for (const item of Array.isArray(json.threads) ? json.threads : []) {
+            if (item && typeof item.id === 'string' && NARRATIVE_THREAD_STATUSES.has(item.status)) {
+                memory.threads.set(item.id, {
+                    ...narrativeClone(item),
+                    knownBy: Object.prototype.hasOwnProperty.call(item, 'knownBy') ? narrativeStringList(item.knownBy) : ['public']
+                });
+            }
+        }
+        memory._rebuildIndexes();
+        return memory;
+    }
+
+    static migrateLegacy(historyNodes = []) {
+        const memory = new NarrativeMemory();
+        memory.episodes = (Array.isArray(historyNodes) ? historyNodes : []).filter(node => node && typeof node.summaryText === 'string' && node.summaryText.trim()).map((node, index) => ({
+            id: `legacy_episode_${node.nodeId || index}`,
+            title: 'Legacy history', summary: node.summaryText.slice(0, 2400), turnIds: [],
+            importance: Math.max(0, Math.min(1, Number(node.finalImportance || node.staticImportance || 0))),
+            tags: Array.isArray(node.tags) ? node.tags : Array.from(node.tags || []), entityIds: [], locationId: null,
+            knownBy: ['public'], directorOnly: false
+        }));
+        return memory;
+    }
+}
+
+// ============================================================================
 // EXPORTS
 // ============================================================================
 
-// Export all classes for use in app.js
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         World,
@@ -3844,6 +4369,7 @@ if (typeof module !== 'undefined' && module.exports) {
         StatusEffect,
         WorldChange,
         ActionResult,
+        NarrativeMemory,
         WorldEvent,
         EventQueue,
         MinHeap,
@@ -3857,7 +4383,6 @@ if (typeof module !== 'undefined' && module.exports) {
     };
 }
 
-// Also make available globally for browser
 if (typeof window !== 'undefined') {
     window.RPGEngine = {
         World,
@@ -3868,6 +4393,7 @@ if (typeof window !== 'undefined') {
         StatusEffect,
         WorldChange,
         ActionResult,
+        NarrativeMemory,
         WorldEvent,
         EventQueue,
         MinHeap,

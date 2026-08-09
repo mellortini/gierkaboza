@@ -70,3 +70,22 @@ node --check app.js
 - multiplayer wysyla maksymalnie 20 ostatnich wiadomosci i okolo 18 tys. znakow historii;
 - pelna historia pozostaje w pamieci gry i zapisach, ale nie zapelnia juz okna kontekstowego API;
 - sugestie akcji korzystaja z tego samego ograniczonego kontekstu.
+
+## NarrativeMemory v1 — pamięć długiej kampanii
+
+- Kompletne tury gracza i narratora są archiwizowane jako pending turns, a konsolidacja uruchamia się co 6 ukończonych tur.
+- Konsolidacja działa jako osobne, niskotemperaturowe wywołanie OpenRouter i zwraca JSON patch pamięci.
+- Pamięć jest podzielona na strukturalne fakty, epizody i wątki. Fakty mają widoczność przez `knownBy` oraz `directorOnly`.
+- Wygląd twarzy, ciała i ubrań jest zapisywany raz, ale pobierany do promptu wyłącznie dla scen, w których jest istotny: rozpoznanie, lustro, przebranie, inspekcja, pogoda, uszkodzenie, walka lub pierwsze wrażenie.
+- Zmiana ubrania nie kasuje historii: poprzednie ubranie pozostaje jako fakt zastąpiony, a aktualny stan jest osobnym faktem.
+- Niepoprawne patche i próby zmiany mechaniki (HP, złota, ekwipunku, XP, poziomu, statystyk lub statusu questa) są odrzucane. Pending turns pozostają zachowane po błędzie.
+- Stare zapisy bez `narrativeMemory` są migrowane i nadal można je wczytać.
+- Multiplayer używa stabilnych `playerId` i osobnych historii graczy oraz snapshotów filtrowanych względem widza.
+- Wspólna narracja multiplayera korzysta obecnie wyłącznie z publicznej pamięci strukturalnej, aby nie ujawniać prywatnych faktów innym graczom.
+- Pełne prompty pozostają ograniczone: wysyłany jest tylko bufor ostatnich tur oraz relewantna pamięć sceny.
+
+### Ograniczenia NarrativeMemory v1
+
+- Ekstrakcja używa skonfigurowanego modelu i klucza OpenRouter; może się nie udać, a ponowienie nastąpi dopiero przy późniejszej ukończonej turze.
+- `data/rooms.json` na Railway pozostaje nietrwałe bez skonfigurowanego Volume albo prawdziwej bazy danych.
+- Nie ma jeszcze automatycznych testów E2E przeglądarki ani testów Socket.io obejmujących pełny przepływ pamięci.

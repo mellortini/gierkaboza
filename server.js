@@ -126,8 +126,26 @@ function createRoom(roomId, world = null, persisted = {}) {
         hostId: null,
         chatHistory: Array.isArray(persisted.chatHistory) ? persisted.chatHistory.slice(-50) : [],
         playerHistories: persisted.playerHistories || {},
-        actionQueue: Promise.resolve()
+        actionQueue: Promise.resolve(),
+        narrativeConsolidationPromise: null,
+        narrativeConsolidationNextAttemptAt: 0
     };
+}
+
+function boundedText(value, max = 2000) {
+    return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+function getPlayerHistory(room, playerId, socketId = null) {
+    if (!room.playerHistories) room.playerHistories = {};
+    const stableId = boundedText(playerId, 120);
+    const legacyId = boundedText(socketId, 120);
+    if (!room.playerHistories[stableId] && legacyId && Array.isArray(room.playerHistories[legacyId])) {
+        room.playerHistories[stableId] = room.playerHistories[legacyId];
+        delete room.playerHistories[legacyId];
+    }
+    if (!Array.isArray(room.playerHistories[stableId])) room.playerHistories[stableId] = [];
+    return room.playerHistories[stableId];
 }
 
 function restoreWorldSnapshot(snapshot, playerName) {
@@ -269,7 +287,6 @@ io.on('connection', (socket) => {
                 room.world = World.createStarterWorld(playerName, 'town_central');
             }
         }
-
         // Add or restore a player. The world remains shared, while character state is per socket/player.
         const playerId = (requestedPlayerId && room.savedPlayers.has(requestedPlayerId))
             ? requestedPlayerId
@@ -319,7 +336,7 @@ io.on('connection', (socket) => {
                 name: p.name,
                 isHost: p.isHost
             })),
-            worldState: serializeWorld(room.world, gamePlayer)
+            worldState: serializeWorld(room.world, gamePlayer, playerId)
         });
 
         // Notify other players
@@ -420,6 +437,29 @@ io.on('connection', (socket) => {
         actionContext += `To dzieje się w ${location ? location.name : currentPlayer.locationId}. `;
         actionContext += `Jest ${world.getFormattedTime()}, dzień ${world.getDayNumber()}. `;
         
+        const narrativeEntityIds = [currentPlayer.locationId];
+        for (const npc of world.npcs?.values?.() || []) {
+            if (npc.locationId === currentPlayer.locationId) narrativeEntityIds.push(npc.id);
+        }
+        const narrativeContext = world.buildNarrativeContext({
+            action,
+            sceneType: sceneType || 'default',
+            tags: sceneTags || [],
+            playerId: playerData.id,
+            // The narrator response is broadcast to the whole room, so only public
+            // facts may enter this shared prompt. Keep playerId for relevance only.
+            viewerId: 'public',
+            locationId: currentPlayer.locationId,
+            entityIds: narrativeEntityIds,
+            includeDirectorSecrets: false,
+            maxChars: 6000
+        });
+        const formattedNarrativeContext = formatNarrativeContext(narrativeContext, 6000);
+        if (formattedNarrativeContext) {
+            actionContext += `\n\n## WYBRANA PAMIEC FABULARNA:\n${formattedNarrativeContext}`;
+        }
+        if (context) actionContext += trimPreserveEnds(context, 4000);
+
         if (room.players.size > 1) {
             const others = Array.from(room.players.values())
                 .filter(p => p.socketId !== socket.id)
@@ -429,9 +469,7 @@ io.on('connection', (socket) => {
         }
         
         // KAŻDY GRACZ MA SWOJĄ HISTORIĘ - nie mieszaj z innymi graczami!
-        if (!room.playerHistories) room.playerHistories = {};
-        if (!room.playerHistories[socket.id]) room.playerHistories[socket.id] = [];
-        const playerHistory = room.playerHistories[socket.id];
+        const playerHistory = getPlayerHistory(room, playerData.id, socket.id);
 
         // Dołącz historię czatu graczy do kontekstu AI
         if (room.chatHistory && room.chatHistory.length > 0) {
@@ -497,7 +535,7 @@ io.on('connection', (socket) => {
         // Zapisz akcję gracza i odpowiedź AI do jego osobistej historii (maks. 100 wpisów)
         playerHistory.push({ role: 'user', content: action });
         playerHistory.push({ role: 'assistant', content: response });
-        room.playerHistories[socket.id] = playerHistory.slice(-100);
+        room.playerHistories[playerData.id] = playerHistory.slice(-100);
         // Starsze wpisy pozostają w zapisach gry, ale nie są wysyłane do kolejnego promptu.
 
         // Phase 1-2: Przesuwamy czas i przetwarzamy wydarzenia
@@ -510,6 +548,26 @@ io.on('connection', (socket) => {
             });
         }
 
+        const participantIds = new Set([
+            playerData.id,
+            ...Array.from(room.players.values()).map(roomPlayer => roomPlayer.id)
+        ]);
+        for (const entityId of narrativeEntityIds) {
+            if (entityId && entityId !== currentPlayer.locationId) participantIds.add(entityId);
+        }
+        const narrativeTurn = world.recordNarrativeTurn({
+            id: `${room.id}:${playerData.id}:${Date.now()}`,
+            actorId: playerData.id,
+            userText: action,
+            narratorText: response,
+            locationId: currentPlayer.locationId,
+            participantIds: Array.from(participantIds),
+            gameTime: world.currentTimeMinutes
+        });
+        if (narrativeTurn?.recorded && world.narrativeMemory?.shouldConsolidate()) {
+            scheduleNarrativeConsolidation(room, playerData, playerModel, playerApiKey);
+        }
+
         // Each client receives the shared world with its own player snapshot.
         for (const [socketId, roomPlayer] of room.players.entries()) {
             io.to(socketId).emit('actionResult', {
@@ -518,7 +576,7 @@ io.on('connection', (socket) => {
                 action,
                 response,
                 mechanics: mechanicalResult?.toJSON ? mechanicalResult.toJSON() : mechanicalResult,
-                worldState: serializeWorld(world, roomPlayer.player)
+                worldState: serializeWorld(world, roomPlayer.player, roomPlayer.id)
             });
         }
         room.lastActiveAt = Date.now();
@@ -746,7 +804,7 @@ io.on('connection', (socket) => {
             playerName: rejoinData.playerName,
             isHost: room.hostId === socket.id,
             players: playerList,
-            worldState: serializeWorld(room.world, restoredPlayer)
+            worldState: serializeWorld(room.world, restoredPlayer, playerId)
         });
         socket.to(roomId).emit('playerRejoined', {
             playerId,
@@ -820,7 +878,7 @@ io.on('connection', (socket) => {
                 name: p.name,
                 isHost: p.isHost
             })),
-            worldState: serializeWorld(room.world, room.players.get(socket.id)?.player)
+            worldState: serializeWorld(room.world, room.players.get(socket.id)?.player, player.playerId)
         });
     });
 });
@@ -832,9 +890,12 @@ io.on('connection', (socket) => {
 /**
  * Serialize world state for client
  */
-function serializeWorld(world, viewerPlayer = null) {
+function serializeWorld(world, viewerPlayer = null, viewerPlayerId = null) {
     if (!world) return null;
-    const snapshot = world.toJSON();
+    const stableViewerId = viewerPlayerId || viewerPlayer?.id || null;
+    const snapshot = typeof world.toViewerJSON === 'function'
+        ? world.toViewerJSON(stableViewerId)
+        : world.toJSON();
     if (viewerPlayer && typeof viewerPlayer.toJSON === 'function') {
         snapshot.player = viewerPlayer.toJSON();
     }
@@ -847,10 +908,25 @@ function serializeWorld(world, viewerPlayer = null) {
  */
 const NARRATOR_CONTEXT_LIMITS = Object.freeze({
     maxMessages: 20,
-    maxChars: 18000
+    maxChars: 18000,
+    totalPromptChars: 30000,
+    maxActionContextChars: 14000,
+    maxSystemChars: 6000
 });
 
-function trimNarratorHistory(history) {
+function trimPreserveEnds(value, maxChars) {
+    const text = String(value || '');
+    if (text.length <= maxChars) return text;
+    if (maxChars < 80) return text.slice(0, maxChars);
+    const marker = '\n...[prompt shortened]...\n';
+    const available = maxChars - marker.length;
+    const head = Math.ceil(available * 0.58);
+    const tail = available - head;
+    return `${text.slice(0, head)}${marker}${text.slice(-tail)}`;
+}
+
+function trimNarratorHistory(history, maxChars = NARRATOR_CONTEXT_LIMITS.maxChars) {
+    if (maxChars <= 0) return [];
     const source = Array.isArray(history) ? history : [];
     const recent = [];
     let chars = 0;
@@ -858,11 +934,180 @@ function trimNarratorHistory(history) {
         const message = source[index];
         const content = String(message?.content || '');
         const nextChars = chars + content.length;
-        if (recent.length > 0 && nextChars > NARRATOR_CONTEXT_LIMITS.maxChars) break;
-        recent.unshift({ role: message?.role === 'assistant' ? 'assistant' : 'user', content: content.slice(0, NARRATOR_CONTEXT_LIMITS.maxChars) });
-        chars = nextChars;
+        if (recent.length > 0 && nextChars > maxChars) break;
+        const remaining = Math.max(0, maxChars - chars);
+        recent.unshift({ role: message?.role === 'assistant' ? 'assistant' : 'user', content: content.slice(0, remaining) });
+        chars += Math.min(content.length, remaining);
     }
     return recent;
+}
+
+function parseNarrativeMemoryPatch(rawText) {
+    const source = boundedText(rawText, 30000);
+    const withoutFence = source.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const start = withoutFence.indexOf('{');
+    const end = withoutFence.lastIndexOf('}');
+    if (start < 0 || end <= start) throw new Error('Memory extractor did not return a JSON object');
+    const parsed = JSON.parse(withoutFence.slice(start, end + 1));
+    if (!parsed || typeof parsed !== 'object') throw new Error('Memory extractor returned invalid JSON');
+    return parsed;
+}
+
+function formatNarrativeContext(context, maxChars = 10000) {
+    if (!context || typeof context !== 'object') return '';
+    const lines = [];
+    const append = (prefix, item) => {
+        let value;
+        try {
+            value = typeof item === 'string' ? item : JSON.stringify(item);
+        } catch (error) {
+            value = '';
+        }
+        if (value) lines.push(`${prefix} ${value}`);
+    };
+    const publicOnly = item => item && item.directorOnly !== true
+        && (!Array.isArray(item.knownBy) || item.knownBy.length === 0 || item.knownBy.includes('public'));
+    for (const fact of (Array.isArray(context.facts) ? context.facts : []).filter(publicOnly)) append('[FACT]', fact);
+    for (const episode of (Array.isArray(context.episodes) ? context.episodes : []).filter(publicOnly)) append('[EPISODE]', episode);
+    for (const thread of (Array.isArray(context.threads) ? context.threads : []).filter(publicOnly)) append('[THREAD]', thread);
+    let output = '';
+    for (const line of lines) {
+        if (output.length + line.length + 1 > maxChars) break;
+        output += `${line}\n`;
+    }
+    return output.trim();
+}
+
+const MEMORY_PATCH_SCHEMA_PROMPT = `{
+  "version": 1,
+  "facts": [{
+    "kind": "appearance|relationship|promise|knowledge|event|location_detail|rumor|secret",
+    "subject": {"type": "player|npc|location|faction|quest", "id": "..."},
+    "predicate": "...",
+    "value": "any JSON value",
+    "canonicalKey": "optional stable key",
+    "certainty": "confirmed|claimed|rumor|false",
+    "importance": 0.0,
+    "tags": [],
+    "relatedIds": [],
+    "locationId": null,
+    "knownBy": ["public"] or ["actorId"],
+    "directorOnly": false,
+    "source": {"turnId": "...", "speakerId": "...", "kind": "...", "gameTime": 0}
+  }],
+  "retractions": [{"canonicalKey": "..."}],
+  "episode": {
+    "title": "...",
+    "summary": "...",
+    "turnIds": ["every exact input turn id, no omissions or additions"],
+    "importance": 0.0,
+    "tags": [],
+    "entityIds": [],
+    "locationId": null,
+    "knownBy": ["public"] or ["actorId"],
+    "directorOnly": false
+  },
+  "threads": [{
+    "id": "...",
+    "title": "...",
+    "status": "active|resolved|abandoned",
+    "summary": "...",
+    "importance": 0.0,
+    "entityIds": [],
+    "locationId": null,
+    "knownBy": ["public"] or ["actorId"],
+    "directorOnly": false
+  }]
+}`;
+
+function getConsolidationTurnIds(input) {
+    const turns = Array.isArray(input?.turns)
+        ? input.turns
+        : (Array.isArray(input?.pendingTurns) ? input.pendingTurns : []);
+    return turns
+        .map(turn => turn?.id || turn?.turnId)
+        .filter(id => typeof id === 'string' && id.length > 0);
+}
+
+function hasExactConsolidationEpisode(patch, requiredTurnIds) {
+    const actual = Array.isArray(patch?.episode?.turnIds) ? patch.episode.turnIds : [];
+    return actual.length === requiredTurnIds.length && actual.every((id, index) => id === requiredTurnIds[index]);
+}
+
+async function callNarrativeMemoryExtractor(input, apiKey, model) {
+    if (!apiKey) throw new Error('No API key configured for narrative memory extraction');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    try {
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`,
+                'HTTP-Referer': 'https://gierkaboza-production.up.railway.app',
+                'X-Title': 'AI RPG Narrative Memory'
+            },
+            signal: controller.signal,
+            body: JSON.stringify({
+                model: model || 'openai/gpt-3.5-turbo',
+                temperature: 0.1,
+                max_tokens: 1800,
+                messages: [
+                    {
+                        role: 'system',
+                        content: `You are a narrative memory extractor. Return one JSON object only, matching this exact accepted patch schema:\n${MEMORY_PATCH_SCHEMA_PROMPT}\n\nRules:\n- Always return an episode, even when there are no new facts. Its turnIds MUST equal the exact requiredEpisodeTurnIds supplied in the input, in the same order.\n- Use knownBy ["public"] for public observations. Use knownBy [actorId] for private player facts. Use directorOnly true for GM secrets. Apply the same visibility fields to episode and thread objects when they are accepted by the schema.\n- Never write mechanical state: hp, maxHp, gold, inventory, xp, level, stats, quest status/rewards, NPC alive/dead or combat mechanics.\n- Do not invent facts. Keep facts concise and use source.turnId from the input.`
+                    },
+                    {
+                        role: 'user',
+                        content: JSON.stringify({
+                            contract: {
+                                version: 1,
+                                factKinds: ['appearance', 'relationship', 'promise', 'knowledge', 'event', 'location_detail', 'rumor', 'secret'],
+                                certainties: ['confirmed', 'claimed', 'rumor', 'false'],
+                                requiredEpisodeTurnIds: getConsolidationTurnIds(input)
+                            },
+                            input
+                        })
+                    }
+                ]
+            })
+        });
+        if (!response.ok) throw new Error(`Memory extractor API error: ${response.status}`);
+        const data = await response.json();
+        return parseNarrativeMemoryPatch(data?.choices?.[0]?.message?.content || '');
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function scheduleNarrativeConsolidation(room, playerData, model, apiKey) {
+    if (!room || room.narrativeConsolidationPromise || Date.now() < room.narrativeConsolidationNextAttemptAt || !room.world?.narrativeMemory?.shouldConsolidate()) return;
+    const world = room.world;
+    const input = world.buildMemoryConsolidationInput();
+    room.narrativeConsolidationPromise = (async () => {
+        try {
+            const patch = await callNarrativeMemoryExtractor({ ...input, actorId: playerData.id }, apiKey, model);
+            const requiredTurnIds = getConsolidationTurnIds(input);
+            if (!hasExactConsolidationEpisode(patch, requiredTurnIds)) {
+                throw new Error('Memory patch must contain one episode with the exact input turn ids');
+            }
+            const result = world.applyNarrativeMemoryPatch(patch);
+            if (!result?.success) {
+                room.narrativeConsolidationNextAttemptAt = Date.now() + 30000;
+                console.warn('Narrative memory patch rejected:', result?.error || 'unknown error');
+                return;
+            }
+            room.narrativeConsolidationNextAttemptAt = 0;
+            room.lastActiveAt = Date.now();
+            persistRooms();
+        } catch (error) {
+            // Keep pending turns when extraction, parsing or validation fails.
+            room.narrativeConsolidationNextAttemptAt = Date.now() + 30000;
+            console.warn('Narrative memory consolidation skipped:', error.message);
+        } finally {
+            room.narrativeConsolidationPromise = null;
+        }
+    })();
 }
 
 async function callLLM(context, playerName, apiKey, model = 'openai/gpt-3.5-turbo', narratorHistory = [], wantsDetailed = false) {
@@ -896,7 +1141,20 @@ JAK PISAĆ (ZAWSZE stosuj):
 Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
         };
         // Obrabiamy tylko ostatnie wiadomości z historii; pełna pamięć nie trafia do promptu.
-        const messages = [systemMessage, ...trimNarratorHistory(narratorHistory), { role: 'user', content: context }];
+        systemMessage.content += '\n\nSECURITY: The response is broadcast to every player in the room. Never reveal, imply, or invent actor-private facts, facts hidden from the public, or GM/director secrets. Use only public memory facts present in this prompt.';
+
+        // Bound the complete prompt, not only individual history sections.
+        const systemContent = trimPreserveEnds(systemMessage.content, NARRATOR_CONTEXT_LIMITS.maxSystemChars);
+        const actionContext = trimPreserveEnds(context, NARRATOR_CONTEXT_LIMITS.maxActionContextChars);
+        const historyBudget = Math.max(
+            0,
+            NARRATOR_CONTEXT_LIMITS.totalPromptChars - systemContent.length - actionContext.length
+        );
+        const messages = [
+            { role: 'system', content: systemContent },
+            ...trimNarratorHistory(narratorHistory, historyBudget),
+            { role: 'user', content: actionContext }
+        ];
 
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
