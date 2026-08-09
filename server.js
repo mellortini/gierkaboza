@@ -492,13 +492,13 @@ io.on('connection', (socket) => {
         const playerModel = actionModel || playerData.characterData?.model || 'openai/gpt-3.5-turbo';
         console.log(`Using model: ${playerModel} for player: ${playerData.name}`);
         
-        const response = await callLLM(actionContext, playerData.name, playerApiKey, playerModel, playerHistory.slice(-40), wantsDetailed);
+        const response = await callLLM(actionContext, playerData.name, playerApiKey, playerModel, trimNarratorHistory(playerHistory), wantsDetailed);
 
-        // Zapisz akcję gracza i odpowiedź AI do jego osobistej historii (pamięć bota) - BEZ LIMITU
+        // Zapisz akcję gracza i odpowiedź AI do jego osobistej historii (maks. 100 wpisów)
         playerHistory.push({ role: 'user', content: action });
         playerHistory.push({ role: 'assistant', content: response });
         room.playerHistories[socket.id] = playerHistory.slice(-100);
-        // Bez limitu - bot pamięta całą historię tego gracza!
+        // Starsze wpisy pozostają w zapisach gry, ale nie są wysyłane do kolejnego promptu.
 
         // Phase 1-2: Przesuwamy czas i przetwarzamy wydarzenia
 
@@ -845,6 +845,26 @@ function serializeWorld(world, viewerPlayer = null) {
  * Call OpenRouter API for LLM response
  * Each player uses their own API key
  */
+const NARRATOR_CONTEXT_LIMITS = Object.freeze({
+    maxMessages: 20,
+    maxChars: 18000
+});
+
+function trimNarratorHistory(history) {
+    const source = Array.isArray(history) ? history : [];
+    const recent = [];
+    let chars = 0;
+    for (let index = source.length - 1; index >= 0 && recent.length < NARRATOR_CONTEXT_LIMITS.maxMessages; index -= 1) {
+        const message = source[index];
+        const content = String(message?.content || '');
+        const nextChars = chars + content.length;
+        if (recent.length > 0 && nextChars > NARRATOR_CONTEXT_LIMITS.maxChars) break;
+        recent.unshift({ role: message?.role === 'assistant' ? 'assistant' : 'user', content: content.slice(0, NARRATOR_CONTEXT_LIMITS.maxChars) });
+        chars = nextChars;
+    }
+    return recent;
+}
+
 async function callLLM(context, playerName, apiKey, model = 'openai/gpt-3.5-turbo', narratorHistory = [], wantsDetailed = false) {
     if (!apiKey) {
         return `${playerName} wykonuje akcję... (brak klucza API - dodaj swój klucz OpenRouter)`;
@@ -875,9 +895,8 @@ JAK PISAĆ (ZAWSZE stosuj):
 
 Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
         };
-        // Weź ostatnie 25 tur (50 wiadomości) z historii
-        // Bierzemy całą historię - bot pamięta wszystko!
-        const messages = [systemMessage, ...narratorHistory, { role: 'user', content: context }];
+        // Obrabiamy tylko ostatnie wiadomości z historii; pełna pamięć nie trafia do promptu.
+        const messages = [systemMessage, ...trimNarratorHistory(narratorHistory), { role: 'user', content: context }];
 
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',

@@ -63,3 +63,10 @@ node --check app.js
 - lista pokazuje postac, swiat, lokacje, date i liczbe wiadomosci;
 - kazdy zapis mozna wczytac, wyeksportowac do JSON albo usunac;
 - stary klucz `rpg_save` jest migrowany automatycznie do nowej biblioteki.
+
+## Limit kontekstu LLM dodany
+
+- tryb jednoosobowy wysyla do modelu tylko ostatnie 16 wiadomosci oraz skrocona pamiec swiata;
+- multiplayer wysyla maksymalnie 20 ostatnich wiadomosci i okolo 18 tys. znakow historii;
+- pelna historia pozostaje w pamieci gry i zapisach, ale nie zapelnia juz okna kontekstowego API;
+- sugestie akcji korzystaja z tego samego ograniczonego kontekstu.

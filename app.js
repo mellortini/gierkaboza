@@ -21,6 +21,12 @@ const state = {
     multiplayerListenersSetup: false
 };
 
+const LLM_CONTEXT_LIMITS = Object.freeze({
+    maxRecentMessages: 16,
+    maxRecentChars: 18000,
+    maxMemoryChars: 6000
+});
+
 // Dane postaci
 let characterData = {
     name: '',
@@ -1540,6 +1546,34 @@ function extractSceneTags(actionText) {
     return tags;
 }
 
+function buildLlmMessages(memoryContext = '') {
+    const systemMessage = state.gameState.find(message => message.role === 'system') || {
+        role: 'system',
+        content: 'Jesteś narratorem gry RPG.'
+    };
+    const conversation = state.gameState.filter(message => message !== systemMessage && message.role !== 'system');
+    const recent = [];
+    let recentChars = 0;
+
+    for (let index = conversation.length - 1; index >= 0 && recent.length < LLM_CONTEXT_LIMITS.maxRecentMessages; index -= 1) {
+        const message = conversation[index];
+        const content = String(message.content || '');
+        const nextChars = recentChars + content.length;
+        if (recent.length > 0 && nextChars > LLM_CONTEXT_LIMITS.maxRecentChars) break;
+        recent.unshift({ role: message.role, content: content.slice(0, LLM_CONTEXT_LIMITS.maxRecentChars) });
+        recentChars = nextChars;
+    }
+
+    const messages = [{ role: systemMessage.role, content: systemMessage.content }];
+    if (memoryContext) {
+        messages.push({
+            role: 'system',
+            content: `Pamięć świata i aktualny stan (traktuj jako ważniejsze niż stare szczegóły rozmowy):\n${String(memoryContext).slice(0, LLM_CONTEXT_LIMITS.maxMemoryChars)}`
+        });
+    }
+    return messages.concat(recent);
+}
+
 // Phase 4: Build memory context from history nodes
 function buildMemoryContext(world, sceneType, sceneTags) {
     if (!world.buildContextForScene) return null;
@@ -1695,6 +1729,9 @@ async function generateStory(userAction = null) {
                     memoryContext += `- ${node.summaryText}\n`;
                 }
             }
+            if (context && context.liveState) {
+                memoryContext += `\n## AKTUALNY STAN ŚWIATA:\n${JSON.stringify(context.liveState)}`;
+            }
         } catch (e) {
             console.warn("Error building memory context:", e);
         }
@@ -1711,9 +1748,7 @@ async function generateStory(userAction = null) {
             },
             body: JSON.stringify({
                 model: state.model,
-                messages: memoryContext 
-                    ? [...state.gameState.slice(0, -1), { role: state.gameState[state.gameState.length - 1].role, content: state.gameState[state.gameState.length - 1].content + memoryContext }]
-                    : state.gameState,
+                messages: buildLlmMessages(memoryContext),
                 temperature: 0.9,
                 max_tokens: 2000
             })
@@ -1954,7 +1989,7 @@ async function suggestActions() {
             body: JSON.stringify({
                 model: state.model,
                 messages: [
-                    ...state.gameState,
+                    ...buildLlmMessages(),
                     { role: 'user', content: 'Jako narrator, zaproponuj 3-4 możliwe akcje jakie gracz mógłby teraz podjąć. Bądź kreatywny. Odpowiedz tylko listą akcji, każda w nowej linii, bez numeracji.' }
                 ],
                 temperature: 0.8,
