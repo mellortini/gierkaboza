@@ -1272,12 +1272,29 @@ function startGameWithWorld() {
         alert('Wygeneruj plan świata najpierw!');
         return;
     }
-    if (!worldData.blueprint) {
-        alert('Model zwrócił opis świata, ale nie grywalny blueprint JSON. Wygeneruj plan ponownie.');
+    if (!validatePlayableWorldBeforeStart()) {
         return;
     }
     
     showCharacterCreation();
+}
+
+function validatePlayableWorldBeforeStart() {
+    const requiresBlueprint = characterData.setting === 'custom' || worldData.generated;
+    if (!requiresBlueprint) return true;
+
+    try {
+        if (!worldData.blueprint) throw new Error('brak blueprintu JSON');
+        worldData.blueprint = World.validateBlueprint(worldData.blueprint);
+        return true;
+    } catch (error) {
+        const message = 'Ten własny lub wygenerowany świat nie ma poprawnego grywalnego planu. Wygeneruj plan świata ponownie przed rozpoczęciem gry.';
+        alert(message);
+        if (elements.worldPlanContent) {
+            elements.worldPlanContent.innerHTML = `<div style="color: #e74c3c; padding: 20px;">${message}<br><small>${escapeHtml(error.message || String(error))}</small></div>`;
+        }
+        return false;
+    }
 }
 
 // Budowanie system promptu dla narratora
@@ -1305,7 +1322,13 @@ function buildNarratorPrompt() {
     };
 
     const s = characterData.sliders;
-    worldData.plan = worldData.plan || state.world?.worldMetadata?.plan || null;
+    const mechanicalWorld = state.world;
+    const mechanicalPlayer = mechanicalWorld?.player;
+    const mechanicalLocation = mechanicalWorld && mechanicalPlayer
+        ? mechanicalWorld.getLocation(mechanicalPlayer.locationId)
+        : null;
+    const worldMetadata = mechanicalWorld?.worldMetadata || {};
+    worldData.plan = worldMetadata.plan || worldData.plan || null;
 
     let prompt = `Jesteś Mistrzem Gry (Narratorem) w grze RPG. Twoim zadaniem jest prowadzenie immersyjnej, szczegółowej przygody.
 
@@ -1321,6 +1344,12 @@ function buildNarratorPrompt() {
 
 ## PLAN ŚWIATA (TRZYMAJ SIĘ TEGO):
 ${worldData.plan ? worldData.plan : 'Brak planu - stwórz własny świat'}
+
+## KANONICZNY STAN MECHANICZNY (NADRZĘDNY WOBEC PROZY):
+**Nazwa świata:** ${worldMetadata.name || worldData.name || settingDescriptions[characterData.setting] || characterData.setting}
+**Opis świata:** ${worldMetadata.description || worldData.description || 'Brak dodatkowego opisu.'}
+**Aktualna lokacja gracza:** ${mechanicalLocation ? `${mechanicalLocation.name} (id: ${mechanicalLocation.id})` : 'Nieustalona'}
+Używaj aktualnej lokacji i identyfikatorów ze stanu mechanicznego jako jedynego źródła prawdy. Nie wymyślaj nazwy lokacji na podstawie narracyjnej prozy ani nie zastępuj lokacji mechanicznej domyślnym miastem.
 
 ## USTAWIENIA GRY:
 **Świat:** ${settingDescriptions[characterData.setting]}
@@ -1604,12 +1633,19 @@ function buildMemoryContext(world, sceneType, sceneTags) {
 // Rozpoczęcie gry
 function createGameWorld(playerName) {
     let world;
-    if (worldData.blueprint) {
+    const requiresBlueprint = characterData.setting === 'custom' || worldData.generated;
+    if (requiresBlueprint && !validatePlayableWorldBeforeStart()) {
+        throw new Error('Nie można uruchomić własnego lub wygenerowanego świata bez poprawnego blueprintu.');
+    }
+    if (requiresBlueprint && worldData.blueprint) {
         try {
             world = World.createFromBlueprint(worldData.blueprint, playerName);
         } catch (error) {
             console.error('Structured world creation failed:', error);
         }
+    }
+    if (!world && requiresBlueprint) {
+        throw new Error('Nie udało się utworzyć grywalnego świata z blueprintu.');
     }
     if (!world) world = World.createStarterWorld(playerName, 'town_central');
     if (worldData.generated && worldData.plan) {
@@ -1832,6 +1868,7 @@ async function startGame() {
         alert('Wybierz model AI');
         return;
     }
+    if (!validatePlayableWorldBeforeStart()) return;
 
     // Zapisz nazwę settingu
     characterData.settingName = settingNames[characterData.setting];
