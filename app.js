@@ -121,7 +121,14 @@ const elements = {
     newGameBtn: document.getElementById('new-game'),
     savedGamesSection: document.getElementById('saved-games-section'),
     savedGamesList: document.getElementById('saved-games-list'),
+    saveSlotFromMenuBtn: document.getElementById('save-slot-from-menu'),
+    refreshSavedGamesBtn: document.getElementById('refresh-saved-games'),
     importFile: document.getElementById('import-file'),
+    saveManagerModal: document.getElementById('save-manager-modal'),
+    closeSaveManagerBtn: document.getElementById('close-save-manager'),
+    saveManagerList: document.getElementById('save-manager-list'),
+    saveCurrentSlotBtn: document.getElementById('save-current-slot'),
+    saveManagerImportFile: document.getElementById('save-manager-import-file'),
     characterModal: document.getElementById('character-modal'),
     closeModal: document.querySelector('.close-modal'),
     characterDetails: document.getElementById('character-details'),
@@ -356,15 +363,25 @@ async function init() {
     }
     elements.viewCharacterBtn.addEventListener('click', showCharacterModal);
     elements.closeModal.addEventListener('click', hideCharacterModal);
-    elements.saveGameBtn.addEventListener('click', () => saveGameToFile());
-    elements.loadGameBtn.addEventListener('click', loadGameFromFile);
+    elements.saveGameBtn.addEventListener('click', saveGameSlot);
+    elements.loadGameBtn.addEventListener('click', showSaveManager);
     elements.exportGameBtn.addEventListener('click', exportGameToJSON);
     elements.newGameBtn.addEventListener('click', newGame);
     elements.importFile.addEventListener('change', importGameFromFile);
+    elements.saveSlotFromMenuBtn.addEventListener('click', saveGameSlot);
+    elements.refreshSavedGamesBtn.addEventListener('click', displaySavedGames);
+    elements.saveCurrentSlotBtn.addEventListener('click', saveGameSlot);
+    elements.saveManagerImportFile.addEventListener('change', importGameFromFile);
+    elements.savedGamesList.addEventListener('click', handleSaveListClick);
+    elements.saveManagerList.addEventListener('click', handleSaveListClick);
 
     // Zamknij modal po kliknięciu poza nim
     elements.characterModal.addEventListener('click', (e) => {
         if (e.target === elements.characterModal) hideCharacterModal();
+    });
+    elements.closeSaveManagerBtn.addEventListener('click', hideSaveManager);
+    elements.saveManagerModal.addEventListener('click', (e) => {
+        if (e.target === elements.saveManagerModal) hideSaveManager();
     });
 
     // Wyświetl zapisane gry przy inicjalizacji
@@ -2015,53 +2032,143 @@ function hideCharacterModal() {
 }
 
 // Generowanie nazwy pliku z datą
-function generateFileName() {
+function generateFileName(saveData = null) {
     const date = new Date();
     const dateStr = date.toISOString().split('T')[0];
     const timeStr = date.toTimeString().split(' ')[0].replace(/:/g, '-');
-    const charName = characterData.name.replace(/[^a-z0-9]/gi, '_');
+    const charName = (saveData?.character?.name || characterData.name || 'RPG').replace(/[^a-z0-9]/gi, '_');
     return `RPG_${charName}_${dateStr}_${timeStr}.json`;
 }
 
-// Zapisanie gry do pliku JSON
-function saveGameToFile() {
-    if (!characterData.name || state.gameState.length === 0) {
-        alert('Nie ma aktywnej gry do zapisania!');
-        return;
+const SAVE_LIBRARY_KEY = 'rpg_saves';
+
+function normalizeSaveData(saveData, fallbackName = 'Bez nazwy') {
+    if (!saveData || typeof saveData !== 'object' || !saveData.character || !Array.isArray(saveData.gameState)) {
+        return null;
     }
 
-    const saveData = {
-        character: characterData,
+    const timestamp = saveData.timestamp || new Date().toISOString();
+    const saveName = String(saveData.saveName || fallbackName).trim().slice(0, 80) || 'Bez nazwy';
+    return {
+        ...saveData,
+        id: String(saveData.id || `save_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`),
+        saveName,
+        timestamp,
+        version: saveData.version || '1.2'
+    };
+}
+
+function getSaveLibrary() {
+    const saves = [];
+    try {
+        const stored = JSON.parse(localStorage.getItem(SAVE_LIBRARY_KEY) || '[]');
+        if (Array.isArray(stored)) {
+            stored.forEach(save => {
+                const normalized = normalizeSaveData(save);
+                if (normalized) saves.push(normalized);
+            });
+        }
+    } catch (error) {
+        console.warn('Nie udało się odczytać biblioteki zapisów:', error);
+    }
+
+    // Migrate the old single-save key into the new library without losing it.
+    try {
+        const legacy = JSON.parse(localStorage.getItem('rpg_save') || 'null');
+        const normalizedLegacy = normalizeSaveData(legacy, 'Ostatni zapis');
+        if (normalizedLegacy && !saves.some(save => save.timestamp === normalizedLegacy.timestamp && save.character?.name === normalizedLegacy.character?.name)) {
+            normalizedLegacy.id = `legacy_${normalizedLegacy.timestamp}`;
+            normalizedLegacy.saveName = normalizedLegacy.saveName || 'Ostatni zapis';
+            saves.push(normalizedLegacy);
+        }
+    } catch (error) {
+        console.warn('Nie udało się odczytać starego zapisu:', error);
+    }
+
+    const unique = new Map();
+    saves.forEach(save => unique.set(save.id, save));
+    return Array.from(unique.values()).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+}
+
+function storeSaveLibrary(saves) {
+    const cleanSaves = saves.map(save => normalizeSaveData(save)).filter(Boolean);
+    localStorage.setItem(SAVE_LIBRARY_KEY, JSON.stringify(cleanSaves));
+    if (cleanSaves[0]) {
+        localStorage.setItem('rpg_save', JSON.stringify(cleanSaves[0]));
+    } else {
+        localStorage.removeItem('rpg_save');
+    }
+}
+
+function createCurrentSaveData(saveName, saveId = null) {
+    return normalizeSaveData({
+        id: saveId || null,
+        saveName,
+        character: JSON.parse(JSON.stringify(characterData)),
         gameState: state.gameState,
         story: elements.gameStory.innerHTML,
         timestamp: new Date().toISOString(),
-        version: '1.1',
-        // ========== PHASE 1: Save World State ==========
+        version: '1.2',
         world: state.world ? state.world.toJSON() : null
-    };
-    
-    // Zapisz w localStorage jako ostatni save
-    localStorage.setItem('rpg_save', JSON.stringify(saveData));
-    
-    // Eksportuj do pliku
+    }, saveName);
+}
+
+function saveGameSlot(requestedName = null) {
+    if (!characterData.name || state.gameState.length === 0) {
+        alert('Nie ma aktywnej gry do zapisania!');
+        return false;
+    }
+
+    const saves = getSaveLibrary();
+    const latest = saves[0];
+    const defaultName = latest?.saveName || `${characterData.name} - ${state.world?.worldMetadata?.name || 'przygoda'}`;
+    const promptedName = typeof requestedName === 'string' ? requestedName : window.prompt('Nazwa zapisu:', defaultName);
+    const saveName = String(promptedName || '').trim().slice(0, 80);
+    if (!saveName) return false;
+
+    const existingIndex = saves.findIndex(save => save.saveName.toLocaleLowerCase() === saveName.toLocaleLowerCase());
+    const saveData = createCurrentSaveData(saveName, existingIndex >= 0 ? saves[existingIndex].id : null);
+    if (existingIndex >= 0) {
+        saves.splice(existingIndex, 1);
+    }
+    saves.unshift(saveData);
+    storeSaveLibrary(saves);
+    displaySavedGames();
+    alert(`Zapisano grę jako: ${saveName}`);
+    return true;
+}
+
+function downloadSaveFile(saveData) {
     const dataStr = JSON.stringify(saveData, null, 2);
     const blob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    
     const link = document.createElement('a');
     link.href = url;
-    link.download = generateFileName();
+    link.download = generateFileName(saveData);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    
-    alert(`Gra zapisana!\n\nPlik: ${link.download}\n\nZnajdziesz go w folderze Pobrane.`);
+    alert(`Wyeksportowano zapis do pliku: ${link.download}`);
+}
+
+// Zachowanie kompatybilności ze starą nazwą funkcji.
+function saveGameToFile() {
+    return saveGameSlot();
 }
 
 // Eksport gry do JSON (kopia zapasowa)
 function exportGameToJSON() {
-    saveGameToFile();
+    if (!characterData.name || state.gameState.length === 0) {
+        alert('Nie ma aktywnej gry do wyeksportowania!');
+        return;
+    }
+    downloadSaveFile(createCurrentSaveData(characterData.name));
+}
+
+function exportSavedGame(saveId) {
+    const save = getSaveLibrary().find(item => item.id === saveId);
+    if (save) downloadSaveFile(save);
 }
 
 // Wczytanie gry z pliku
@@ -2078,7 +2185,7 @@ function loadGameFromFile() {
         reader.onload = (event) => {
             try {
                 const saveData = JSON.parse(event.target.result);
-                applyLoadedGame(saveData);
+                importSaveData(saveData);
             } catch (error) {
                 alert('Błąd wczytywania pliku: ' + error.message);
             }
@@ -2098,12 +2205,28 @@ function importGameFromFile(e) {
     reader.onload = (event) => {
         try {
             const saveData = JSON.parse(event.target.result);
-            applyLoadedGame(saveData);
+            importSaveData(saveData);
         } catch (error) {
             alert('Błąd importu pliku: ' + error.message);
         }
     };
     reader.readAsText(file);
+}
+
+function importSaveData(saveData) {
+    const normalized = normalizeSaveData(saveData, `Import - ${saveData?.character?.name || 'zapis'}`);
+    if (!normalized) {
+        alert('Nieprawidłowy plik zapisu!');
+        return;
+    }
+
+    const saves = getSaveLibrary();
+    const existingIndex = saves.findIndex(save => save.id === normalized.id);
+    if (existingIndex >= 0) saves.splice(existingIndex, 1);
+    saves.unshift(normalized);
+    storeSaveLibrary(saves);
+    displaySavedGames();
+    applyLoadedGame(normalized);
 }
 
 // Zastosowanie wczytanych danych gry
@@ -2158,64 +2281,81 @@ function applyLoadedGame(saveData) {
     alert(`Gra wczytana!\n\nPostać: ${characterData.name}\nData zapisu: ${date.toLocaleString()}`);
 }
 
-// Wyświetlanie listy zapisanych gier
-function displaySavedGames() {
-    const saves = [];
-    
-    // Sprawdź localStorage
-    const localSave = localStorage.getItem('rpg_save');
-    if (localSave) {
-        try {
-            const data = JSON.parse(localSave);
-            saves.push({ ...data, source: 'local', name: 'Ostatni autosave' });
-        } catch (e) {}
-    }
-    
+// Wyświetlanie i obsługa biblioteki zapisów
+function renderSaveList(container) {
+    if (!container) return;
+    const saves = getSaveLibrary();
     if (saves.length === 0) {
-        elements.savedGamesList.innerHTML = '<p class="no-saves">Brak zapisanych gier. Rozpocznij nową grę i zapisz ją!</p>';
+        container.innerHTML = '<p class="no-saves">Brak zapisanych gier. Rozpocznij nową grę i zapisz ją!</p>';
         return;
     }
-    
-    elements.savedGamesList.innerHTML = saves.map((save, index) => {
+
+    container.innerHTML = saves.map(save => {
         const date = new Date(save.timestamp);
-        const s = save.character.sliders || {};
-        save.character.settingName = escapeHtml(save.character.settingName || 'Własny świat');
-        s.violence = escapeHtml(String(s.violence ?? '?'));
-        s.sexual = escapeHtml(String(s.sexual ?? '?'));
-        s.darkness = escapeHtml(String(s.darkness ?? '?'));
-        s.realism = escapeHtml(String(s.realism ?? '?'));
+        const dateText = Number.isNaN(date.getTime()) ? 'Brak daty' : date.toLocaleString();
+        const character = save.character || {};
+        const sliders = character.sliders || {};
+        const worldName = save.world?.worldMetadata?.name || character.settingName || 'Własny świat';
+        const locationId = save.world?.player?.locationId || 'nieznana lokacja';
+        const messageCount = save.gameState.filter(message => message.role === 'user' || message.role === 'assistant').length;
+        const saveId = escapeHtml(save.id);
         return `
             <div class="saved-game-item">
                 <div class="saved-game-info">
-                    <h4>${escapeHtml(save.character.name || 'Bez nazwy')}</h4>
-                    <p>${save.character.settingName || 'Własny świat'} • ${date.toLocaleString()}</p>
-                    <div class="saved-game-sliders">
-                        💀${s.violence || '?'} 🔞${s.sexual || '?'} 🌑${s.darkness || '?'} 🎭${s.realism || '?'}
-                    </div>
+                    <h4>${escapeHtml(save.saveName)}</h4>
+                    <p>${escapeHtml(character.name || 'Bez nazwy')} • ${escapeHtml(worldName)} • ${escapeHtml(dateText)}</p>
+                    <div class="saved-game-sliders">Rozmów: ${messageCount} • Lokacja: ${escapeHtml(locationId)}</div>
+                    <div class="saved-game-sliders">💀${escapeHtml(String(sliders.violence ?? '?'))} 🔞${escapeHtml(String(sliders.sexual ?? '?'))} 🌑${escapeHtml(String(sliders.darkness ?? '?'))} 🎭${escapeHtml(String(sliders.realism ?? '?'))}</div>
                 </div>
                 <div class="saved-game-actions">
-                    <button onclick="loadGameByIndex(${index})" class="btn-primary">Wczytaj</button>
-                    <button onclick="deleteGame(${index})" class="btn-secondary">Usuń</button>
+                    <button type="button" data-save-action="load" data-save-id="${saveId}" class="btn-primary">Wczytaj</button>
+                    <button type="button" data-save-action="export" data-save-id="${saveId}" class="btn-secondary">Eksportuj</button>
+                    <button type="button" data-save-action="delete" data-save-id="${saveId}" class="btn-secondary">Usuń</button>
                 </div>
             </div>
         `;
     }).join('');
 }
 
-// Wczytanie gry po indeksie
-function loadGameByIndex(index) {
-    const saveData = JSON.parse(localStorage.getItem('rpg_save'));
-    if (saveData) {
-        applyLoadedGame(saveData);
-    }
+function displaySavedGames() {
+    renderSaveList(elements.savedGamesList);
+    renderSaveList(elements.saveManagerList);
 }
 
-// Usunięcie gry
-function deleteGame(index) {
-    if (confirm('Czy na pewno chcesz usunąć ten zapis?')) {
-        localStorage.removeItem('rpg_save');
-        displaySavedGames();
-    }
+function handleSaveListClick(event) {
+    const button = event.target.closest('[data-save-action]');
+    if (!button) return;
+    const saveId = button.dataset.saveId;
+    const action = button.dataset.saveAction;
+    if (action === 'load') loadSavedGame(saveId);
+    if (action === 'export') exportSavedGame(saveId);
+    if (action === 'delete') deleteSavedGame(saveId);
+}
+
+function loadSavedGame(saveId) {
+    const save = getSaveLibrary().find(item => item.id === saveId);
+    if (!save) return;
+    applyLoadedGame(save);
+    hideSaveManager();
+}
+
+function deleteSavedGame(saveId) {
+    const saves = getSaveLibrary();
+    const save = saves.find(item => item.id === saveId);
+    if (!save || !confirm(`Usunąć zapis „${save.saveName}”?`)) return;
+    storeSaveLibrary(saves.filter(item => item.id !== saveId));
+    displaySavedGames();
+}
+
+function showSaveManager() {
+    displaySavedGames();
+    elements.saveManagerModal.classList.remove('hidden');
+    elements.saveManagerModal.setAttribute('aria-hidden', 'false');
+}
+
+function hideSaveManager() {
+    elements.saveManagerModal.classList.add('hidden');
+    elements.saveManagerModal.setAttribute('aria-hidden', 'true');
 }
 
 // Nowa gra

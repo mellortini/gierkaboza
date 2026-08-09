@@ -56,3 +56,10 @@ node --check app.js
 - generator wysyla teraz jednoznaczny prompt JSON bez sprzecznych instrukcji Markdown;
 - nazwa i opis wskazanego uniwersum maja pierwszenstwo przed domyslnym fantasy;
 - niepoprawna odpowiedz modelu nie uruchamia juz po cichu `Central Town` — uzytkownik dostaje komunikat i moze ponowic generowanie.
+
+## Menedzer zapisow dodany
+
+- zapisy lokalne maja nazwy i sa przechowywane jako biblioteka w `localStorage` pod kluczem `rpg_saves`;
+- lista pokazuje postac, swiat, lokacje, date i liczbe wiadomosci;
+- kazdy zapis mozna wczytac, wyeksportowac do JSON albo usunac;
+- stary klucz `rpg_save` jest migrowany automatycznie do nowej biblioteki.

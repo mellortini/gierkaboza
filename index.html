@@ -284,6 +284,10 @@
                 
                 <div class="saved-games-section" id="saved-games-section">
                     <h3>📂 Zapisane gry</h3>
+                    <div class="saved-games-toolbar">
+                        <button id="save-slot-from-menu" class="btn-primary">💾 Zapisz bieżącą grę</button>
+                        <button id="refresh-saved-games" class="btn-secondary">🔄 Odśwież listę</button>
+                    </div>
                     <div id="saved-games-list">
                         <p class="no-saves">Brak zapisanych gier</p>
                     </div>
@@ -397,6 +401,21 @@
                 <span class="close-modal">&times;</span>
                 <h2>📋 Twoja Postać</h2>
                 <div id="character-details"></div>
+            </div>
+        </div>
+
+        <!-- Menedżer zapisów -->
+        <div id="save-manager-modal" class="modal hidden" aria-hidden="true">
+            <div class="modal-content save-manager-content">
+                <span id="close-save-manager" class="close-modal">&times;</span>
+                <h2>📂 Menedżer zapisów</h2>
+                <p class="save-manager-help">Wczytaj, eksportuj albo usuń zapis przechowywany w tej przeglądarce.</p>
+                <div id="save-manager-list"></div>
+                <div class="save-manager-actions">
+                    <button id="save-current-slot" class="btn-primary">💾 Zapisz bieżącą grę</button>
+                    <label for="save-manager-import-file" class="btn-secondary import-btn">📁 Importuj JSON</label>
+                    <input type="file" id="save-manager-import-file" accept=".json" hidden>
+                </div>
             </div>
         </div>
     </div>

@@ -330,6 +330,80 @@ button {
     margin-bottom: 15px;
 }
 
+.saved-games-toolbar,
+.save-manager-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.saved-game-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: center;
+    padding: 14px;
+    margin-bottom: 10px;
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+}
+
+.saved-game-info {
+    min-width: 0;
+}
+
+.saved-game-info h4 {
+    margin: 0 0 6px;
+    color: #ffd700;
+    overflow-wrap: anywhere;
+}
+
+.saved-game-info p {
+    margin: 0 0 6px;
+    color: #c8c8c8;
+    font-size: 0.9rem;
+}
+
+.saved-game-sliders,
+.saved-game-location {
+    color: #999;
+    font-size: 0.82rem;
+}
+
+.saved-game-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.save-manager-content {
+    max-width: 760px;
+}
+
+.save-manager-help {
+    color: #aaa;
+    margin-bottom: 18px;
+}
+
+.save-manager-actions {
+    margin-top: 18px;
+    margin-bottom: 0;
+}
+
+@media (max-width: 640px) {
+    .saved-game-item {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .saved-game-actions {
+        justify-content: flex-start;
+    }
+}
+
 /* Multiplayer Section */
 .multiplayer-section {
     margin-top: 30px;
