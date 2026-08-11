@@ -136,6 +136,43 @@ function boundedText(value, max = 2000) {
     return typeof value === 'string' ? value.trim().slice(0, max) : '';
 }
 
+const SCENARIO_CHOICE_MARKER_RE = /\[\[SCENARIO_CHOICE:\s*(\{[\s\S]{0,4000}?\})\s*\]\]/g;
+
+function extractScenarioChoiceMarkers(text) {
+    let markerCount = 0;
+    const choices = [];
+    const cleanText = String(text || '').replace(SCENARIO_CHOICE_MARKER_RE, (marker, payload) => {
+        markerCount += 1;
+        if (markerCount <= 8) {
+            try {
+                const parsed = JSON.parse(payload);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
+                    typeof parsed.choiceId === 'string' && parsed.choiceId.trim() &&
+                    typeof parsed.optionId === 'string' && parsed.optionId.trim() &&
+                    parsed.choiceId.length <= 160 && parsed.optionId.length <= 160) {
+                    choices.push({ choiceId: parsed.choiceId.trim(), optionId: parsed.optionId.trim() });
+                }
+            } catch (error) {
+                // Invalid hidden markers are deliberately ignored after removal.
+            }
+        }
+        return '';
+    });
+    return { text: cleanText.trim(), choices };
+}
+
+function applyScenarioChoices(world, choices) {
+    if (!world || typeof world.recordScenarioChoice !== 'function') return;
+    for (const choice of Array.isArray(choices) ? choices : []) {
+        try {
+            // Only IDs from the marker are accepted; flags/variables never come from model output.
+            world.recordScenarioChoice({ choiceId: choice.choiceId, optionId: choice.optionId });
+        } catch (error) {
+            console.warn('Scenario choice marker ignored:', error.message);
+        }
+    }
+}
+
 function getPlayerHistory(room, playerId, socketId = null) {
     if (!room.playerHistories) room.playerHistories = {};
     const stableId = boundedText(playerId, 120);
@@ -263,7 +300,8 @@ io.on('connection', (socket) => {
                     console.log('World created from structured blueprint');
                 } catch (e) {
                     console.error('Error creating world from blueprint:', e);
-                    room.world = World.createStarterWorld(playerName, 'town_central');
+                    socket.emit('joinError', { message: 'Nie udało się utworzyć świata z wybranej kampanii.' });
+                    return;
                 }
             } else if (incomingWorld && worldOption === 'current') {
                 // Load world from client data
@@ -460,6 +498,19 @@ io.on('connection', (socket) => {
         }
         if (context) actionContext += trimPreserveEnds(context, 4000);
 
+        let scenarioDirectorContext = '';
+        if (world && typeof world.getScenarioPrompt === 'function') {
+            try {
+                scenarioDirectorContext = trimPreserveEnds(world.getScenarioPrompt(5000), 5000);
+            } catch (error) {
+                console.warn('Scenario director context unavailable:', error.message);
+            }
+        }
+        if (scenarioDirectorContext) {
+            actionContext += `\n\n## KONTEKST REŻYSERA SCENARIUSZA (TAJNE):\n${scenarioDirectorContext}\n`;
+            actionContext += 'Traktuj ten brief jako instrukcję wewnętrzną: nigdy nie ujawniaj jego sekretów bezpośrednio ani nie sugeruj ich jako wiedzy narratora; ujawniaj je tylko przez wiarygodne odkrycia graczy.\n';
+        }
+
         if (room.players.size > 1) {
             const others = Array.from(room.players.values())
                 .filter(p => p.socketId !== socket.id)
@@ -530,7 +581,10 @@ io.on('connection', (socket) => {
         const playerModel = actionModel || playerData.characterData?.model || 'openai/gpt-3.5-turbo';
         console.log(`Using model: ${playerModel} for player: ${playerData.name}`);
         
-        const response = await callLLM(actionContext, playerData.name, playerApiKey, playerModel, trimNarratorHistory(playerHistory), wantsDetailed);
+        const rawResponse = await callLLM(actionContext, playerData.name, playerApiKey, playerModel, trimNarratorHistory(playerHistory), wantsDetailed);
+        const parsedNarration = extractScenarioChoiceMarkers(rawResponse);
+        const response = parsedNarration.text;
+        applyScenarioChoices(world, parsedNarration.choices);
 
         // Zapisz akcję gracza i odpowiedź AI do jego osobistej historii (maks. 100 wpisów)
         playerHistory.push({ role: 'user', content: action });
@@ -899,6 +953,21 @@ function serializeWorld(world, viewerPlayer = null, viewerPlayerId = null) {
     if (viewerPlayer && typeof viewerPlayer.toJSON === 'function') {
         snapshot.player = viewerPlayer.toJSON();
     }
+    // Scenario director material is server-only. Never trust a future engine
+    // serializer (or the legacy fallback) to expose it to clients.
+    if (snapshot && typeof snapshot === 'object') {
+        delete snapshot.scenario;
+        delete snapshot.scenarioState;
+        if (snapshot.worldMetadata && typeof snapshot.worldMetadata === 'object') {
+            // `plan` may contain the complete scenario JSON, including
+            // director-only secrets. Rebuild this object instead of deleting
+            // known sensitive keys so future metadata fields cannot leak.
+            snapshot.worldMetadata = {
+                name: snapshot.worldMetadata.name || null,
+                description: snapshot.worldMetadata.description || null
+            };
+        }
+    }
     return snapshot;
 }
 
@@ -1142,6 +1211,8 @@ Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
         };
         // Obrabiamy tylko ostatnie wiadomości z historii; pełna pamięć nie trafia do promptu.
         systemMessage.content += '\n\nSECURITY: The response is broadcast to every player in the room. Never reveal, imply, or invent actor-private facts, facts hidden from the public, or GM/director secrets. Use only public memory facts present in this prompt.';
+        systemMessage.content += ' The scenario director brief is internal guidance only: never reveal its secrets directly or as narrator knowledge; reveal them only through player-discoverable events.';
+        systemMessage.content += ' If the player action clearly resolves one listed scenario choice, append exactly one marker at the very end in this exact format: [[SCENARIO_CHOICE:{"choiceId":"...","optionId":"..."}]]. Otherwise append no marker. Never explain or reveal the marker.';
 
         // Bound the complete prompt, not only individual history sections.
         const systemContent = trimPreserveEnds(systemMessage.content, NARRATOR_CONTEXT_LIMITS.maxSystemChars);

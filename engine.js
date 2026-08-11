@@ -95,6 +95,45 @@ const ITEM_CATALOG = Object.freeze({
     leather_armor: { id: "leather_armor", name: "leather armor", aliases: ["leather armor", "armor", "zbroja"], price: 60, type: "armor", defense: 2 }
 });
 
+// Scenario blueprints are authored content, not simulation state. Keep them
+// deliberately bounded and JSON-safe before putting them in a world/save.
+const SCENARIO_FIELDS = ['id', 'title', 'pitch', 'tone', 'directorBrief', 'acts', 'mainArc', 'sideQuests', 'npcs', 'factions', 'choices', 'multiplayerHooks', 'endings', 'antiRailroadingRules'];
+
+function scenarioSafeValue(value, depth = 0) {
+    if (depth > 6 || value === undefined || typeof value === 'function' || typeof value === 'symbol') return undefined;
+    if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+        return typeof value === 'string' ? value.slice(0, 4000) : value;
+    }
+    if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+    if (Array.isArray(value)) {
+        return value.slice(0, 200).map(item => scenarioSafeValue(item, depth + 1)).filter(item => item !== undefined);
+    }
+    if (typeof value === 'object') {
+        const result = {};
+        for (const key of Object.keys(value).slice(0, 200)) {
+            const safe = scenarioSafeValue(value[key], depth + 1);
+            if (safe !== undefined) result[String(key).slice(0, 120)] = safe;
+        }
+        return result;
+    }
+    return undefined;
+}
+
+function normalizeScenarioDefinition(rawScenario) {
+    if (!rawScenario || typeof rawScenario !== 'object' || Array.isArray(rawScenario)) return null;
+    const scenario = {};
+    for (const field of SCENARIO_FIELDS) {
+        const safe = scenarioSafeValue(rawScenario[field]);
+        if (safe !== undefined) scenario[field] = safe;
+    }
+    return Object.keys(scenario).length ? scenario : null;
+}
+
+function newScenarioState(scenario) {
+    const firstAct = scenario && Array.isArray(scenario.acts) && scenario.acts[0];
+    return { activeAct: firstAct && typeof firstAct === 'object' ? (firstAct.id || null) : null, flags: [], choiceHistory: [], variables: {} };
+}
+
 // Phase 3: Goal types
 const GOAL_TYPES = [
     "expand_territory",
@@ -1160,8 +1199,11 @@ class World {
         this.worldMetadata = {
             name: null,
             description: null,
-            plan: null
+            plan: null,
+            scenario: null
         };
+        this.scenario = null;
+        this.scenarioState = newScenarioState(null);
     }
 
     // ========================================================================
@@ -1457,6 +1499,35 @@ class World {
         };
     }
 
+    _questIsAvailableToGiver(quest, questGiver, player) {
+        if (!quest || quest.status === 'completed' || quest.status === 'active') return false;
+        if (quest.giverId && quest.giverId !== questGiver.id) return false;
+        if (quest.giverLocationId && quest.giverLocationId !== player.locationId) return false;
+        return true;
+    }
+
+    _completeQuest(player, quest, changes) {
+        if (!quest || quest.status === 'completed') return false;
+        quest.objective = { ...(quest.objective || {}), progress: 1 };
+        quest.status = 'completed';
+        const gold = Number.isFinite(quest.reward?.gold) ? quest.reward.gold : 0;
+        const xp = Number.isFinite(quest.reward?.xp) ? quest.reward.xp : 0;
+        player.gold += gold;
+        player.gainXp(xp);
+        changes.push(new WorldChange('quest_completed', quest.id, true, quest.title, 'local'));
+        if (gold) changes.push(new WorldChange('gold_changed', player.name, gold, 'Quest reward', 'local'));
+        if (xp) changes.push(new WorldChange('xp_gained', player.name, xp, 'Quest reward experience', 'local'));
+        return true;
+    }
+
+    _completeExploreQuests(player, locationId, changes) {
+        for (const quest of player.quests) {
+            const objective = quest.objective;
+            if (quest.status !== 'active' || objective?.type !== 'explore' || objective.targetId !== locationId) continue;
+            this._completeQuest(player, quest, changes);
+        }
+    }
+
     _tryUseItem(normalizedAction, player) {
         if (!/(use|uzyj|zjedz|zjedz)/i.test(normalizedAction)) return null;
         const item = this._resolveItemInAction(normalizedAction);
@@ -1513,19 +1584,38 @@ class World {
 
     _tryQuestAction(normalizedAction, player) {
         if (!/(quest|zadanie|misja|przyjmij|accept|nagrod|reward)/i.test(normalizedAction)) return null;
-        const questGiver = this._findQuestGiver(player);
-        if (!questGiver) return { success: false, message: 'Nie ma tu osoby, ktora oferuje zadanie.', timeCostMinutes: 1, changes: [] };
-        const existing = player.getQuest('forest_threat');
-        if (existing) {
-            return { success: true, message: `Zadanie "${existing.title}" ma status: ${existing.status}.`, timeCostMinutes: 1, changes: [] };
+        const questGivers = Array.from(this.npcs.values()).filter(npc =>
+            npc.locationId === player.locationId && npc.isAlive !== false && npc.isQuestGiver
+        );
+        if (questGivers.length === 0) return { success: false, message: 'Nie ma tu osoby, ktora oferuje zadanie.', timeCostMinutes: 1, changes: [] };
+        const available = this.questDefinitions.filter(quest => questGivers.some(questGiver =>
+            this._questIsAvailableToGiver(quest, questGiver, player)
+        ));
+        const explicit = available.find(quest => {
+            const id = String(quest.id || '').toLocaleLowerCase('pl-PL');
+            const title = String(quest.title || '').toLocaleLowerCase('pl-PL');
+            return (id && normalizedAction.includes(id)) || (title && normalizedAction.includes(title));
+        });
+        const quest = explicit || available[0] || (this.questDefinitions.length === 0 && !player.getQuest('forest_threat') ? this._getStarterQuest() : null);
+        if (!quest) {
+            const statuses = player.quests.length
+                ? player.quests.map(item => `${item.title}: ${item.status}`).join(', ')
+                : 'brak przyjetych zadan';
+            return { success: true, message: `Nie ma tu kolejnych dostepnych zadan (${statuses}).`, timeCostMinutes: 1, changes: [] };
         }
-        const quest = this._getStarterQuest();
-        player.addQuest(quest);
+        const accepted = { ...quest, status: 'active', objective: { ...(quest.objective || {}), progress: 0 }, reward: { ...(quest.reward || {}) } };
+        if (!player.addQuest(accepted)) {
+            return { success: true, message: `Zadanie "${quest.title}" ma juz status: ${player.getQuest(quest.id)?.status || 'przyjete'}.`, timeCostMinutes: 1, changes: [] };
+        }
+        const changes = [new WorldChange('quest_accepted', accepted.id, true, accepted.title, 'local')];
+        if (accepted.objective.type === 'explore' && accepted.objective.targetId === player.locationId) {
+            this._completeQuest(player, player.getQuest(accepted.id), changes);
+        }
         return {
             success: true,
-            message: `Przyjmujesz zadanie: ${quest.title}.`,
+            message: `Przyjmujesz zadanie: ${accepted.title}.`,
             timeCostMinutes: 2,
-            changes: [new WorldChange('quest_accepted', quest.id, true, quest.title, 'local')]
+            changes
         };
     }
 
@@ -1556,16 +1646,8 @@ class World {
 
     _completeKillQuests(player, target, changes) {
         for (const quest of player.quests) {
-            if (quest.status !== 'active' || quest.objective?.type !== 'kill_npc' || quest.objective.targetId !== target.id) continue;
-            quest.objective.progress = 1;
-            quest.status = 'completed';
-            const gold = quest.reward?.gold || 0;
-            const xp = quest.reward?.xp || 0;
-            player.gold += gold;
-            player.gainXp(xp);
-            changes.push(new WorldChange('quest_completed', quest.id, true, quest.title, 'local'));
-            if (gold) changes.push(new WorldChange('gold_changed', player.name, gold, 'Quest reward', 'local'));
-            if (xp) changes.push(new WorldChange('xp_gained', player.name, xp, 'Quest reward experience', 'local'));
+            if (quest.status !== 'active' || !['kill_npc', 'defeat'].includes(quest.objective?.type) || quest.objective.targetId !== target.id) continue;
+            this._completeQuest(player, quest, changes);
         }
     }
 
@@ -1618,6 +1700,7 @@ class World {
                     message,
                     'local'
                 ));
+                this._completeExploreQuests(player, targetLocation.id, changes);
             }
         } else if (travelIntent) {
             success = false;
@@ -2959,6 +3042,60 @@ class World {
         return this.factions.get(factionId);
     }
 
+    getScenarioPrompt(maxChars = 12000) {
+        const budget = Number.isSafeInteger(maxChars) && maxChars > 0 ? maxChars : 12000;
+        if (!this.scenario) return ''.slice(0, budget);
+        const state = this.scenarioState || newScenarioState(this.scenario);
+        const fields = ['id', 'title', 'pitch', 'tone', 'directorBrief', 'acts', 'mainArc', 'sideQuests', 'npcs', 'factions', 'choices', 'multiplayerHooks', 'endings', 'antiRailroadingRules'];
+        const lines = ['SCENARIO'];
+        for (const field of fields) {
+            if (this.scenario[field] !== undefined) lines.push(`${field}: ${JSON.stringify(this.scenario[field])}`);
+        }
+        lines.push(`CURRENT_SCENARIO_STATE: ${JSON.stringify(state)}`);
+        return lines.join('\n').slice(0, budget);
+    }
+
+    recordScenarioChoice({ choiceId, optionId, flagsAdd = [], flagsRemove = [], variables = {}, note = '' } = {}) {
+        const before = JSON.stringify(this.scenarioState);
+        const choices = this.scenario && Array.isArray(this.scenario.choices) ? this.scenario.choices : [];
+        const choice = choices.find(item => item && typeof item === 'object' && item.id === choiceId);
+        const options = choice && Array.isArray(choice.options) ? choice.options : [];
+        const option = options.find(item => item && typeof item === 'object' && item.id === optionId);
+        if (!choice || !option) {
+            return { success: false, reason: 'invalid_choice', choiceId: choiceId || null, optionId: optionId || null, state: scenarioSafeValue(this.scenarioState), changed: false };
+        }
+
+        const state = this.scenarioState || newScenarioState(this.scenario);
+        const choiceKey = String(choiceId).slice(0, 120);
+        const optionKey = String(optionId).slice(0, 120);
+        if (state.choiceHistory.some(entry => entry && entry.choiceId === choiceKey && entry.optionId === optionKey)) {
+            return { success: true, choiceId, optionId, state: scenarioSafeValue(state), changed: false, duplicate: true };
+        }
+        const optionFlagsAdd = Array.isArray(option.flagsAdd) ? option.flagsAdd : [];
+        const optionFlagsRemove = Array.isArray(option.flagsRemove) ? option.flagsRemove : [];
+        const add = [...optionFlagsAdd, ...(Array.isArray(flagsAdd) ? flagsAdd : [])]
+            .filter(flag => typeof flag === 'string').map(flag => flag.slice(0, 120));
+        const remove = [...optionFlagsRemove, ...(Array.isArray(flagsRemove) ? flagsRemove : [])]
+            .filter(flag => typeof flag === 'string').map(flag => flag.slice(0, 120));
+        state.flags = [...new Set(state.flags.concat(add))].filter(flag => !remove.includes(flag)).slice(0, 200);
+        const optionVariables = option.variables && typeof option.variables === 'object' && !Array.isArray(option.variables) ? option.variables : {};
+        const explicitVariables = variables && typeof variables === 'object' && !Array.isArray(variables) ? variables : {};
+        const safeVariables = scenarioSafeValue({ ...optionVariables, ...explicitVariables }, 1) || {};
+        if (Object.keys(safeVariables).length > 0) {
+            state.variables = { ...state.variables, ...safeVariables };
+        }
+        const nextAct = option.nextAct || option.activeAct || choice.nextAct || choice.activeAct;
+        if (typeof nextAct === 'string' && nextAct.trim()) state.activeAct = nextAct.trim().slice(0, 120);
+        state.choiceHistory = state.choiceHistory.concat([{
+            choiceId: choiceKey,
+            optionId: optionKey,
+            consequence: { flagsAdd: [...new Set(add)].slice(0, 32), flagsRemove: [...new Set(remove)].slice(0, 32), variables: safeVariables },
+            note: (typeof note === 'string' && note.trim() ? note : option.note || '').slice(0, 240)
+        }]).slice(-200);
+        this.scenarioState = state;
+        return { success: true, choiceId, optionId, state: scenarioSafeValue(state), changed: before !== JSON.stringify(state) };
+    }
+
     // ========================================================================
     // SERIALIZATION
     // ========================================================================
@@ -2977,6 +3114,8 @@ class World {
             config: this.config,
             seed: this.seed,
             worldMetadata: this.worldMetadata,
+            scenario: this.scenario,
+            scenarioState: this.scenarioState,
             lastGlobalStrategicUpdate: this.lastGlobalStrategicUpdate,
             // Phase 2: Serialize event queue
             eventQueue: this.eventQueue ? this.eventQueue.toJSON() : null,
@@ -3022,8 +3161,22 @@ class World {
                 ...world.worldMetadata,
                 name: typeof json.worldMetadata.name === 'string' ? json.worldMetadata.name : null,
                 description: typeof json.worldMetadata.description === 'string' ? json.worldMetadata.description : null,
-                plan: typeof json.worldMetadata.plan === 'string' ? json.worldMetadata.plan : null
+                plan: typeof json.worldMetadata.plan === 'string' ? json.worldMetadata.plan : null,
+                scenario: normalizeScenarioDefinition(json.worldMetadata.scenario)
             };
+        }
+        world.scenario = normalizeScenarioDefinition(json.scenario || world.worldMetadata.scenario);
+        world.worldMetadata.scenario = world.scenario;
+        if (json.scenarioState && typeof json.scenarioState === 'object') {
+            const restored = scenarioSafeValue(json.scenarioState) || {};
+            world.scenarioState = {
+                activeAct: typeof restored.activeAct === 'string' ? restored.activeAct.slice(0, 120) : null,
+                flags: Array.isArray(restored.flags) ? [...new Set(restored.flags.filter(item => typeof item === 'string').slice(0, 200))] : [],
+                choiceHistory: Array.isArray(restored.choiceHistory) ? restored.choiceHistory.slice(0, 200) : [],
+                variables: restored.variables && typeof restored.variables === 'object' && !Array.isArray(restored.variables) ? restored.variables : {}
+            };
+        } else {
+            world.scenarioState = newScenarioState(world.scenario);
         }
         world.lastGlobalStrategicUpdate = Number.isSafeInteger(json.lastGlobalStrategicUpdate)
             ? json.lastGlobalStrategicUpdate
@@ -3724,19 +3877,25 @@ class World {
             });
 
         const questIds = new Set();
-        const quests = (Array.isArray(source.quests) ? source.quests : (Array.isArray(blueprint.quests) ? blueprint.quests : [])).slice(0, 100).map((entry, index) => ({
+        const rawQuestDefinitions = Array.isArray(source.questDefinitions) ? source.questDefinitions
+            : Array.isArray(blueprint.questDefinitions) ? blueprint.questDefinitions
+            : Array.isArray(source.quests) ? source.quests
+            : Array.isArray(blueprint.quests) ? blueprint.quests : [];
+        const quests = rawQuestDefinitions.slice(0, 100).map((entry, index) => ({
             id: uniqueId(entry?.id || entry?.title, `quest_${index + 1}`, questIds),
             title: String(entry?.title || entry?.name || `Quest ${index + 1}`).slice(0, 160),
             description: String(entry?.description || '').slice(0, 2000),
             objective: entry?.objective && typeof entry.objective === 'object' ? {
-                type: String(entry.objective.type || 'explore'),
+                type: String(entry.objective.type || 'explore').toLocaleLowerCase('en-US'),
                 targetId: entry.objective.targetId ? makeId(entry.objective.targetId, '') : null,
                 required: Math.max(1, Math.floor(clamp(entry.objective.required, 1, 1000, 1)))
             } : { type: 'explore', targetId: null, required: 1 },
             reward: {
                 gold: Math.floor(clamp(entry?.reward?.gold, 0, 100000, 0)),
                 xp: Math.floor(clamp(entry?.reward?.xp, 0, 100000, 0))
-            }
+            },
+            ...(entry?.giverId ? { giverId: makeId(entry.giverId, '') } : {}),
+            ...(entry?.giverLocationId ? { giverLocationId: makeId(entry.giverLocationId, '') } : {})
         }));
 
         return {
@@ -3749,7 +3908,9 @@ class World {
             locations,
             factions,
             npcs,
-            quests
+            quests,
+            questDefinitions: quests,
+            scenario: normalizeScenarioDefinition(blueprint.scenario)
         };
     }
 
@@ -3759,8 +3920,11 @@ class World {
         world.worldMetadata = {
             name: data.world.name,
             description: data.world.description,
-            plan: JSON.stringify(data, null, 2)
+            plan: JSON.stringify(data, null, 2),
+            scenario: data.scenario
         };
+        world.scenario = data.scenario;
+        world.scenarioState = newScenarioState(world.scenario);
         for (const entry of data.locations) {
             const location = new Location(entry.id, entry.name);
             Object.assign(location, entry);

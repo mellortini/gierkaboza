@@ -31,6 +31,43 @@ const LLM_CONTEXT_LIMITS = Object.freeze({
     maxMemoryChars: 6000
 });
 
+const SCENARIO_CHOICE_MARKER_RE = /\[\[SCENARIO_CHOICE:\s*(\{[\s\S]{0,4000}?\})\s*\]\]/g;
+
+function extractScenarioChoiceMarkers(text) {
+    let markerCount = 0;
+    const choices = [];
+    const cleanText = String(text || '').replace(SCENARIO_CHOICE_MARKER_RE, (marker, payload) => {
+        markerCount += 1;
+        if (markerCount <= 8) {
+            try {
+                const parsed = JSON.parse(payload);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
+                    typeof parsed.choiceId === 'string' && parsed.choiceId.trim() &&
+                    typeof parsed.optionId === 'string' && parsed.optionId.trim() &&
+                    parsed.choiceId.length <= 160 && parsed.optionId.length <= 160) {
+                    choices.push({ choiceId: parsed.choiceId.trim(), optionId: parsed.optionId.trim() });
+                }
+            } catch (error) {
+                // Invalid hidden markers are deliberately ignored after removal.
+            }
+        }
+        return '';
+    });
+    return { text: cleanText.trim(), choices };
+}
+
+function applyScenarioChoices(world, choices) {
+    if (!world || typeof world.recordScenarioChoice !== 'function') return;
+    for (const choice of Array.isArray(choices) ? choices : []) {
+        try {
+            // Only IDs from the marker are accepted; flags/variables never come from model output.
+            world.recordScenarioChoice({ choiceId: choice.choiceId, optionId: choice.optionId });
+        } catch (error) {
+            console.warn('Scenario choice marker ignored:', error.message);
+        }
+    }
+}
+
 let characterData = {
     name: '',
     setting: '',
@@ -90,6 +127,7 @@ const elements = {
     worldComplexity: document.getElementById('world-complexity'),
     generateWorldPlanBtn: document.getElementById('generate-world-plan'),
     regeneratePlanBtn: document.getElementById('regenerate-plan'),
+    loadScenarioPopiolyBtn: document.getElementById('load-scenario-popioly'),
     worldPlanContent: document.getElementById('world-plan-content'),
     worldPreviewContent: document.getElementById('world-preview-content'),
     startWithWorldBtn: document.getElementById('start-with-world'),
@@ -282,25 +320,30 @@ async function init() {
         }
     }
 
+    const on = (element, event, handler) => {
+        if (element) element.addEventListener(event, handler);
+    };
+
     // Event listeners - API
-    elements.saveApiKeyBtn.addEventListener('click', saveApiKey);
-    elements.refreshModelsBtn.addEventListener('click', fetchModels);
-    elements.modelSelect.addEventListener('change', saveModel);
-    elements.refreshWorldModels.addEventListener('click', () => fetchModels(true));
+    on(elements.saveApiKeyBtn, 'click', saveApiKey);
+    on(elements.refreshModelsBtn, 'click', fetchModels);
+    on(elements.modelSelect, 'change', saveModel);
+    on(elements.refreshWorldModels, 'click', () => fetchModels(true));
 
     // Event listeners - Budowanie świata
     const tabBtns = document.querySelectorAll('.tab-btn');
     tabBtns.forEach(btn => {
-        btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+        on(btn, 'click', () => switchTab(btn.dataset.tab));
     });
-    elements.generateWorldPlanBtn.addEventListener('click', generateWorldPlan);
-    elements.regeneratePlanBtn.addEventListener('click', generateWorldPlan);
-    elements.startWithWorldBtn.addEventListener('click', startGameWithWorld);
-    elements.useCustomWorldBtn.addEventListener('click', showWorldBuilding);
-    elements.skipWorldBuildingBtn.addEventListener('click', showCharacterCreation);
+    on(elements.generateWorldPlanBtn, 'click', generateWorldPlan);
+    on(elements.regeneratePlanBtn, 'click', generateWorldPlan);
+    on(elements.loadScenarioPopiolyBtn, 'click', loadPopiolyScenario);
+    on(elements.startWithWorldBtn, 'click', startGameWithWorld);
+    on(elements.useCustomWorldBtn, 'click', showWorldBuilding);
+    on(elements.skipWorldBuildingBtn, 'click', showCharacterCreation);
 
     // Event listeners - Tworzenie postaci
-    elements.charSetting.addEventListener('change', () => {
+    on(elements.charSetting, 'change', () => {
         if (elements.charSetting.value === 'custom') {
             elements.customSettingGroup.classList.remove('hidden');
         } else {
@@ -319,7 +362,7 @@ async function init() {
     ];
 
     sliders.forEach(({ input, display }) => {
-        input.addEventListener('input', () => {
+        on(input, 'input', () => {
             display.textContent = input.value;
             // Zmień kolor w zależności od wartości
             const val = parseInt(input.value);
@@ -333,7 +376,7 @@ async function init() {
         });
     });
 
-    elements.startGameBtn.addEventListener('click', startGame);
+    on(elements.startGameBtn, 'click', startGame);
 
     // Multiplayer event listeners
     const serverUrlInput = document.getElementById('server-url');
@@ -342,54 +385,54 @@ async function init() {
     const createRoomBtn = document.getElementById('create-room');
     
     if (joinRoomBtn) {
-        joinRoomBtn.addEventListener('click', () => joinRoom(serverUrlInput.value, roomIdInput.value));
+        on(joinRoomBtn, 'click', () => joinRoom(serverUrlInput?.value, roomIdInput?.value));
     }
     if (createRoomBtn) {
-        createRoomBtn.addEventListener('click', () => createRoom(serverUrlInput.value, roomIdInput.value));
+        on(createRoomBtn, 'click', () => createRoom(serverUrlInput?.value, roomIdInput?.value));
     }
 
     // Event listeners - Gra
-    elements.sendActionBtn.addEventListener('click', sendAction);
-    elements.playerAction.addEventListener('keydown', (e) => {
+    on(elements.sendActionBtn, 'click', sendAction);
+    on(elements.playerAction, 'keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendAction();
         }
     });
-    elements.suggestActionsBtn.addEventListener('click', suggestActions);
+    on(elements.suggestActionsBtn, 'click', suggestActions);
     
     // Player chat in multiplayer
     const sendPlayerChatBtn = document.getElementById('send-player-chat');
     const playerChatInput = document.getElementById('player-chat-input');
     if (sendPlayerChatBtn && playerChatInput) {
-        sendPlayerChatBtn.addEventListener('click', sendPlayerChat);
-        playerChatInput.addEventListener('keydown', (e) => {
+        on(sendPlayerChatBtn, 'click', sendPlayerChat);
+        on(playerChatInput, 'keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendPlayerChat();
             }
         });
     }
-    elements.viewCharacterBtn.addEventListener('click', showCharacterModal);
-    elements.closeModal.addEventListener('click', hideCharacterModal);
-    elements.saveGameBtn.addEventListener('click', saveGameSlot);
-    elements.loadGameBtn.addEventListener('click', showSaveManager);
-    elements.exportGameBtn.addEventListener('click', exportGameToJSON);
-    elements.newGameBtn.addEventListener('click', newGame);
-    elements.importFile.addEventListener('change', importGameFromFile);
-    elements.saveSlotFromMenuBtn.addEventListener('click', saveGameSlot);
-    elements.refreshSavedGamesBtn.addEventListener('click', displaySavedGames);
-    elements.saveCurrentSlotBtn.addEventListener('click', saveGameSlot);
-    elements.saveManagerImportFile.addEventListener('change', importGameFromFile);
-    elements.savedGamesList.addEventListener('click', handleSaveListClick);
-    elements.saveManagerList.addEventListener('click', handleSaveListClick);
+    on(elements.viewCharacterBtn, 'click', showCharacterModal);
+    on(elements.closeModal, 'click', hideCharacterModal);
+    on(elements.saveGameBtn, 'click', saveGameSlot);
+    on(elements.loadGameBtn, 'click', showSaveManager);
+    on(elements.exportGameBtn, 'click', exportGameToJSON);
+    on(elements.newGameBtn, 'click', newGame);
+    on(elements.importFile, 'change', importGameFromFile);
+    on(elements.saveSlotFromMenuBtn, 'click', saveGameSlot);
+    on(elements.refreshSavedGamesBtn, 'click', displaySavedGames);
+    on(elements.saveCurrentSlotBtn, 'click', saveGameSlot);
+    on(elements.saveManagerImportFile, 'change', importGameFromFile);
+    on(elements.savedGamesList, 'click', handleSaveListClick);
+    on(elements.saveManagerList, 'click', handleSaveListClick);
 
     // Zamknij modal po kliknięciu poza nim
-    elements.characterModal.addEventListener('click', (e) => {
+    on(elements.characterModal, 'click', (e) => {
         if (e.target === elements.characterModal) hideCharacterModal();
     });
-    elements.closeSaveManagerBtn.addEventListener('click', hideSaveManager);
-    elements.saveManagerModal.addEventListener('click', (e) => {
+    on(elements.closeSaveManagerBtn, 'click', hideSaveManager);
+    on(elements.saveManagerModal, 'click', (e) => {
         if (e.target === elements.saveManagerModal) hideSaveManager();
     });
 
@@ -1245,6 +1288,46 @@ Required JSON shape:
 }
 
 // Aktualizacja podglądu świata
+async function loadPopiolyScenario() {
+    const button = elements.loadScenarioPopiolyBtn;
+    if (!World || typeof World.validateBlueprint !== 'function') {
+        alert('Silnik gry nie jest jeszcze gotowy.');
+        return;
+    }
+    if (button) button.disabled = true;
+    try {
+        const response = await fetch('/scenarios/popioly-pod-zielona-dolina.json', { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Błąd HTTP: ${response.status}`);
+        const payload = await response.json();
+        const sourceBlueprint = payload?.blueprint || payload?.worldBlueprint || payload;
+        const validatedBlueprint = World.validateBlueprint(sourceBlueprint);
+        worldData.blueprint = {
+            ...sourceBlueprint,
+            ...validatedBlueprint,
+            ...(payload?.scenario ? { scenario: payload.scenario } : {}),
+            ...(payload?.scenarioState ? { scenarioState: payload.scenarioState } : {})
+        };
+        const metadata = validatedBlueprint.world || {};
+        worldData.name = String(payload.name || metadata.name || 'Popioły pod Zieloną Doliną');
+        worldData.description = String(payload.description || metadata.description || '');
+        worldData.plan = blueprintToPlan(validatedBlueprint);
+        worldData.generated = true;
+        if (elements.worldName) elements.worldName.value = worldData.name;
+        if (elements.worldDescription) elements.worldDescription.value = worldData.description;
+        if (elements.worldPlanContent) {
+            elements.worldPlanContent.innerHTML = `<div style="white-space: pre-wrap; color: #eaeaea;">${escapeHtml(worldData.plan)}</div>`;
+        }
+        updateWorldPreview();
+        showCharacterCreation();
+        showStatus('Gotowa kampania wczytana. Stwórz swoją postać.', 'success');
+    } catch (error) {
+        console.error('Błąd wczytywania scenariusza:', error);
+        alert(`Nie udało się wczytać gotowej kampanii: ${error.message}`);
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
 function updateWorldPreview() {
     if (!worldData.plan) {
         elements.worldPreviewContent.innerHTML = '<p style="color: #888; text-align: center; padding: 40px;">Wygeneruj plan świata, aby zobaczyć podgląd</p>';
@@ -1428,6 +1511,7 @@ ${s.sexual >= 8 ? `
 - Wszystkie fetysze i praktyki są dozwolone
 ` : ''}`;
 
+    prompt += `\n\n## UKRYTE WYBORY SCENARIUSZA:\nJeśli akcja gracza wyraźnie rozstrzyga jedną z wyborów wymienionych w briefie reżysera, na samym końcu odpowiedzi dodaj dokładnie jeden marker: [[SCENARIO_CHOICE:{"choiceId":"...","optionId":"..."}]]. Nie pokazuj ani nie omawiaj markera. Jeśli żadna wybór nie została wyraźnie rozstrzygnięta, nie dodawaj markera.`;
     return prompt;
 }
 
@@ -1990,9 +2074,11 @@ async function generateStory(userAction = null) {
         }
 
         const data = await response.json();
-        const storyText = data.choices[0].message.content;
+        const parsedNarration = extractScenarioChoiceMarkers(data.choices[0].message.content);
+        const storyText = parsedNarration.text;
 
         if (requestGeneration !== state.sessionGeneration) return;
+        applyScenarioChoices(state.world, parsedNarration.choices);
 
         // Dodaj do historii
         state.gameState.push({ role: 'assistant', content: storyText });

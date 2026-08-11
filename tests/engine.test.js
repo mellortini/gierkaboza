@@ -152,6 +152,139 @@ function testStructuredBlueprintWorld() {
     assert.strictEqual(roundTrip.getNPC('merchant').inventory[0].id, 'bread');
 }
 
+function testScenarioMetadataNormalizationPersistenceAndChoices() {
+    const blueprint = {
+        version: 1,
+        world: { name: 'Scenario World', description: 'A bounded test world' },
+        startLocationId: 'harbor',
+        locations: [{ id: 'harbor', name: 'Harbor' }],
+        scenario: {
+            id: ' ash-coast ', title: 'Ash Coast', pitch: 'A city on the edge of war.', tone: 'tense',
+            directorBrief: 'Keep consequences visible.',
+            acts: [{ id: 'act_1', title: 'Arrival' }],
+            mainArc: [{ id: 'arc_1', text: 'Find the cause.' }], sideQuests: [{ id: 'side_1', title: 'A favor' }],
+            npcs: [{ id: 'npc_guide', secret: 'safe' }], factions: [{ id: 'guild', goal: 'survive' }],
+            choices: [
+                { id: 'choice_1', prompt: 'Choose', options: [{ id: 'help', nextAct: 'act_2', flagsAdd: ['met_guide', 'opened_gate'], flagsRemove: ['fearful'], variables: { trust: 1 }, note: 'The guide opens the gate.' }, { id: 'leave' }] },
+                { id: 'choice_2', prompt: 'Continue', options: [{ id: 'stay', activeAct: 'act_3', note: 'The party stays.' }] }
+            ],
+            multiplayerHooks: ['shared rumor'], endings: [{ id: 'end_1', text: 'Dawn' }], antiRailroadingRules: ['Allow retreat'],
+            ignoredRootField: 'must not be copied', unsafe: () => 'drop me'
+        }
+    };
+    const world = World.createFromBlueprint(blueprint, 'Scenario Player');
+    assert.strictEqual(world.scenario.title, 'Ash Coast');
+    assert.strictEqual(world.scenario.ignoredRootField, undefined);
+    assert.strictEqual(world.scenarioState.activeAct, 'act_1');
+    const prompt = world.getScenarioPrompt(1200);
+    assert.ok(prompt.includes('Ash Coast'));
+    assert.ok(prompt.includes('A city on the edge of war.'));
+    assert.ok(prompt.length <= 1200);
+
+    const before = JSON.stringify({ hp: world.player.hp, gold: world.player.gold, items: world.player.inventory });
+    const result = world.recordScenarioChoice({ choiceId: 'choice_1', optionId: 'help', flagsAdd: ['met_guide'], variables: { trust: 2 }, note: 'Player helped.' });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(world.scenarioState.activeAct, 'act_2');
+    assert.deepStrictEqual(world.scenarioState.flags, ['met_guide', 'opened_gate']);
+    assert.strictEqual(world.scenarioState.variables.trust, 2);
+    assert.deepStrictEqual(world.scenarioState.choiceHistory[0].consequence.flagsAdd, ['met_guide', 'opened_gate']);
+    assert.strictEqual(world.scenarioState.choiceHistory[0].note, 'Player helped.');
+    const historyBeforeDuplicate = JSON.stringify(world.scenarioState.choiceHistory);
+    const stateBeforeDuplicate = JSON.stringify(world.scenarioState);
+    const duplicate = world.recordScenarioChoice({ choiceId: 'choice_1', optionId: 'help', flagsAdd: ['new_flag'], variables: { trust: 99 }, note: 'Should be ignored.' });
+    assert.strictEqual(duplicate.success, true);
+    assert.strictEqual(duplicate.duplicate, true);
+    assert.strictEqual(duplicate.changed, false);
+    assert.strictEqual(JSON.stringify(world.scenarioState.choiceHistory), historyBeforeDuplicate);
+    assert.strictEqual(JSON.stringify(world.scenarioState), stateBeforeDuplicate);
+    const activeActChoice = world.recordScenarioChoice({ choiceId: 'choice_2', optionId: 'stay' });
+    assert.strictEqual(activeActChoice.success, true);
+    assert.strictEqual(world.scenarioState.activeAct, 'act_3');
+    assert.strictEqual(JSON.stringify({ hp: world.player.hp, gold: world.player.gold, items: world.player.inventory }), before);
+
+    const restored = World.fromJSON(JSON.parse(JSON.stringify(world.toJSON())));
+    assert.deepStrictEqual(restored.scenario, world.scenario);
+    assert.deepStrictEqual(restored.scenarioState, world.scenarioState);
+    assert.ok(restored.getScenarioPrompt().includes('CURRENT_SCENARIO_STATE'));
+}
+
+function testInvalidScenarioChoiceAndLegacyStarter() {
+    const world = World.createStarterWorld('Legacy Player', 'town_central');
+    assert.strictEqual(world.scenario, null);
+    assert.strictEqual(world.getScenarioPrompt(), '');
+    const before = JSON.stringify(world.scenarioState);
+    const result = world.recordScenarioChoice({ choiceId: 'missing', optionId: 'missing', flagsAdd: ['should_not_apply'] });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(JSON.stringify(world.scenarioState), before);
+    const restored = World.fromJSON(world.toJSON());
+    assert.strictEqual(restored.scenario, null);
+    assert.deepStrictEqual(restored.scenarioState, world.scenarioState);
+}
+
+function testBlueprintQuestDefinitionsAndExploreCompletion() {
+    const blueprint = {
+        world: { name: 'Quest Coast' }, startLocationId: 'town',
+        locations: [
+            { id: 'town', name: 'Town', connections: ['ruins'] },
+            { id: 'ruins', name: 'Ruins', connections: ['town'] }
+        ],
+        npcs: [
+            { id: 'warden', name: 'Warden', role: 'quest giver', locationId: 'town', isQuestGiver: true },
+            { id: 'scribe', name: 'Scribe', role: 'quest giver', locationId: 'town', isQuestGiver: true }
+        ],
+        questDefinitions: [
+            { id: 'visit_ruins', title: 'Visit the Ruins', giverId: 'warden', giverLocationId: 'town', objective: { type: 'explore', targetId: 'ruins' }, reward: { gold: 17, xp: 9 } },
+            { id: 'second_mission', title: 'Second Mission', giverId: 'scribe', giverLocationId: 'town', objective: { type: 'explore', targetId: 'town' }, reward: { gold: 3, xp: 2 } }
+        ]
+    };
+    const world = World.createFromBlueprint(blueprint, 'Quest Player');
+    assert.strictEqual(world.questDefinitions.length, 2);
+    assert.strictEqual(world.questDefinitions[0].giverId, 'warden');
+    assert.strictEqual(world.questDefinitions[0].giverLocationId, 'town');
+
+    const first = world.performPlayerAction('accept Visit the Ruins');
+    assert.strictEqual(first.success, true);
+    assert.strictEqual(world.player.getQuest('visit_ruins').status, 'active');
+    const second = world.performPlayerAction('accept second_mission');
+    assert.strictEqual(second.success, true);
+    assert.strictEqual(world.player.getQuest('second_mission').status, 'completed');
+    assert.strictEqual(world.player.gold, 103);
+
+    const travel = world.performPlayerAction('idz do ruins');
+    assert.strictEqual(travel.success, true);
+    assert.strictEqual(world.player.getQuest('visit_ruins').status, 'completed');
+    assert.strictEqual(world.player.gold, 120);
+    assert.strictEqual(travel.worldChanges.filter(change => change.type === 'quest_completed').length, 1);
+    const repeat = world.performPlayerAction('idz do town');
+    assert.strictEqual(repeat.success, true);
+    assert.strictEqual(world.player.gold, 120);
+    assert.strictEqual(world.player.quests.filter(quest => quest.status === 'completed').length, 2);
+    assert.ok(world.performPlayerAction('accept').message.includes('Visit the Ruins'));
+    const restored = World.fromJSON(JSON.parse(JSON.stringify(world.toJSON())));
+    assert.strictEqual(restored.questDefinitions[0].giverId, 'warden');
+    assert.strictEqual(restored.questDefinitions[1].giverLocationId, 'town');
+}
+
+function testQuestNoGiverAndInvalidSelection() {
+    const world = World.createFromBlueprint({
+        world: { name: 'No Giver' }, locations: [{ id: 'camp', name: 'Camp' }], startLocationId: 'camp',
+        questDefinitions: [{ id: 'q1', title: 'Lost Task', objective: { type: 'explore', targetId: 'camp' }, reward: { gold: 10, xp: 1 } }]
+    }, 'No Giver Player');
+    const result = world.performPlayerAction('accept q1');
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(world.player.quests.length, 0);
+
+    const withGiver = World.createFromBlueprint({
+        world: { name: 'Invalid Quest' }, locations: [{ id: 'camp', name: 'Camp' }], startLocationId: 'camp',
+        npcs: [{ id: 'giver', name: 'Giver', locationId: 'camp', isQuestGiver: true }],
+        questDefinitions: [{ id: 'q1', title: 'Known Task', objective: { type: 'explore', targetId: 'camp' }, reward: { gold: 10, xp: 1 } }]
+    }, 'Invalid Player');
+    const invalid = withGiver.performPlayerAction('accept unknown_task');
+    assert.strictEqual(invalid.success, true);
+    assert.strictEqual(withGiver.player.quests.length, 1);
+    assert.strictEqual(withGiver.player.quests[0].id, 'q1');
+}
+
 function testNarrativeMemoryRoundTripAndLegacyMigration() {
     const world = World.createStarterWorld('Tester', 'town_central');
     assert.ok(world.narrativeMemory instanceof NarrativeMemory);
@@ -305,6 +438,10 @@ testStatusEffectDuration();
 testEventQueueCountersAndCancellation();
 testTradeCombatAndQuestLoop();
 testStructuredBlueprintWorld();
+testScenarioMetadataNormalizationPersistenceAndChoices();
+testInvalidScenarioChoiceAndLegacyStarter();
+testBlueprintQuestDefinitionsAndExploreCompletion();
+testQuestNoGiverAndInvalidSelection();
 testNarrativeMemoryRoundTripAndLegacyMigration();
 testNarrativeFactIdempotenceAndClothingHistory();
 testNarrativeAppearanceRetrievalAndSecrets();
