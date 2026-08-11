@@ -112,3 +112,9 @@ W zakładce „Plan Świata” znajduje się przycisk „Wczytaj gotową kampani
 Narrator otrzymuje instrukcję, aby po jednoznacznym rozstrzygnięciu wyboru dopisać na samym końcu dokładnie jeden marker w formacie `[[SCENARIO_CHOICE:{"choiceId":"...","optionId":"..."}]]`. W jednoosobowej i multiplayerowej ścieżce odpowiedź LLM jest natychmiast parsowana: poprawne identyfikatory są przekazywane wyłącznie do `world.recordScenarioChoice({ choiceId, optionId })`, a silnik sam stosuje zdefiniowane w scenariuszu `flagsAdd`, `flagsRemove` i `variables`. Parser usuwa marker przed zapisaniem historii, konsolidacją pamięci, wyświetleniem i broadcastem; markery niepoprawne są bezpiecznie usuwane i ignorowane. Model nie może samodzielnie dostarczać flag ani zmiennych.
 
 W multiplayerze brief reżysera scenariusza pozostaje po stronie serwera. Klient otrzymuje wyłącznie filtrowany snapshot widza bez scenariusza, `scenarioState` i planu zawierającego tajne dane; tajny brief nie jest wysyłany klientom.
+
+## Lobby multiplayer kampanii
+
+Multiplayer ma teraz osobne lobby przed startem gry. Host wybiera kampanię przed utworzeniem pokoju, a lobby pokazuje uczestnikom publiczną nazwę, opis i podstawowe dane scenariusza. Każdy gracz może dodać kilka własnych postaci wraz z opisami, wybrać jedną z nich i oznaczyć gotowość. Host może rozpocząć grę dopiero wtedy, gdy każdy aktywny uczestnik ma wybraną postać i jest gotowy.
+
+Serwer pilnuje właściciela postaci, hosta, gotowości, ponownego połączenia oraz stanu pokoju. Postacie, wybory i konfiguracja lobby są zapisywane razem z pokojem. Snapshot lobby jest filtrowany: nie zawiera kluczy API, `directorBrief`, ukrytych prawd questów, warunków zakończeń ani planu scenariusza. Po evencie `gameStarted` każdy klient otrzymuje własny widok wspólnego świata.

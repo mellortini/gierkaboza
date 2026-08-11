@@ -124,6 +124,8 @@ function createRoom(roomId, world = null, persisted = {}) {
         createdAt: persisted.createdAt || Date.now(),
         lastActiveAt: persisted.lastActiveAt || Date.now(),
         hostId: null,
+        hostPlayerId: persisted.hostPlayerId || null,
+        lobby: createLobbyState(persisted.lobby || {}, world),
         chatHistory: Array.isArray(persisted.chatHistory) ? persisted.chatHistory.slice(-50) : [],
         playerHistories: persisted.playerHistories || {},
         actionQueue: Promise.resolve(),
@@ -134,6 +136,213 @@ function createRoom(roomId, world = null, persisted = {}) {
 
 function boundedText(value, max = 2000) {
     return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+const PUBLIC_SENSITIVE_KEY_RE = /(director|secret|private|api.?key|token|password|authorization|credential|plan)/i;
+
+function publicSafeValue(value, depth = 0) {
+    if (depth > 6 || value === undefined || typeof value === 'function' || typeof value === 'symbol') return undefined;
+    if (value === null || typeof value === 'boolean') return value;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+    if (typeof value === 'string') return value.slice(0, 2000);
+    if (Array.isArray(value)) {
+        return value.slice(0, 100).map(item => publicSafeValue(item, depth + 1)).filter(item => item !== undefined);
+    }
+    if (typeof value === 'object') {
+        const output = {};
+        for (const key of Object.keys(value).slice(0, 100)) {
+            if (PUBLIC_SENSITIVE_KEY_RE.test(key)) continue;
+            const safe = publicSafeValue(value[key], depth + 1);
+            if (safe !== undefined) output[String(key).slice(0, 100)] = safe;
+        }
+        return output;
+    }
+    return undefined;
+}
+
+function curatedCampaignSnapshot(metadata = {}, rawScenario = null) {
+    const scenario = rawScenario && typeof rawScenario === 'object' ? {
+        id: boundedText(rawScenario.id, 120) || null,
+        title: boundedText(rawScenario.title, 240) || null,
+        pitch: boundedText(rawScenario.pitch, 2000) || null,
+        tone: boundedText(rawScenario.tone, 240) || null,
+        acts: Array.isArray(rawScenario.acts) ? {
+            count: rawScenario.acts.length,
+            titles: rawScenario.acts.map(act => boundedText(act?.title, 240)).filter(Boolean).slice(0, 50)
+        } : { count: 0, titles: [] }
+    } : null;
+    return {
+        name: typeof metadata.name === 'string' ? metadata.name : null,
+        description: typeof metadata.description === 'string' ? metadata.description : null,
+        scenario
+    };
+}
+
+function publicCampaignSnapshot(world) {
+    if (!world) return null;
+    const metadata = world.worldMetadata && typeof world.worldMetadata === 'object' ? world.worldMetadata : {};
+    return curatedCampaignSnapshot(metadata, world.scenario || metadata.scenario || null);
+}
+
+function curatePersistedCampaign(campaign) {
+    if (!campaign || typeof campaign !== 'object') return null;
+    return curatedCampaignSnapshot(campaign, campaign.scenario || null);
+}
+
+function publicCharacterData(characterData) {
+    return publicSafeValue(characterData && typeof characterData === 'object' ? characterData : {}) || {};
+}
+
+function createLobbyState(persisted = {}, world = null) {
+    const hasPersistedLobby = persisted && typeof persisted === 'object' && persisted.status;
+    const status = persisted.status === 'started' || (!hasPersistedLobby && world) ? 'started' : 'lobby';
+    const characters = persisted.characters && typeof persisted.characters === 'object' ? publicSafeValue(persisted.characters) : {};
+    const participants = persisted.participants && typeof persisted.participants === 'object' ? publicSafeValue(persisted.participants) : {};
+    const selections = persisted.selections && typeof persisted.selections === 'object' ? publicSafeValue(persisted.selections) : {};
+    const ready = persisted.ready && typeof persisted.ready === 'object' ? publicSafeValue(persisted.ready) : {};
+    return {
+        status,
+        campaign: world ? publicCampaignSnapshot(world) : curatePersistedCampaign(persisted.campaign),
+        characters: characters && typeof characters === 'object' && !Array.isArray(characters) ? characters : {},
+        participants: participants && typeof participants === 'object' && !Array.isArray(participants) ? participants : {},
+        selections: selections && typeof selections === 'object' && !Array.isArray(selections) ? selections : {},
+        ready: ready && typeof ready === 'object' && !Array.isArray(ready) ? ready : {}
+    };
+}
+
+function lobbySnapshot(room) {
+    if (!room) return null;
+    const lobby = room.lobby || createLobbyState({}, room.world);
+    return {
+        roomId: room.id,
+        status: lobby.status,
+        hostPlayerId: room.hostPlayerId || null,
+        campaign: curatePersistedCampaign(lobby.campaign),
+        characters: Object.values(lobby.characters || {}).map(character => ({
+            id: character.id,
+            ownerId: character.ownerId,
+            ownerName: boundedText(lobby.participants?.[character.ownerId]?.name || character.name, 80),
+            name: character.name,
+            data: publicCharacterData(character.data),
+            connected: character.connected === true,
+            selected: lobby.selections?.[character.ownerId] === character.id,
+            ready: lobby.ready?.[character.ownerId] === true
+        })),
+        participants: Object.values(lobby.participants || {}).map(participant => ({
+            playerId: participant.playerId,
+            name: participant.name,
+            isHost: room.hostPlayerId === participant.playerId,
+            connected: participant.connected === true,
+            characterId: lobby.selections?.[participant.playerId] || null,
+            selectedCharacterId: lobby.selections?.[participant.playerId] || null,
+            ready: lobby.ready?.[participant.playerId] === true
+        }))
+    };
+}
+
+function selectedLobbyPlayers(room) {
+    if (!room) return [];
+    const lobby = room.lobby || createLobbyState({}, room.world);
+    return Array.from(room.players.values()).map(player => {
+        const characterId = lobby.selections?.[player.id] || null;
+        const character = characterId ? lobby.characters?.[characterId] : null;
+        return {
+            playerId: player.id,
+            name: boundedText(character?.name || player.name, 80),
+            characterId,
+            ready: lobby.ready?.[player.id] === true
+        };
+    });
+}
+
+function emitGameStarted(socketId, room, player, options = {}) {
+    if (!room || !player) return;
+    io.to(socketId).emit('gameStarted', {
+        roomId: room.id,
+        playerId: player.id,
+        playerName: boundedText(player.name, 80),
+        players: selectedLobbyPlayers(room),
+        lobby: lobbySnapshot(room),
+        worldState: serializeWorld(room.world, player.player, player.id),
+        options: publicSafeValue(options || {})
+    });
+}
+
+function lobbyError(socket, message, code = 'lobby_error') {
+    socket.emit('lobbyError', { code, message: boundedText(message, 500) || 'Nieprawidłowa operacja lobby.' });
+}
+
+function emitLobbyUpdate(room) {
+    if (room) io.to(room.id).emit('lobbyUpdate', lobbySnapshot(room));
+}
+
+function activePlayerForSocket(socket) {
+    const session = players.get(socket.id);
+    if (!session || !rooms.has(session.roomId)) return null;
+    const room = rooms.get(session.roomId);
+    const player = room.players.get(socket.id);
+    return player ? { session, room, player } : null;
+}
+
+function registerLobbyParticipant(room, playerId, playerName, characterData) {
+    if (!room.lobby) room.lobby = createLobbyState({}, room.world);
+    const safeName = boundedText(playerName, 80) || 'Player';
+    room.lobby.participants[playerId] = { playerId, name: safeName, connected: true };
+    const existingCharacter = room.lobby.characters[playerId];
+    if (!existingCharacter) {
+        room.lobby.characters[playerId] = {
+            id: playerId,
+            ownerId: playerId,
+            name: safeName,
+            data: publicCharacterData(characterData),
+            connected: true
+        };
+    } else {
+        existingCharacter.name = safeName;
+        existingCharacter.connected = true;
+    }
+    if (!room.lobby.selections[playerId]) room.lobby.selections[playerId] = playerId;
+    if (room.lobby.ready[playerId] !== true) room.lobby.ready[playerId] = false;
+}
+
+function markLobbyDisconnected(room, playerId) {
+    if (!room?.lobby) return;
+    if (room.lobby.participants[playerId]) room.lobby.participants[playerId].connected = false;
+    for (const character of Object.values(room.lobby.characters || {})) {
+        if (character.ownerId === playerId) character.connected = false;
+    }
+}
+
+function validateLobbyParticipant(socket, requireLobby = true) {
+    const context = activePlayerForSocket(socket);
+    if (!context) {
+        lobbyError(socket, 'Nie jesteś w pokoju.', 'not_in_room');
+        return null;
+    }
+    if (requireLobby && context.room.lobby?.status === 'started') {
+        lobbyError(socket, 'Lobby zostało już zamknięte.', 'game_started');
+        return null;
+    }
+    return context;
+}
+
+function handleLobbyReady(socket, data) {
+    const context = validateLobbyParticipant(socket);
+    if (!context) return;
+    const { session, room } = context;
+    if (typeof data?.ready !== 'boolean') {
+        lobbyError(socket, 'Ready musi mieć wartość true albo false.', 'invalid_ready');
+        return;
+    }
+    const selectedId = room.lobby.selections[session.playerId];
+    const selected = selectedId && room.lobby.characters[selectedId];
+    if (!selected || selected.ownerId !== session.playerId) {
+        lobbyError(socket, 'Najpierw wybierz własną postać.', 'character_not_selected');
+        return;
+    }
+    room.lobby.ready[session.playerId] = data.ready;
+    persistRooms();
+    emitLobbyUpdate(room);
 }
 
 const SCENARIO_CHOICE_MARKER_RE = /\[\[SCENARIO_CHOICE:\s*(\{[\s\S]{0,4000}?\})\s*\]\]/g;
@@ -216,6 +425,8 @@ function persistRooms() {
             savedPlayers: Object.fromEntries(room.savedPlayers || []),
             createdAt: room.createdAt,
             lastActiveAt: room.lastActiveAt,
+            hostPlayerId: room.hostPlayerId || null,
+            lobby: publicSafeValue(room.lobby || createLobbyState({}, room.world)),
             chatHistory: room.chatHistory.slice(-50),
             playerHistories: Object.fromEntries(
                 Object.entries(room.playerHistories || {}).map(([id, history]) => [id, history.slice(-100)])
@@ -325,6 +536,8 @@ io.on('connection', (socket) => {
                 room.world = World.createStarterWorld(playerName, 'town_central');
             }
         }
+        if (!room.lobby) room.lobby = createLobbyState({}, room.world);
+        room.lobby.campaign = publicCampaignSnapshot(room.world);
         // Add or restore a player. The world remains shared, while character state is per socket/player.
         const playerId = (requestedPlayerId && room.savedPlayers.has(requestedPlayerId))
             ? requestedPlayerId
@@ -338,7 +551,11 @@ io.on('connection', (socket) => {
                 : new Player(playerName, room.world.player?.locationId || 'town_central'));
         gamePlayer.name = playerName;
         room.savedPlayers.delete(playerId);
-        if (!room.hostId) room.hostId = socket.id;
+        const activeHost = room.hostId && room.players.has(room.hostId);
+        if (!activeHost && (!room.hostPlayerId || room.hostPlayerId === playerId || room.lobby.participants?.[room.hostPlayerId]?.connected !== true)) {
+            room.hostId = socket.id;
+            room.hostPlayerId = playerId;
+        }
         if (!room.world.player) room.world.player = gamePlayer;
         room.players.set(socket.id, {
             id: playerId,
@@ -349,6 +566,8 @@ io.on('connection', (socket) => {
             joinedAt: Date.now(),
             isHost: room.hostId === socket.id
         });
+        registerLobbyParticipant(room, playerId, playerName, characterData);
+        room.lobby.characters[playerId].connected = true;
 
         // Join socket room
         socket.join(roomId);
@@ -374,6 +593,7 @@ io.on('connection', (socket) => {
                 name: p.name,
                 isHost: p.isHost
             })),
+            lobby: lobbySnapshot(room),
             worldState: serializeWorld(room.world, gamePlayer, playerId)
         });
 
@@ -387,6 +607,10 @@ io.on('connection', (socket) => {
                 isHost: p.isHost
             }))
         });
+        emitLobbyUpdate(room);
+        if (room.lobby.status === 'started') {
+            emitGameStarted(socket.id, room, room.players.get(socket.id));
+        }
 
         room.lastActiveAt = Date.now();
         persistRooms();
@@ -394,6 +618,122 @@ io.on('connection', (socket) => {
         } catch (err) {
             console.error('Error in joinRoom:', err);
             socket.emit('joinError', { message: 'Błąd serwera: ' + err.message });
+        }
+    });
+
+    socket.on('addCharacter', (data) => {
+        const context = validateLobbyParticipant(socket);
+        if (!context) return;
+        const { session, room } = context;
+        const input = data?.characterData && typeof data.characterData === 'object' ? data.characterData : (data?.character || {});
+        const requestedId = boundedText(data?.characterId || input.characterId || input.id, 80);
+        const characterId = requestedId || `character_${session.playerId}_${Date.now().toString(36)}`;
+        if (!/^[a-zA-Z0-9_-]{1,80}$/.test(characterId)) {
+            lobbyError(socket, 'Nieprawidłowe ID postaci.', 'invalid_character_id');
+            return;
+        }
+        if (room.lobby.characters[characterId]) {
+            lobbyError(socket, 'Postać o takim ID już istnieje.', 'character_exists');
+            return;
+        }
+        const name = boundedText(data?.name || input.name || session.playerName, 80) || 'Character';
+        room.lobby.characters[characterId] = {
+            id: characterId,
+            ownerId: session.playerId,
+            name,
+            data: publicCharacterData(input),
+            connected: true
+        };
+        if (!room.lobby.selections[session.playerId]) room.lobby.selections[session.playerId] = characterId;
+        room.lobby.ready[session.playerId] = false;
+        room.lastActiveAt = Date.now();
+        persistRooms();
+        emitLobbyUpdate(room);
+    });
+
+    socket.on('selectCharacter', (data) => {
+        const context = validateLobbyParticipant(socket);
+        if (!context) return;
+        const { session, room } = context;
+        const characterId = boundedText(data?.characterId || data?.id, 80);
+        const character = room.lobby.characters[characterId];
+        if (!character) {
+            lobbyError(socket, 'Wybrana postać nie istnieje.', 'character_not_found');
+            return;
+        }
+        if (character.ownerId !== session.playerId) {
+            lobbyError(socket, 'Możesz wybrać tylko własną postać.', 'character_owner_required');
+            return;
+        }
+        room.lobby.selections[session.playerId] = characterId;
+        room.lobby.ready[session.playerId] = false;
+        persistRooms();
+        emitLobbyUpdate(room);
+    });
+
+    socket.on('removeCharacter', (data) => {
+        const context = validateLobbyParticipant(socket);
+        if (!context) return;
+        const { session, room } = context;
+        const characterId = boundedText(data?.characterId || data?.id, 80);
+        const character = room.lobby.characters[characterId];
+        if (!character) {
+            lobbyError(socket, 'Postać nie istnieje.', 'character_not_found');
+            return;
+        }
+        if (character.ownerId !== session.playerId) {
+            lobbyError(socket, 'Możesz usunąć tylko własną postać.', 'character_owner_required');
+            return;
+        }
+        delete room.lobby.characters[characterId];
+        if (room.lobby.selections[session.playerId] === characterId) {
+            const replacement = Object.values(room.lobby.characters).find(item => item.ownerId === session.playerId);
+            if (replacement) room.lobby.selections[session.playerId] = replacement.id;
+            else delete room.lobby.selections[session.playerId];
+        }
+        room.lobby.ready[session.playerId] = false;
+        persistRooms();
+        emitLobbyUpdate(room);
+    });
+
+    socket.on('setReady', (data) => handleLobbyReady(socket, data));
+    socket.on('ready', (data) => handleLobbyReady(socket, data));
+
+    socket.on('startGame', (data) => {
+        const context = validateLobbyParticipant(socket);
+        if (!context) return;
+        const { session, room } = context;
+        if (room.hostId !== socket.id && room.hostPlayerId !== session.playerId) {
+            lobbyError(socket, 'Tylko host może rozpocząć grę.', 'host_required');
+            return;
+        }
+        const activePlayers = Array.from(room.players.values());
+        const missing = activePlayers.filter(player => {
+            const selectedId = room.lobby.selections[player.id];
+            return !selectedId || !room.lobby.characters[selectedId] || room.lobby.characters[selectedId].ownerId !== player.id || room.lobby.ready[player.id] !== true;
+        });
+        if (missing.length > 0) {
+            lobbyError(socket, `Nie wszyscy gracze są gotowi: ${missing.map(player => player.name).join(', ')}.`, 'players_not_ready');
+            return;
+        }
+        room.lobby.status = 'started';
+        for (const player of activePlayers) {
+            const selected = room.lobby.characters[room.lobby.selections[player.id]];
+            if (selected && selected.data) {
+                player.characterData = { ...player.characterData, ...selected.data };
+                player.name = selected.name || player.name;
+                const session = players.get(player.socketId);
+                if (session) {
+                    session.playerName = player.name;
+                    session.characterData = player.characterData;
+                }
+            }
+        }
+        room.lastActiveAt = Date.now();
+        persistRooms();
+        emitLobbyUpdate(room);
+        for (const [socketId, player] of room.players.entries()) {
+            emitGameStarted(socketId, room, player, data?.options || {});
         }
     });
 
@@ -683,6 +1023,7 @@ io.on('connection', (socket) => {
 
             // Remove active socket while preserving the player's saved state.
             room.players.delete(socket.id);
+            markLobbyDisconnected(room, playerId);
             room.lastActiveAt = Date.now();
 
             // Notify others
@@ -701,13 +1042,19 @@ io.on('connection', (socket) => {
                 // Transfer host to next player
                 const newHost = room.players.keys().next().value;
                 room.hostId = newHost;
+                room.hostPlayerId = room.players.get(newHost).id;
                 room.players.get(newHost).isHost = true;
                 
                 io.to(roomId).emit('hostChanged', {
                     newHostId: room.players.get(newHost).id,
                     newHostName: room.players.get(newHost).name
                 });
+            } else {
+                room.hostId = null;
             }
+
+            emitLobbyUpdate(room);
+            persistRooms();
 
             console.log(`${playerName} left room ${roomId}`);
             
@@ -758,6 +1105,13 @@ io.on('connection', (socket) => {
         
         const room = rooms.get(roomId);
         const rejoinData = socket.rejoinData;
+        const savedPlayer = room.savedPlayers.get(rejoinData.playerId) || rejoinData.player;
+        const restoredPlayer = savedPlayer ? Player.fromJSON(savedPlayer) : new Player(rejoinData.playerName, room.world?.player?.locationId || 'town_central');
+        room.savedPlayers.delete(rejoinData.playerId);
+        if (!room.hostId || !room.players.has(room.hostId) || room.hostPlayerId === rejoinData.playerId) {
+            room.hostId = socket.id;
+            room.hostPlayerId = rejoinData.playerId;
+        }
         
         // Dodaj gracza z powrotem do pokoju
         room.players.set(socket.id, {
@@ -765,15 +1119,13 @@ io.on('connection', (socket) => {
             socketId: socket.id,
             name: rejoinData.playerName,
             characterData: rejoinData.characterData,
+            player: restoredPlayer,
             joinedAt: Date.now(),
-            isHost: rejoinData.isHost
+            isHost: room.hostId === socket.id
         });
+        registerLobbyParticipant(room, rejoinData.playerId, rejoinData.playerName, rejoinData.characterData);
         
         // Zaktualizuj hosta jeśli trzeba
-        if (rejoinData.isHost) {
-            room.hostId = socket.id;
-        }
-        
         // Join socket room
         socket.join(roomId);
         socket.roomId = roomId;
@@ -791,13 +1143,18 @@ io.on('connection', (socket) => {
             roomId,
             playerId: rejoinData.playerId,
             playerName: rejoinData.playerName,
-            isHost: rejoinData.isHost,
+            isHost: room.hostId === socket.id,
             players: Array.from(room.players.values()).map(p => ({
                 id: p.id,
                 name: p.name,
                 isHost: p.isHost
-            }))
+            })),
+            lobby: lobbySnapshot(room),
+            worldState: serializeWorld(room.world, restoredPlayer, rejoinData.playerId)
         });
+        if (room.lobby.status === 'started') {
+            emitGameStarted(socket.id, room, room.players.get(socket.id));
+        }
         
         // Powiadom innych
         socket.to(roomId).emit('playerRejoined', {
@@ -811,6 +1168,8 @@ io.on('connection', (socket) => {
         });
         
         console.log(`${rejoinData.playerName} reconnected to room ${roomId}`);
+        emitLobbyUpdate(room);
+        persistRooms();
         delete socket.rejoinData;
     });
 
@@ -830,7 +1189,10 @@ io.on('connection', (socket) => {
         const savedPlayer = room.savedPlayers.get(playerId) || rejoinData.player;
         const restoredPlayer = Player.fromJSON(savedPlayer);
         room.savedPlayers.delete(playerId);
-        if (!room.hostId) room.hostId = socket.id;
+        if (!room.hostId || !room.players.has(room.hostId)) {
+            room.hostId = socket.id;
+            room.hostPlayerId = playerId;
+        }
         room.players.set(socket.id, {
             id: playerId,
             socketId: socket.id,
@@ -840,6 +1202,7 @@ io.on('connection', (socket) => {
             joinedAt: Date.now(),
             isHost: room.hostId === socket.id
         });
+        registerLobbyParticipant(room, playerId, rejoinData.playerName, rejoinData.characterData || {});
         room.lastActiveAt = Date.now();
         socket.join(roomId);
         socket.roomId = roomId;
@@ -858,8 +1221,12 @@ io.on('connection', (socket) => {
             playerName: rejoinData.playerName,
             isHost: room.hostId === socket.id,
             players: playerList,
+            lobby: lobbySnapshot(room),
             worldState: serializeWorld(room.world, restoredPlayer, playerId)
         });
+        if (room.lobby.status === 'started') {
+            emitGameStarted(socket.id, room, room.players.get(socket.id));
+        }
         socket.to(roomId).emit('playerRejoined', {
             playerId,
             playerName: rejoinData.playerName,
@@ -867,6 +1234,7 @@ io.on('connection', (socket) => {
         });
         rejoinSessions.delete(key);
         persistRooms();
+        emitLobbyUpdate(room);
         console.log(`${rejoinData.playerName} reconnected to room ${roomId}`);
     });
 

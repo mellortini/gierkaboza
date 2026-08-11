@@ -282,6 +282,48 @@
                         <ul id="players-in-room"></ul>
                     </div>
                 </div>
+
+                <div id="multiplayer-lobby" class="multiplayer-lobby hidden" aria-live="polite">
+                    <div class="lobby-header">
+                        <div>
+                            <p class="lobby-kicker">LOBBY KAMPANII</p>
+                            <h3 id="lobby-scenario-name">Kampania multiplayer</h3>
+                        </div>
+                        <span id="lobby-host-badge" class="host-badge hidden">HOST</span>
+                    </div>
+                    <p id="lobby-scenario-description" class="lobby-scenario-description"></p>
+                    <div class="lobby-columns">
+                        <section class="lobby-characters-panel">
+                            <div class="lobby-section-heading">
+                                <h4>Postacie w pokoju</h4>
+                                <span id="lobby-character-count" class="lobby-count">0</span>
+                            </div>
+                            <div id="lobby-characters" class="lobby-characters-list">
+                                <p class="lobby-empty">Brak dodanych postaci.</p>
+                            </div>
+                        </section>
+                        <section class="lobby-add-panel">
+                            <h4>Dodaj postać</h4>
+                            <form id="lobby-add-character-form" class="lobby-character-form">
+                                <label for="lobby-character-name">Imię postaci</label>
+                                <input id="lobby-character-name" name="name" type="text" maxlength="80" required autocomplete="off">
+                                <label for="lobby-character-description">Opis postaci</label>
+                                <textarea id="lobby-character-description" name="description" rows="4" maxlength="1000" required></textarea>
+                                <button type="submit" class="btn-secondary">➕ Dodaj postać</button>
+                            </form>
+                        </section>
+                    </div>
+                    <div class="lobby-footer">
+                        <p id="lobby-help" class="lobby-help">Dodaj postać, wybierz ją, a następnie poczekaj na start hosta.</p>
+                        <div class="lobby-participants-wrap">
+                            <h4>Gotowość uczestników</h4>
+                            <ul id="lobby-participants" class="lobby-participants"></ul>
+                        </div>
+                        <button id="lobby-ready" class="btn-secondary hidden" type="button">Jestem gotowy</button>
+                        <button id="lobby-start-game" class="btn-primary btn-large hidden" type="button">🎮 Host: rozpocznij grę</button>
+                    </div>
+                    <div id="lobby-error" class="lobby-error hidden" role="alert"></div>
+                </div>
                 
                 <div class="saved-games-section" id="saved-games-section">
                     <h3>📂 Zapisane gry</h3>

@@ -22,7 +22,18 @@ const state = {
     playerId: null,
     isHost: false,
     players: [],
-    multiplayerListenersSetup: false
+    multiplayerListenersSetup: false,
+    multiplayerGameStarted: false,
+    pendingRoomData: null,
+    lobbyFallbackTimer: null,
+    lobby: {
+        active: false,
+        supported: false,
+        data: null,
+        selectedCharacterId: null,
+        ready: false,
+        canStart: false
+    }
 };
 
 const LLM_CONTEXT_LIMITS = Object.freeze({
@@ -191,7 +202,21 @@ const elements = {
     playerInventory: document.getElementById('player-inventory'),
     playerHunger: document.getElementById('player-hunger'),
     playerThirst: document.getElementById('player-thirst'),
-    playerFatigue: document.getElementById('player-fatigue')
+    playerFatigue: document.getElementById('player-fatigue'),
+    multiplayerLobby: document.getElementById('multiplayer-lobby'),
+    lobbyScenarioName: document.getElementById('lobby-scenario-name'),
+    lobbyScenarioDescription: document.getElementById('lobby-scenario-description'),
+    lobbyCharacters: document.getElementById('lobby-characters'),
+    lobbyCharacterCount: document.getElementById('lobby-character-count'),
+    lobbyAddCharacterForm: document.getElementById('lobby-add-character-form'),
+    lobbyCharacterName: document.getElementById('lobby-character-name'),
+    lobbyCharacterDescription: document.getElementById('lobby-character-description'),
+    lobbyStartGameBtn: document.getElementById('lobby-start-game'),
+    lobbyReadyBtn: document.getElementById('lobby-ready'),
+    lobbyParticipants: document.getElementById('lobby-participants'),
+    lobbyHostBadge: document.getElementById('lobby-host-badge'),
+    lobbyHelp: document.getElementById('lobby-help'),
+    lobbyError: document.getElementById('lobby-error')
 };
 
 // Pobieranie listy modeli z OpenRouter
@@ -390,6 +415,13 @@ async function init() {
     if (createRoomBtn) {
         on(createRoomBtn, 'click', () => createRoom(serverUrlInput?.value, roomIdInput?.value));
     }
+    on(elements.lobbyAddCharacterForm, 'submit', (event) => {
+        event.preventDefault();
+        addLobbyCharacter();
+    });
+    on(elements.lobbyCharacters, 'click', handleLobbyCharacterClick);
+    on(elements.lobbyReadyBtn, 'click', toggleLobbyReady);
+    on(elements.lobbyStartGameBtn, 'click', startLobbyGame);
 
     // Event listeners - Gra
     on(elements.sendActionBtn, 'click', sendAction);
@@ -548,6 +580,11 @@ function connectToServer(serverUrl) {
                 state.playerName = data.playerName;
                 state.isHost = data.isHost;
                 state.players = data.players;
+                state.pendingRoomData = data;
+                if (data?.lobby || Array.isArray(data?.characters)) {
+                    state.lobby.supported = true;
+                    showMultiplayerLobby(data);
+                }
                 if (data.worldState) {
                     try {
                         state.world = World.fromJSON(data.worldState);
@@ -577,6 +614,10 @@ function connectToServer(serverUrl) {
             state.socket.on('open', () => {
                 console.log('Transport opened');
             });
+
+            // Register lobby and game listeners before joinRoom so a fast
+            // lobbyUpdate/gameStarted event cannot be missed.
+            setupMultiplayerListeners();
 
         } catch (error) {
             console.error('Socket creation error:', error);
@@ -682,21 +723,38 @@ async function joinRoom(serverUrl, roomId) {
         // Wait for roomJoined event
         state.socket.once('roomJoined', (data) => {
             state.isMultiplayer = true;
+            state.multiplayerGameStarted = false;
+            state.pendingRoomData = data;
+            state.lobby.active = true;
+            state.lobby.supported = false;
+            state.lobby.data = data?.lobby || data;
             state.roomId = data.roomId;
             state.playerId = data.playerId;
             state.playerName = data.playerName;
             console.log('roomJoined: playerName set to:', data.playerName, 'playerId:', data.playerId);
             state.isHost = data.isHost;
             state.players = data.players;
+            if (data?.status === 'started') {
+                state.lobby.active = false;
+                startMultiplayerGame(data);
+                return;
+            }
 
             statusEl.textContent = `Połączono! Jesteś w pokoju: ${roomId}`;
             statusEl.className = 'multiplayer-status connected';
 
-            // Update players list
             updatePlayersList(data.players);
+            showMultiplayerLobby(data);
 
-            // Start multiplayer game
-            startMultiplayerGame(data);
+            // Older servers have no lobby events and start immediately after
+            // roomJoined. Keep that flow working after a short handshake wait.
+            if (state.lobbyFallbackTimer) window.clearTimeout(state.lobbyFallbackTimer);
+            state.lobbyFallbackTimer = window.setTimeout(() => {
+                state.lobbyFallbackTimer = null;
+                if (state.lobby.active && !state.lobby.supported && !state.multiplayerGameStarted) {
+                    startMultiplayerGame(state.pendingRoomData || data);
+                }
+            }, 1200);
         });
 
         // Handle errors
@@ -757,6 +815,284 @@ async function createRoom(serverUrl, roomId) {
     await joinRoom(serverUrl, finalRoomId);
 }
 
+function normalizeLobbyData(data) {
+    const raw = data?.lobbyState && typeof data.lobbyState === 'object'
+        ? data.lobbyState
+        : (data?.lobby && typeof data.lobby === 'object' ? data.lobby : (data || {}));
+    const campaignRaw = raw.campaign && typeof raw.campaign === 'object' ? raw.campaign : {};
+    const scenarioRaw = raw.scenario || campaignRaw.scenario || raw.world?.scenario || raw.worldMetadata?.scenario || {};
+    const scenario = typeof scenarioRaw === 'string'
+        ? { name: scenarioRaw, description: '' }
+        : {
+            name: scenarioRaw.title || scenarioRaw.name || campaignRaw.name || raw.scenarioName || raw.campaignName || worldData.name || 'Kampania multiplayer',
+            description: scenarioRaw.pitch || scenarioRaw.description || campaignRaw.description || raw.scenarioDescription || worldData.description || ''
+        };
+    const participantEntries = Array.isArray(raw.players)
+        ? raw.players
+        : (Array.isArray(raw.participants)
+            ? raw.participants
+            : Object.entries(raw.participants || {}).map(([id, entry]) => ({
+                ...(entry && typeof entry === 'object' ? entry : {}),
+                id: entry?.id || entry?.playerId || id
+            })));
+    const participantById = new Map(participantEntries.map((entry) => {
+        const id = String(entry?.id || entry?.playerId || '').trim();
+        return [id, entry];
+    }).filter(([id]) => id));
+    const sourceCharacters = Array.isArray(raw.characters)
+        ? raw.characters
+        : (Array.isArray(raw.characterList) ? raw.characterList : []);
+    const characters = sourceCharacters.map((entry, index) => {
+        const owner = entry?.owner && typeof entry.owner === 'object' ? entry.owner : {};
+        const character = entry?.character && typeof entry.character === 'object' ? entry.character : entry;
+        const characterData = entry?.data && typeof entry.data === 'object' ? entry.data : {};
+        const id = String(entry?.id || entry?.characterId || character?.id || `character_${index + 1}`).trim();
+        const ownerId = String(entry?.ownerId || entry?.playerId || owner.id || '').trim();
+        const participant = participantById.get(ownerId) || {};
+        const ownerName = String(entry?.ownerName || entry?.playerName || owner.name || participant.name || participant.playerName || '').trim();
+        return {
+            id,
+            name: String(character?.name || entry?.name || 'Bez nazwy').trim().slice(0, 120),
+            description: String(entry?.description || characterData.description || character?.description || character?.data?.description || '').trim().slice(0, 1200),
+            ownerId,
+            ownerName,
+            active: entry?.active === true || entry?.isActive === true || entry?.status === 'active' || entry?.inGame === true,
+            ready: entry?.ready === true || entry?.isReady === true,
+            selected: entry?.selected === true || entry?.isSelected === true || Boolean(entry?.selectedBy) || Boolean(entry?.selectedByPlayerId)
+        };
+    });
+    const players = participantEntries.map((entry) => {
+        const id = String(entry?.id || entry?.playerId || '').trim();
+        const selectedCharacter = characters.find(character => character.ownerId === id && character.selected);
+        return {
+            id,
+            name: String(entry?.name || entry?.playerName || 'Gracz').trim(),
+            isHost: entry?.isHost === true,
+            active: entry?.active !== false && entry?.connected !== false && entry?.status !== 'left',
+            ready: entry?.ready === true || entry?.isReady === true || selectedCharacter?.ready === true,
+            characterId: String(entry?.characterId || entry?.selectedCharacterId || selectedCharacter?.id || '').trim() || null
+        };
+    });
+    return {
+        scenario,
+        characters,
+        selectedCharacterId: String(raw.selectedCharacterId || raw.selectedCharacter?.id || '').trim() || null,
+        players,
+        isHost: typeof raw.isHost === 'boolean'
+            ? raw.isHost
+            : (String(raw.hostId || '').trim() === state.playerId || state.isHost)
+    };
+}
+
+function showLobbyError(message) {
+    const text = String(message || 'Wystąpił błąd lobby.').slice(0, 500);
+    if (elements.lobbyError) {
+        elements.lobbyError.textContent = text;
+        elements.lobbyError.classList.remove('hidden');
+    }
+}
+
+function renderMultiplayerLobby(data) {
+    const lobby = normalizeLobbyData(data);
+    state.lobby.data = lobby;
+    if (lobby.selectedCharacterId) state.lobby.selectedCharacterId = lobby.selectedCharacterId;
+    state.isHost = lobby.isHost;
+
+    const activePlayers = lobby.players.filter(player => player.active);
+    const currentPlayer = lobby.players.find(player => player.id === state.playerId);
+    const currentCharacter = lobby.characters.find(character => character.id === currentPlayer?.characterId ||
+        (character.ownerId === state.playerId && (character.id === state.lobby.selectedCharacterId || character.selected)));
+    state.lobby.ready = Boolean(currentPlayer?.ready || currentCharacter?.ready);
+    state.lobby.canStart = activePlayers.length > 0 && activePlayers.every(player => Boolean(player.characterId) && player.ready);
+
+    if (elements.lobbyScenarioName) elements.lobbyScenarioName.textContent = lobby.scenario.name;
+    if (elements.lobbyScenarioDescription) elements.lobbyScenarioDescription.textContent = lobby.scenario.description;
+    if (elements.lobbyCharacterCount) elements.lobbyCharacterCount.textContent = String(lobby.characters.length);
+    if (elements.lobbyHostBadge) elements.lobbyHostBadge.classList.toggle('hidden', !state.isHost);
+    if (elements.lobbyStartGameBtn) {
+        elements.lobbyStartGameBtn.classList.toggle('hidden', !state.isHost);
+        elements.lobbyStartGameBtn.disabled = !state.lobby.canStart;
+        elements.lobbyStartGameBtn.title = state.lobby.canStart
+            ? 'Wszyscy aktywni uczestnicy wybrali postać i są gotowi.'
+            : 'Każdy aktywny uczestnik musi wybrać postać i zgłosić gotowość.';
+    }
+    if (elements.lobbyReadyBtn) {
+        elements.lobbyReadyBtn.classList.remove('hidden');
+        elements.lobbyReadyBtn.disabled = !currentCharacter;
+        elements.lobbyReadyBtn.textContent = state.lobby.ready ? 'Cofnij gotowość' : 'Jestem gotowy';
+    }
+    if (elements.lobbyHelp) {
+        elements.lobbyHelp.textContent = state.isHost
+            ? (state.lobby.canStart ? 'Wszyscy są gotowi. Możesz rozpocząć grę.' : 'Każdy aktywny uczestnik musi wybrać postać i zgłosić gotowość.')
+            : 'Dodaj i wybierz własną postać, zgłoś gotowość, a następnie poczekaj na start hosta.';
+    }
+
+    if (elements.lobbyParticipants) {
+        elements.lobbyParticipants.replaceChildren();
+        for (const player of lobby.players) {
+            const item = document.createElement('li');
+            const name = document.createElement('span');
+            name.textContent = player.name;
+            item.appendChild(name);
+            const status = document.createElement('span');
+            status.className = player.ready && player.characterId ? 'ready-badge ready' : 'ready-badge';
+            status.textContent = !player.active
+                ? 'Nieaktywny'
+                : (player.ready && player.characterId ? 'Gotowy' : 'Niegotowy');
+            item.appendChild(status);
+            if (player.isHost) {
+                const host = document.createElement('span');
+                host.className = 'host-badge';
+                host.textContent = 'HOST';
+                item.appendChild(host);
+            }
+            elements.lobbyParticipants.appendChild(item);
+        }
+    }
+    if (!elements.lobbyCharacters) return;
+
+    elements.lobbyCharacters.replaceChildren();
+    if (lobby.characters.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'lobby-empty';
+        empty.textContent = 'Brak dodanych postaci.';
+        elements.lobbyCharacters.appendChild(empty);
+        return;
+    }
+
+    for (const character of lobby.characters) {
+        const card = document.createElement('article');
+        card.className = 'lobby-character-card';
+        if (character.id === state.lobby.selectedCharacterId || character.selected) card.classList.add('selected');
+        if (character.active) card.classList.add('active');
+
+        const title = document.createElement('div');
+        title.className = 'lobby-character-title';
+        const name = document.createElement('h5');
+        name.textContent = character.name;
+        title.appendChild(name);
+        const status = document.createElement('span');
+        status.className = character.active ? 'lobby-character-status active' : 'lobby-character-status';
+        status.textContent = character.active ? 'W grze' : 'Nieaktywna';
+        title.appendChild(status);
+        card.appendChild(title);
+
+        const owner = document.createElement('p');
+        owner.className = 'lobby-character-owner';
+        owner.textContent = `Właściciel: ${character.ownerName || 'Nieznany gracz'}`;
+        card.appendChild(owner);
+
+        const description = document.createElement('p');
+        description.className = 'lobby-character-description';
+        description.textContent = character.description || 'Brak opisu.';
+        card.appendChild(description);
+
+        const isMine = Boolean(character.ownerId && character.ownerId === state.playerId) ||
+            Boolean(character.ownerName && character.ownerName === state.playerName);
+        if (isMine) {
+            const actions = document.createElement('div');
+            actions.className = 'lobby-character-actions';
+            if (!character.active) {
+                const select = document.createElement('button');
+                select.type = 'button';
+                select.className = 'btn-secondary';
+                select.dataset.lobbyAction = 'select';
+                select.dataset.characterId = character.id;
+                select.textContent = character.id === state.lobby.selectedCharacterId ? 'Wybrano' : 'Wybierz';
+                actions.appendChild(select);
+
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.className = 'btn-danger';
+                remove.dataset.lobbyAction = 'remove';
+                remove.dataset.characterId = character.id;
+                remove.textContent = 'Usuń';
+                actions.appendChild(remove);
+            }
+            card.appendChild(actions);
+        }
+        elements.lobbyCharacters.appendChild(card);
+    }
+}
+
+function showMultiplayerLobby(data) {
+    state.lobby.active = true;
+    if (elements.multiplayerLobby) elements.multiplayerLobby.classList.remove('hidden');
+    if (elements.gameSection) elements.gameSection.classList.add('hidden');
+    renderMultiplayerLobby(data);
+}
+
+function addLobbyCharacter() {
+    if (!state.socket || !state.lobby.active) return;
+    const name = elements.lobbyCharacterName?.value.trim();
+    const description = elements.lobbyCharacterDescription?.value.trim();
+    if (!name || !description) {
+        showLobbyError('Podaj imię i opis postaci.');
+        return;
+    }
+    state.socket.emit('addCharacter', { name: name.slice(0, 80), description: description.slice(0, 1000) });
+    if (elements.lobbyCharacterName) elements.lobbyCharacterName.value = '';
+    if (elements.lobbyCharacterDescription) elements.lobbyCharacterDescription.value = '';
+}
+
+function selectLobbyCharacter(characterId) {
+    if (!state.socket || !characterId) return;
+    state.lobby.selectedCharacterId = characterId;
+    state.socket.emit('selectCharacter', { characterId });
+}
+
+function removeLobbyCharacter(characterId) {
+    if (!state.socket || !characterId) return;
+    state.socket.emit('removeCharacter', { characterId });
+}
+
+function startLobbyGame() {
+    if (!state.socket || !state.isHost || !state.lobby.active || !state.lobby.canStart) return;
+    state.socket.emit('startGame');
+}
+
+function toggleLobbyReady() {
+    if (!state.socket || !state.lobby.active || elements.lobbyReadyBtn?.disabled) return;
+    state.socket.emit('setReady', { ready: !state.lobby.ready });
+}
+
+function handleLobbyCharacterClick(event) {
+    const button = event.target.closest('button[data-lobby-action]');
+    if (!button || !elements.lobbyCharacters?.contains(button)) return;
+    const characterId = button.dataset.characterId;
+    if (button.dataset.lobbyAction === 'select') selectLobbyCharacter(characterId);
+    if (button.dataset.lobbyAction === 'remove') removeLobbyCharacter(characterId);
+}
+
+function handleLobbyUpdate(data) {
+    const status = data?.status || data?.lobby?.status || data?.lobbyState?.status;
+    if (status === 'started') {
+        // The server sends the authoritative gameStarted payload immediately
+        // after this status update. Wait for its per-player world snapshot.
+        return;
+    }
+    if (state.multiplayerGameStarted) return;
+    state.lobby.supported = true;
+    if (state.lobbyFallbackTimer) window.clearTimeout(state.lobbyFallbackTimer);
+    state.lobbyFallbackTimer = null;
+    if (Array.isArray(data?.players)) {
+        state.players = data.players;
+        updatePlayersList(data.players);
+    }
+    if (typeof data?.isHost === 'boolean') state.isHost = data.isHost;
+    showMultiplayerLobby(data);
+}
+
+function handleLobbyStarted(data) {
+    if (state.lobbyFallbackTimer) window.clearTimeout(state.lobbyFallbackTimer);
+    state.lobbyFallbackTimer = null;
+    state.lobby.active = false;
+    const startedData = { ...(state.pendingRoomData || {}), ...(data || {}) };
+    if (data?.playerName) state.playerName = data.playerName;
+    if (Array.isArray(data?.players)) state.players = data.players;
+    startMultiplayerGame(startedData);
+}
+
 /**
  * Update players list in UI
  */
@@ -768,7 +1104,7 @@ function updatePlayersList(players) {
     
     playersInRoomEl.innerHTML = '';
     
-    for (const player of players) {
+    for (const player of Array.isArray(players) ? players : []) {
         const li = document.createElement('li');
         const nameSpan = document.createElement('span');
         nameSpan.textContent = String(player.name || 'Gracz');
@@ -800,6 +1136,20 @@ function updateMultiplayerStatus(message, type) {
  * Start multiplayer game
  */
 function startMultiplayerGame(roomData) {
+    if (state.multiplayerGameStarted) return;
+    state.multiplayerGameStarted = true;
+    state.lobby.active = false;
+    if (state.lobbyFallbackTimer) window.clearTimeout(state.lobbyFallbackTimer);
+    state.lobbyFallbackTimer = null;
+    if (elements.multiplayerLobby) elements.multiplayerLobby.classList.add('hidden');
+    if (roomData?.playerName) state.playerName = String(roomData.playerName);
+    if (Array.isArray(roomData?.players)) state.players = roomData.players;
+    const selectedLobbyCharacter = state.lobby.data?.characters?.find(character =>
+        character.id === state.lobby.selectedCharacterId ||
+        (character.ownerId && character.ownerId === state.playerId && character.selected));
+    const selectedName = roomData?.playerName || roomData?.characterName || roomData?.selectedCharacter?.name ||
+        selectedLobbyCharacter?.name || characterData.name || 'Gracz';
+    characterData.name = String(selectedName);
     // Hide character creation, show game
     elements.characterCreation.classList.add('hidden');
     elements.gameSection.classList.remove('hidden');
@@ -826,7 +1176,7 @@ function startMultiplayerGame(roomData) {
     // Add welcome message
     addStoryEntry('system', `Witaj w trybie wieloosobowym!`);
     addStoryEntry('system', `ID Pokoju: ${state.roomId}`);
-    addStoryEntry('system', `Gracze: ${state.players.map(p => p.name).join(', ')}`);
+    addStoryEntry('system', `Gracze: ${(Array.isArray(state.players) ? state.players : []).map(p => p.name).join(', ')}`);
     
     // Show player chat area in multiplayer
     const playerChatArea = document.getElementById('player-chat-area');
@@ -847,6 +1197,13 @@ function startMultiplayerGame(roomData) {
 function setupMultiplayerListeners() {
     if (!state.socket || state.multiplayerListenersSetup) return;
     state.multiplayerListenersSetup = true;
+
+    state.socket.on('lobbyUpdate', handleLobbyUpdate);
+    state.socket.on('lobbyError', (data) => {
+        showLobbyError(data?.message || data?.error || 'Nie udało się wykonać operacji lobby.');
+        updateMultiplayerStatus(data?.message || 'Błąd lobby.', 'error');
+    });
+    state.socket.on('gameStarted', handleLobbyStarted);
 
     // Player joined
     state.socket.on('playerJoined', (data) => {

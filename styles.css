@@ -485,6 +485,237 @@ button {
     color: #ffc800;
 }
 
+.multiplayer-lobby {
+    margin-top: 20px;
+    padding: 22px;
+    background: rgba(9, 28, 42, 0.82);
+    border: 1px solid rgba(0, 255, 200, 0.3);
+    border-radius: 14px;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+}
+
+.lobby-header,
+.lobby-section-heading,
+.lobby-character-title,
+.lobby-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.lobby-kicker {
+    margin: 0 0 4px;
+    color: #00ffc8;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+}
+
+.lobby-header h3,
+.lobby-add-panel h4,
+.lobby-characters-panel h4 {
+    margin: 0;
+    color: #f5f7fa;
+}
+
+.lobby-scenario-description {
+    margin: 12px 0 18px;
+    color: #c6d1d9;
+    line-height: 1.55;
+}
+
+.lobby-columns {
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(240px, 0.85fr);
+    gap: 18px;
+}
+
+.lobby-characters-panel,
+.lobby-add-panel {
+    min-width: 0;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.22);
+    border-radius: 10px;
+}
+
+.lobby-count {
+    min-width: 28px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    background: rgba(0, 255, 200, 0.14);
+    color: #00ffc8;
+    text-align: center;
+}
+
+.lobby-characters-list {
+    display: grid;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.lobby-character-card {
+    padding: 13px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.045);
+}
+
+.lobby-character-card.selected {
+    border-color: rgba(255, 215, 0, 0.7);
+    box-shadow: 0 0 0 1px rgba(255, 215, 0, 0.15);
+}
+
+.lobby-character-card.active {
+    opacity: 0.78;
+}
+
+.lobby-character-title h5 {
+    margin: 0;
+    color: #fff;
+    font-size: 1rem;
+}
+
+.lobby-character-status {
+    padding: 3px 7px;
+    border-radius: 10px;
+    color: #d5dce1;
+    background: rgba(255, 255, 255, 0.08);
+    font-size: 0.72rem;
+}
+
+.lobby-character-status.active {
+    color: #08130d;
+    background: #65e89c;
+}
+
+.lobby-character-owner,
+.lobby-character-description,
+.lobby-empty,
+.lobby-help {
+    color: #aebbc4;
+}
+
+.lobby-character-owner {
+    margin: 8px 0 4px;
+    font-size: 0.8rem;
+}
+
+.lobby-character-description {
+    margin: 0;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.lobby-character-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.lobby-character-actions button {
+    margin: 0;
+}
+
+.btn-danger {
+    border: 1px solid rgba(255, 100, 100, 0.5);
+    border-radius: 6px;
+    padding: 9px 14px;
+    background: rgba(180, 35, 50, 0.28);
+    color: #ffb3b3;
+    cursor: pointer;
+}
+
+.btn-danger:hover {
+    background: rgba(210, 45, 60, 0.5);
+}
+
+.lobby-character-form {
+    display: grid;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.lobby-character-form label {
+    color: #c6d1d9;
+    font-size: 0.85rem;
+}
+
+.lobby-character-form button {
+    margin: 4px 0 0;
+}
+
+.lobby-footer {
+    align-items: flex-end;
+    margin-top: 18px;
+}
+
+.lobby-help {
+    margin: 0;
+    line-height: 1.4;
+}
+
+.lobby-participants-wrap {
+    min-width: 220px;
+}
+
+.lobby-participants-wrap h4 {
+    margin: 0 0 6px;
+    color: #c6d1d9;
+    font-size: 0.85rem;
+}
+
+.lobby-participants {
+    display: grid;
+    gap: 4px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.lobby-participants li {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    color: #eaeff2;
+    font-size: 0.82rem;
+}
+
+.ready-badge {
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: rgba(255, 180, 0, 0.16);
+    color: #ffd27a;
+    font-size: 0.7rem;
+}
+
+.ready-badge.ready {
+    background: rgba(0, 255, 120, 0.16);
+    color: #72f5ad;
+}
+
+.lobby-error {
+    margin-top: 14px;
+    padding: 10px 12px;
+    border-radius: 7px;
+    background: rgba(255, 60, 60, 0.16);
+    color: #ff9e9e;
+}
+
+@media (max-width: 760px) {
+    .lobby-columns {
+        grid-template-columns: 1fr;
+    }
+
+    .lobby-footer {
+        align-items: stretch;
+        flex-direction: column;
+    }
+}
+
 .no-saves {
     color: #888;
     font-style: italic;

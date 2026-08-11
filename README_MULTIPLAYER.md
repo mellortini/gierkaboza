@@ -75,6 +75,19 @@ railway up
    - Enter the Room ID from your friend
 4. Click "Dołącz do pokoju" (Join room)
 
+### Lobby kampanii i postaci
+
+Po dołączeniu do nowego pokoju gracze nie trafiają od razu do gry. Najpierw pojawia się lobby:
+
+1. Host wczytuje kampanię w zakładce „Plan Świata”, np. „Popioły pod Zieloną Doliną”.
+2. Host wpisuje adres serwera i ID pokoju, zostawia „Nowy świat” i wybiera „Stwórz nowy pokój”.
+3. Każdy uczestnik widzi nazwę oraz opis wspólnej kampanii.
+4. Każdy może dodać kilka własnych postaci z opisami, ale wybierać i usuwać może tylko swoje postacie.
+5. Każdy wybiera postać, którą chce prowadzić, i klika „Jestem gotowy”.
+6. Gdy wszyscy aktywni gracze są gotowi, host klika „Host: rozpocznij grę”.
+
+Lobby nie przesyła kluczy API ani tajnego briefu reżysera. Po starcie serwer wysyła każdemu wybraną postać oraz właściwy snapshot wspólnego świata.
+
 ## 📁 Project Structure
 
 ```
