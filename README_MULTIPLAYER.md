@@ -63,9 +63,12 @@ railway up
 ### Host (Player 1)
 1. Open the game
 2. Enter your character details
-3. In "Multiplayer" section, enter a Room ID (or leave blank to auto-generate)
-4. Click "Stwórz nowy pokój" (Create new room)
-5. Share the Room ID with your friend
+3. In the "Multiplayer" section, choose a campaign in "Scenariusz kampanii".
+   For the prepared campaign choose "Popioły pod Zieloną Doliną".
+4. Leave "Źródło świata" as "Świat z wybranego scenariusza".
+5. Enter a Room ID (or leave blank to auto-generate).
+6. Click "Stwórz nowy pokój" (Create new room).
+7. Share the Room ID with your friend.
 
 ### Join (Player 2)
 1. Open the game
@@ -73,20 +76,21 @@ railway up
 3. In "Multiplayer" section:
    - Enter the Server URL (e.g., `your-app.up.railway.app`)
    - Enter the Room ID from your friend
+   - The scenario selector is informational when joining; the host's campaign is authoritative.
 4. Click "Dołącz do pokoju" (Join room)
 
 ### Lobby kampanii i postaci
 
 Po dołączeniu do nowego pokoju gracze nie trafiają od razu do gry. Najpierw pojawia się lobby:
 
-1. Host wczytuje kampanię w zakładce „Plan Świata”, np. „Popioły pod Zieloną Doliną”.
-2. Host wpisuje adres serwera i ID pokoju, zostawia „Nowy świat” i wybiera „Stwórz nowy pokój”.
+1. Host wybiera kampanię bezpośrednio w polu „Scenariusz kampanii”. Można też wcześniej wczytać ją w zakładce „Plan Świata”.
+2. Host zostawia „Świat z wybranego scenariusza” i wybiera „Stwórz nowy pokój”. Serwer ładuje scenariusz po identyfikatorze, więc sama nazwa świata nie może przypadkiem uruchomić domyślnego świata.
 3. Każdy uczestnik widzi nazwę oraz opis wspólnej kampanii.
 4. Każdy może dodać kilka własnych postaci z opisami, ale wybierać i usuwać może tylko swoje postacie.
 5. Każdy wybiera postać, którą chce prowadzić, i klika „Jestem gotowy”.
 6. Gdy wszyscy aktywni gracze są gotowi, host klika „Host: rozpocznij grę”.
 
-Lobby nie przesyła kluczy API ani tajnego briefu reżysera. Po starcie serwer wysyła każdemu wybraną postać oraz właściwy snapshot wspólnego świata.
+Lobby nie przesyła kluczy API ani tajnego briefu reżysera. Po starcie serwer wysyła każdemu wybraną postać oraz właściwy snapshot wspólnego świata. Lista scenariuszy jest publicznym katalogiem metadanych (`GET /api/scenarios`); sekrety pozostają po stronie serwera.
 
 ## 📁 Project Structure
 

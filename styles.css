@@ -422,6 +422,18 @@ button {
     margin-bottom: 12px;
 }
 
+.multiplayer-section .input-help {
+    display: block;
+    margin-top: 7px;
+    color: #9fb0bb;
+    font-size: 0.78rem;
+    line-height: 1.4;
+}
+
+.multiplayer-campaign-picker select {
+    border-color: rgba(0, 255, 200, 0.35);
+}
+
 .multiplayer-section button {
     margin-right: 10px;
     margin-bottom: 10px;

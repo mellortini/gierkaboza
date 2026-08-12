@@ -266,10 +266,18 @@
                         <label for="room-id">ID Pokoju:</label>
                         <input type="text" id="room-id" placeholder="np. moja-przygoda">
                     </div>
+                    <div class="input-group multiplayer-campaign-picker">
+                        <label for="multiplayer-scenario">Scenariusz kampanii:</label>
+                        <select id="multiplayer-scenario">
+                            <option value="popioly_pod_zielona_dolina">Popioły pod Zieloną Doliną</option>
+                            <option value="">Bez scenariusza — własny świat</option>
+                        </select>
+                        <small id="multiplayer-scenario-help" class="input-help">Host wybiera scenariusz przy tworzeniu pokoju. Gracze dołączający zobaczą kampanię wybraną przez hosta.</small>
+                    </div>
                     <div class="input-group">
-                        <label for="world-select">Świat:</label>
+                        <label for="world-select">Źródło świata:</label>
                         <select id="world-select">
-                            <option value="new">✨ Nowy świat</option>
+                            <option value="new">✨ Świat z wybranego scenariusza</option>
                             <option value="current">📤 Aktualny świat z gry</option>
                             <option value="saved">💾 Wczytaj z zapisu</option>
                         </select>

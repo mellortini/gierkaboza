@@ -216,8 +216,58 @@ const elements = {
     lobbyParticipants: document.getElementById('lobby-participants'),
     lobbyHostBadge: document.getElementById('lobby-host-badge'),
     lobbyHelp: document.getElementById('lobby-help'),
-    lobbyError: document.getElementById('lobby-error')
+    lobbyError: document.getElementById('lobby-error'),
+    multiplayerScenario: document.getElementById('multiplayer-scenario'),
+    multiplayerScenarioHelp: document.getElementById('multiplayer-scenario-help')
 };
+
+async function loadMultiplayerScenarios() {
+    const select = elements.multiplayerScenario;
+    if (!select) return;
+
+    const selectedId = select.value;
+    try {
+        const response = await fetch('/api/scenarios', { cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const scenarios = await response.json();
+        if (!Array.isArray(scenarios) || scenarios.length === 0) throw new Error('Brak scenariuszy');
+
+        select.replaceChildren();
+        const customOption = document.createElement('option');
+        customOption.value = '';
+        customOption.textContent = 'Bez scenariusza — własny świat';
+        customOption.dataset.description = '';
+        select.appendChild(customOption);
+        for (const scenario of scenarios) {
+            if (!scenario?.id) continue;
+            const option = document.createElement('option');
+            option.value = scenario.id;
+            option.textContent = scenario.title || scenario.name || scenario.id;
+            option.dataset.description = scenario.pitch || scenario.description || '';
+            select.appendChild(option);
+        }
+        if ([...select.options].some(option => option.value === selectedId)) {
+            select.value = selectedId;
+        }
+        updateMultiplayerScenarioHelp();
+    } catch (error) {
+        console.warn('Nie udało się pobrać listy scenariuszy:', error.message);
+        if (elements.multiplayerScenarioHelp) {
+            elements.multiplayerScenarioHelp.textContent = 'Lista scenariuszy jest chwilowo niedostępna. Wybrany scenariusz zostanie zweryfikowany przez serwer.';
+        }
+    }
+}
+
+function updateMultiplayerScenarioHelp() {
+    const select = elements.multiplayerScenario;
+    const help = elements.multiplayerScenarioHelp;
+    if (!select || !help) return;
+    const option = select.options[select.selectedIndex];
+    const description = option?.dataset.description;
+    help.textContent = description
+        ? `Host uruchomi tę kampanię w pokoju: ${description}`
+        : 'Bez scenariusza serwer użyje wybranego źródła świata. Host może też wybrać gotową kampanię z listy.';
+}
 
 // Pobieranie listy modeli z OpenRouter
 async function fetchModels(forWorldBuilder = false) {
@@ -354,6 +404,8 @@ async function init() {
     on(elements.refreshModelsBtn, 'click', fetchModels);
     on(elements.modelSelect, 'change', saveModel);
     on(elements.refreshWorldModels, 'click', () => fetchModels(true));
+    on(elements.multiplayerScenario, 'change', updateMultiplayerScenarioHelp);
+    loadMultiplayerScenarios();
 
     // Event listeners - Budowanie świata
     const tabBtns = document.querySelectorAll('.tab-btn');
@@ -629,7 +681,7 @@ function connectToServer(serverUrl) {
 /**
  * Join an existing room
  */
-async function joinRoom(serverUrl, roomId) {
+async function joinRoom(serverUrl, roomId, options = {}) {
     const statusEl = document.getElementById('multiplayer-status');
     const playersListEl = document.getElementById('players-list');
     const playersInRoomEl = document.getElementById('players-in-room');
@@ -655,6 +707,8 @@ async function joinRoom(serverUrl, roomId) {
     // Get world selection
     const worldSelect = document.getElementById('world-select');
     const worldOption = worldSelect ? worldSelect.value : 'new';
+    const scenarioSelect = elements.multiplayerScenario;
+    const scenarioId = worldOption === 'new' ? (scenarioSelect?.value || '') : '';
 
     if (worldOption === 'new' && worldData.generated && !worldData.blueprint) {
         statusEl.textContent = 'Ten plan świata nie jest jeszcze grywalny. Wygeneruj go ponownie.';
@@ -717,6 +771,8 @@ async function joinRoom(serverUrl, roomId) {
             worldData: incomingWorldData,
             worldBlueprint: worldOption === 'new' ? worldData.blueprint : null,
             worldOption: worldOption,
+            scenarioId,
+            createRoom: options.createRoom === true,
             playerId: state.playerId || null
         });
 
@@ -789,7 +845,7 @@ async function legacyCreateRoom(serverUrl, roomId) {
     
     document.getElementById('room-id').value = finalRoomId;
     
-    await joinRoom(serverUrl, finalRoomId);
+    await joinRoom(serverUrl, finalRoomId, { createRoom: true });
 }
 
 /**

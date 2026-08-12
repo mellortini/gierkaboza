@@ -113,7 +113,57 @@ try {
 // with a real database before running multiple replicas.
 const DATA_DIR = path.join(__dirname, 'data');
 const ROOMS_FILE = path.join(DATA_DIR, 'rooms.json');
+const SCENARIOS_DIR = path.join(__dirname, 'scenarios');
 const rejoinSessions = new Map();
+const scenarioCatalog = new Map();
+
+function normalizeScenarioId(value) {
+    return typeof value === 'string' ? value.trim().slice(0, 120) : '';
+}
+
+function publicScenarioSummary(record) {
+    const scenario = record?.blueprint?.scenario || {};
+    const world = record?.blueprint?.world || {};
+    return {
+        id: record.id,
+        title: boundedText(scenario.title, 240) || boundedText(world.name, 240) || record.id,
+        name: boundedText(world.name, 240) || null,
+        description: boundedText(world.description, 2000) || null,
+        pitch: boundedText(scenario.pitch, 2000) || null,
+        tone: boundedText(scenario.tone, 240) || null,
+        acts: Array.isArray(scenario.acts)
+            ? scenario.acts.map(act => boundedText(act?.title, 240)).filter(Boolean).slice(0, 50)
+            : []
+    };
+}
+
+function loadScenarioCatalog() {
+    scenarioCatalog.clear();
+    if (!fs.existsSync(SCENARIOS_DIR)) return;
+    for (const fileName of fs.readdirSync(SCENARIOS_DIR)) {
+        if (!fileName.toLowerCase().endsWith('.json')) continue;
+        const filePath = path.join(SCENARIOS_DIR, fileName);
+        try {
+            const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+            const sourceBlueprint = payload?.blueprint || payload?.worldBlueprint || payload;
+            const validatedBlueprint = World.validateBlueprint(sourceBlueprint);
+            const blueprint = {
+                ...sourceBlueprint,
+                ...validatedBlueprint,
+                ...(payload?.scenario ? { scenario: payload.scenario } : {}),
+                ...(payload?.scenarioState ? { scenarioState: payload.scenarioState } : {})
+            };
+            const id = normalizeScenarioId(blueprint?.scenario?.id)
+                || normalizeScenarioId(payload?.id)
+                || path.basename(fileName, '.json');
+            if (id) scenarioCatalog.set(id, { id, fileName, blueprint });
+        } catch (error) {
+            console.warn(`Skipping invalid scenario ${fileName}:`, error.message);
+        }
+    }
+}
+
+loadScenarioCatalog();
 
 function createRoom(roomId, world = null, persisted = {}) {
     return {
@@ -474,15 +524,40 @@ io.on('connection', (socket) => {
     // Create or join a game room
     socket.on('joinRoom', (data) => {
         try {
-            const { roomId: rawRoomId, playerName: rawPlayerName, characterData, worldData, worldBlueprint, worldOption, playerId: requestedPlayerId } = data || {};
+            const {
+                roomId: rawRoomId,
+                playerName: rawPlayerName,
+                characterData,
+                worldData,
+                worldBlueprint,
+                worldOption,
+                scenarioId: rawScenarioId,
+                createRoom: createRoomRequest,
+                playerId: requestedPlayerId
+            } = data || {};
             const roomId = String(rawRoomId || '').trim();
             const playerName = String(rawPlayerName || '').trim();
+            const scenarioId = normalizeScenarioId(rawScenarioId);
+            const roomAlreadyExists = rooms.has(roomId);
 
-            console.log(`Join room request: ${roomId}, player: ${playerName}, worldOption: ${worldOption}`);
+            console.log(`Join room request: ${roomId}, player: ${playerName}, worldOption: ${worldOption}, scenarioId: ${scenarioId || 'none'}, createRoom: ${createRoomRequest === true}`);
             
             // Validate data
             if (!roomId || !playerName || roomId.length > 64 || playerName.length > 80) {
                 socket.emit('joinError', { message: 'Podaj poprawne ID pokoju i nazwę gracza (maks. 64/80 znaków).' });
+                return;
+            }
+
+            if (createRoomRequest === true && roomAlreadyExists) {
+                socket.emit('joinError', { message: 'Pokój o tym ID już istnieje. Wybierz inne ID albo użyj przycisku „Dołącz do pokoju”.' });
+                return;
+            }
+            if (createRoomRequest === false && !roomAlreadyExists) {
+                socket.emit('joinError', { message: 'Nie znaleziono takiego pokoju. Host musi najpierw utworzyć pokój.' });
+                return;
+            }
+            if (!roomAlreadyExists && scenarioId && !scenarioCatalog.has(scenarioId)) {
+                socket.emit('joinError', { message: `Wybrany scenariusz nie jest dostępny na serwerze: ${scenarioId}` });
                 return;
             }
             
@@ -505,7 +580,17 @@ io.on('connection', (socket) => {
         
         // Create or load world based on option
         if (!room.world) {
-            if (worldBlueprint && worldOption !== 'current' && worldOption !== 'saved') {
+            if (scenarioId) {
+                const scenarioRecord = scenarioCatalog.get(scenarioId);
+                try {
+                    room.world = World.createFromBlueprint(scenarioRecord.blueprint, playerName);
+                    console.log(`World created from server scenario: ${scenarioId}`);
+                } catch (e) {
+                    console.error('Error creating world from server scenario:', e);
+                    socket.emit('joinError', { message: 'Nie udało się uruchomić wybranego scenariusza.' });
+                    return;
+                }
+            } else if (worldBlueprint && worldOption !== 'current' && worldOption !== 'saved') {
                 try {
                     room.world = World.createFromBlueprint(worldBlueprint, playerName);
                     console.log('World created from structured blueprint');
@@ -1689,6 +1774,13 @@ app.get('/api/rooms', (req, res) => {
     res.json(roomList);
 });
 
+// Get public campaign/scenario catalog. Hidden director notes and secrets never leave the server.
+app.get('/api/scenarios', (req, res) => {
+    res.json(Array.from(scenarioCatalog.values())
+        .map(publicScenarioSummary)
+        .sort((a, b) => a.title.localeCompare(b.title, 'pl')));
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
     res.json({ 
@@ -1717,6 +1809,7 @@ server.listen(PORT, '0.0.0.0', () => {
 ║  Endpoints:                                              ║
 ║  - GET  /              - Game UI                         ║
 ║  - GET  /api/rooms     - List active rooms               ║
+║  - GET  /api/scenarios  - List public scenarios           ║
 ║  - GET  /api/health   - Server health                   ║
 ║                                                           ║
 ║  Socket Events:                                          ║

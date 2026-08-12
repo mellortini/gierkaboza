@@ -115,6 +115,6 @@ W multiplayerze brief reżysera scenariusza pozostaje po stronie serwera. Klient
 
 ## Lobby multiplayer kampanii
 
-Multiplayer ma teraz osobne lobby przed startem gry. Host wybiera kampanię przed utworzeniem pokoju, a lobby pokazuje uczestnikom publiczną nazwę, opis i podstawowe dane scenariusza. Każdy gracz może dodać kilka własnych postaci wraz z opisami, wybrać jedną z nich i oznaczyć gotowość. Host może rozpocząć grę dopiero wtedy, gdy każdy aktywny uczestnik ma wybraną postać i jest gotowy.
+Multiplayer ma teraz osobne lobby przed startem gry. Host wybiera scenariusz w osobnym polu przed utworzeniem pokoju, a serwer ładuje go po zweryfikowanym identyfikatorze zamiast polegać wyłącznie na lokalnym stanie przeglądarki. Lobby pokazuje uczestnikom publiczną nazwę, opis i podstawowe dane scenariusza. Każdy gracz może dodać kilka własnych postaci wraz z opisami, wybrać jedną z nich i oznaczyć gotowość. Host może rozpocząć grę dopiero wtedy, gdy każdy aktywny uczestnik ma wybraną postać i jest gotowy.
 
 Serwer pilnuje właściciela postaci, hosta, gotowości, ponownego połączenia oraz stanu pokoju. Postacie, wybory i konfiguracja lobby są zapisywane razem z pokojem. Snapshot lobby jest filtrowany: nie zawiera kluczy API, `directorBrief`, ukrytych prawd questów, warunków zakończeń ani planu scenariusza. Po evencie `gameStarted` każdy klient otrzymuje własny widok wspólnego świata.
