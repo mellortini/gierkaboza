@@ -86,6 +86,40 @@ function testNaturalTravelFormsAndUnknownDestination() {
     assert.match(unknownTravel.message, /celu podróży|celu podróży/i);
 }
 
+function testNpcNameDiscoveryAndPersistence() {
+    const world = World.createFromBlueprint({
+        world: { name: 'Name Knowledge', description: 'NPC test world' },
+        startLocationId: 'village',
+        locations: [{ id: 'village', name: 'Village', connections: [] }],
+        npcs: [
+            { id: 'npc_mira', name: 'Mira Wrona', role: 'sołtyska', description: 'Praktyczna kobieta przy studni.', locationId: 'village' },
+            { id: 'npc_orwan', name: 'Orwan Żelazny', role: 'kowal', locationId: 'village' }
+        ]
+    }, 'Name Tester');
+
+    const initialNpcs = world.getLiveState().npcInteractions;
+    assert.strictEqual(initialNpcs[0].name, 'Nieznana postać');
+    assert.strictEqual(initialNpcs[1].name, 'Nieznana postać #2');
+
+    const ordinaryConversation = world.revealNpcNamesFromDialogue(
+        'Rozmawiam z kobietą przy studni.',
+        'Kobieta odpowiada spokojnie, ale nie przedstawia się.'
+    );
+    assert.deepStrictEqual(ordinaryConversation, []);
+
+    const revealed = world.revealNpcNamesFromDialogue(
+        'Pytam kobietę: jak masz na imię?',
+        '„Nazywam się Mira Wrona” — odpowiada.'
+    );
+    assert.deepStrictEqual(revealed, ['npc_mira']);
+    assert.strictEqual(world.getLiveState().npcInteractions[0].name, 'Mira Wrona');
+
+    const restored = World.fromJSON(JSON.parse(JSON.stringify(world.toJSON())));
+    assert.strictEqual(restored.player.knowsNpcName('npc_mira'), true);
+    assert.strictEqual(restored.player.knowsNpcName('npc_orwan'), false);
+    assert.strictEqual(restored.getLiveState().npcInteractions[1].name, 'Nieznana postać #2');
+}
+
 function testStatusEffectDuration() {
     const world = World.createStarterWorld('Tester', 'town_central');
     const player = world.player;
@@ -450,6 +484,7 @@ function testNarrativePatchValidationPendingTurnsAndBudget() {
 testTimeValidation();
 testPlayerActionsAndRoundTrip();
 testNaturalTravelFormsAndUnknownDestination();
+testNpcNameDiscoveryAndPersistence();
 testStatusEffectDuration();
 testEventQueueCountersAndCancellation();
 testTradeCombatAndQuestLoop();

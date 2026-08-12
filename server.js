@@ -1007,6 +1007,8 @@ io.on('connection', (socket) => {
 - Opisz SZCZEGÓŁOWO co się dzieje w tej scenie
 - POKAŻ konkretne działania postaci, nie ogólniki
 - UWZGLĘDNIJ reakcje NPC w czasie rzeczywistym (jęki, słowa, ruchy)
+- Imię NPC jest wiedzą osobistą gracza. Dopóki NPC nie przedstawi się po pytaniu o imię, używaj wyłącznie opisu lub roli, nigdy jego prawdziwego imienia.
+- Jeśli gracz pyta NPC o imię, odpowiedź musi jasno zawierać imię tylko wtedy, gdy NPC rzeczywiście decyduje się je podać.
 - Nie zmieniaj lokacji, pozycji ani dostępnych przejść w samym opisie. Traktuj komunikat „stan świata nie został zmieniony” dosłownie.
 - Jeśli gracz podał cel podróży, którego nie ma na liście lokacji lub nie ma go w bezpośrednich przejściach, nie kieruj go do młyna ani żadnego innego miejsca zastępczego.
 - NIE używaj szablonowych zakończeń typu "Czy ta decyzja..."
@@ -1034,6 +1036,9 @@ io.on('connection', (socket) => {
         const parsedNarration = extractScenarioChoiceMarkers(rawResponse);
         const response = parsedNarration.text;
         applyScenarioChoices(world, parsedNarration.choices);
+        if (typeof world.revealNpcNamesFromDialogue === 'function') {
+            world.revealNpcNamesFromDialogue(action, response, currentPlayer);
+        }
 
         // Zapisz akcję gracza i odpowiedź AI do jego osobistej historii (maks. 100 wpisów)
         playerHistory.push({ role: 'user', content: action });
@@ -1433,6 +1438,22 @@ function serializeWorld(world, viewerPlayer = null, viewerPlayerId = null) {
     // Scenario director material is server-only. Never trust a future engine
     // serializer (or the legacy fallback) to expose it to clients.
     if (snapshot && typeof snapshot === 'object') {
+        const knownNpcIds = new Set(Array.isArray(snapshot.player?.knownNpcIds)
+            ? snapshot.player.knownNpcIds
+            : []);
+        const unknownOrdinals = new Map();
+        if (Array.isArray(snapshot.npcs)) {
+            snapshot.npcs = snapshot.npcs.map(npc => {
+                if (!npc || knownNpcIds.has(npc.id)) return npc;
+                const locationKey = String(npc.locationId || 'unknown');
+                const previous = unknownOrdinals.get(locationKey) || 0;
+                unknownOrdinals.set(locationKey, previous + 1);
+                return {
+                    ...npc,
+                    name: `Nieznana postać${previous > 0 ? ` #${previous + 1}` : ''}`
+                };
+            });
+        }
         delete snapshot.scenario;
         delete snapshot.scenarioState;
         if (snapshot.worldMetadata && typeof snapshot.worldMetadata === 'object') {
@@ -1441,7 +1462,15 @@ function serializeWorld(world, viewerPlayer = null, viewerPlayerId = null) {
             // known sensitive keys so future metadata fields cannot leak.
             snapshot.worldMetadata = {
                 name: snapshot.worldMetadata.name || null,
-                description: snapshot.worldMetadata.description || null
+                description: snapshot.worldMetadata.description || null,
+                scenario: (() => {
+                    const campaign = publicCampaignSnapshot(world)?.scenario;
+                    if (!campaign) return null;
+                    return {
+                        ...campaign,
+                        activeAct: typeof world.scenarioState?.activeAct === 'string' ? world.scenarioState.activeAct : null
+                    };
+                })()
             };
         }
     }
@@ -1690,6 +1719,7 @@ Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
         systemMessage.content += '\n\nSECURITY: The response is broadcast to every player in the room. Never reveal, imply, or invent actor-private facts, facts hidden from the public, or GM/director secrets. Use only public memory facts present in this prompt.';
         systemMessage.content += ' The scenario director brief is internal guidance only: never reveal its secrets directly or as narrator knowledge; reveal them only through player-discoverable events.';
         systemMessage.content += ' The mechanics section in the user prompt is authoritative. Never invent a successful travel or relocate a character when the mechanics say that the world state did not change.';
+        systemMessage.content += ' NPC names are personal knowledge: do not reveal an NPC\'s canonical name until the player explicitly asks for it and the NPC gives it in dialogue. Use a role or physical description before that.';
         systemMessage.content += ' If the player action clearly resolves one listed scenario choice, append exactly one marker at the very end in this exact format: [[SCENARIO_CHOICE:{"choiceId":"...","optionId":"..."}]]. Otherwise append no marker. Never explain or reveal the marker.';
 
         // Bound the complete prompt, not only individual history sections.

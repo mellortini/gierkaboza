@@ -97,7 +97,7 @@ const ITEM_CATALOG = Object.freeze({
 
 // Scenario blueprints are authored content, not simulation state. Keep them
 // deliberately bounded and JSON-safe before putting them in a world/save.
-const SCENARIO_FIELDS = ['id', 'title', 'pitch', 'tone', 'directorBrief', 'acts', 'mainArc', 'sideQuests', 'npcs', 'factions', 'choices', 'multiplayerHooks', 'endings', 'antiRailroadingRules'];
+const SCENARIO_FIELDS = ['id', 'title', 'pitch', 'tone', 'activeAct', 'directorBrief', 'acts', 'mainArc', 'sideQuests', 'npcs', 'factions', 'choices', 'multiplayerHooks', 'endings', 'antiRailroadingRules'];
 
 function scenarioSafeValue(value, depth = 0) {
     if (depth > 6 || value === undefined || typeof value === 'function' || typeof value === 'symbol') return undefined;
@@ -857,6 +857,7 @@ class NPC {
         // Additional fields
         this.name = "";
         this.description = "";
+        this.role = "";
         this.statusEffects = [];
         
         // Combat stats (optional for Phase 1)
@@ -892,6 +893,7 @@ class NPC {
             loyalty: this.loyalty,
             name: this.name,
             description: this.description,
+            role: this.role,
             statusEffects: this.statusEffects.map(e => ({
                 name: e.name,
                 remainingMinutes: e.remainingMinutes,
@@ -920,6 +922,7 @@ class NPC {
         npc.loyalty = json.loyalty;
         npc.name = json.name || "";
         npc.description = json.description || "";
+        npc.role = json.role || "";
         npc.statusEffects = (json.statusEffects || []).map(e => 
             new StatusEffect(e.name, e.remainingMinutes, e.effectType, e.magnitude)
         );
@@ -967,6 +970,10 @@ class Player {
         
         // Story flags (strings like "killed_lord_v", "joined_cult_x")
         this.storyFlags = new Set();
+
+        // NPC names are personal knowledge. In multiplayer one character may
+        // learn a name before another character does.
+        this.knownNpcIds = new Set();
         
         // Inventory (Phase 2+)
         this.inventory = [];
@@ -1062,6 +1069,17 @@ class Player {
         this.storyFlags.add(flag);
     }
 
+    knowsNpcName(npcId) {
+        return typeof npcId === 'string' && this.knownNpcIds.has(npcId);
+    }
+
+    revealNpcName(npcId) {
+        if (typeof npcId !== 'string' || !npcId.trim()) return false;
+        const before = this.knownNpcIds.has(npcId);
+        this.knownNpcIds.add(npcId);
+        return !before;
+    }
+
     getReputation(factionId) {
         return this.reputation.get(factionId) || 0;
     }
@@ -1101,6 +1119,7 @@ class Player {
                 magnitude: e.magnitude
             })),
             storyFlags: Array.from(this.storyFlags),
+            knownNpcIds: Array.from(this.knownNpcIds),
             inventory: this.inventory,
             quests: this.quests
         };
@@ -1134,6 +1153,9 @@ class Player {
             new StatusEffect(e.name, e.remainingMinutes, e.effectType, e.magnitude)
         );
         player.storyFlags = new Set(json.storyFlags || []);
+        player.knownNpcIds = new Set(Array.isArray(json.knownNpcIds)
+            ? json.knownNpcIds.filter(id => typeof id === 'string' && id.trim())
+            : []);
         player.inventory = Array.isArray(json.inventory)
             ? json.inventory
                 .filter(item => item && ITEM_CATALOG[item.id] && Number.isInteger(item.quantity) && item.quantity > 0)
@@ -3446,16 +3468,51 @@ class World {
         if (!this.player) return [];
         
         const locationNpcs = Array.from(this.npcs.values())
-            .filter(npc => npc.locationId === this.player.locationId)
+            .filter(npc => npc.locationId === this.player.locationId && npc.isAlive !== false)
             .slice(0, 5);
         
-        return locationNpcs.map(npc => ({
-            id: npc.id,
-            name: npc.name || npc.id,
-            factionId: npc.factionId,
-            trust: npc.trust,
-            respect: npc.respect
-        }));
+        const unknownOrdinals = new Map();
+        return locationNpcs.map(npc => {
+            const isKnown = this.player.knowsNpcName?.(npc.id) || this.player.knownNpcIds?.has(npc.id);
+            const previous = unknownOrdinals.get(npc.locationId) || 0;
+            unknownOrdinals.set(npc.locationId, previous + 1);
+            return {
+                id: npc.id,
+                name: isKnown && npc.name ? npc.name : `Nieznana postać${previous > 0 ? ` #${previous + 1}` : ''}`,
+                factionId: npc.factionId,
+                trust: npc.trust,
+                respect: npc.respect
+            };
+        });
+    }
+
+    /**
+     * Mark an NPC's real name as known only when the player asked for it and
+     * the narrator actually used that name in the answer.
+     * @returns {string[]} IDs of NPCs whose names became known
+     */
+    revealNpcNamesFromDialogue(action, response, player = this.player) {
+        if (!player || typeof action !== 'string' || typeof response !== 'string') return [];
+        const normalize = value => String(value || '')
+            .toLocaleLowerCase('pl-PL')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '');
+        const actionText = normalize(action);
+        const responseText = normalize(response);
+        const asksForName = /\b(imie|nazywasz|nazywam|przedstaw|kim jestes|kto ty|twoje imie)\b/i.test(actionText);
+        if (!asksForName) return [];
+
+        const claimedNameToken = responseText.match(/\b(?:nazywam sie|mam na imie|jestem)\s+([a-z-]+)/i)?.[1] || '';
+        const revealed = [];
+        for (const npc of this.npcs.values()) {
+            if (npc.locationId !== player.locationId || npc.isAlive === false || !npc.name) continue;
+            const normalizedName = normalize(npc.name).trim();
+            const nameTokens = normalizedName.split(/\s+/).filter(Boolean);
+            const exactMention = responseText.includes(normalizedName);
+            const statedToken = claimedNameToken && nameTokens.includes(claimedNameToken);
+            if ((exactMention || statedToken) && player.revealNpcName(npc.id)) revealed.push(npc.id);
+        }
+        return revealed;
     }
 
     // ========================================================================

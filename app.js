@@ -209,6 +209,7 @@ const elements = {
     campaignAct: document.getElementById('campaign-act'),
     campaignCurrentLocation: document.getElementById('campaign-current-location'),
     campaignCurrentLocationDescription: document.getElementById('campaign-current-location-description'),
+    campaignNpcs: document.getElementById('campaign-npcs'),
     campaignExits: document.getElementById('campaign-exits'),
     campaignLocations: document.getElementById('campaign-locations'),
     campaignActs: document.getElementById('campaign-acts'),
@@ -1856,6 +1857,9 @@ ${worldData.plan ? worldData.plan : 'Brak planu - stwórz własny świat'}
 **Aktualna lokacja gracza:** ${mechanicalLocation ? `${mechanicalLocation.name} (id: ${mechanicalLocation.id})` : 'Nieustalona'}
 Używaj aktualnej lokacji i identyfikatorów ze stanu mechanicznego jako jedynego źródła prawdy. Nie wymyślaj nazwy lokacji na podstawie narracyjnej prozy ani nie zastępuj lokacji mechanicznej domyślnym miastem.
 
+## TOŻSAMOŚĆ NPC:
+Prawdziwe imię NPC jest wiedzą osobistą gracza. Dopóki konkretny NPC nie poda swojego imienia po wyraźnym pytaniu gracza, opisuj go wyłącznie jako nieznaną postać, rolę albo opis fizyczny. Nie ujawniaj imion tylko dlatego, że znajdują się w planie świata.
+
 ## USTAWIENIA GRY:
 **Świat:** ${settingDescriptions[characterData.setting]}
 **Typ przygody:** ${adventureDescriptions[characterData.adventureType]}
@@ -2501,6 +2505,9 @@ async function generateStory(userAction = null) {
 
         if (requestGeneration !== state.sessionGeneration) return;
         applyScenarioChoices(state.world, parsedNarration.choices);
+        if (state.world && typeof state.world.revealNpcNamesFromDialogue === 'function') {
+            state.world.revealNpcNamesFromDialogue(userAction || '', storyText, state.world.player);
+        }
 
         // Dodaj do historii
         state.gameState.push({ role: 'assistant', content: storyText });
@@ -2622,6 +2629,14 @@ function sanitizeStoryHtml(html) {
     return template.innerHTML;
 }
 
+function getCampaignNpcDisplayName(npc, player, index = 0) {
+    const known = player?.knowsNpcName?.(npc?.id) || player?.knownNpcIds?.has(npc?.id);
+    const serverLabel = String(npc?.name || '');
+    if (known && npc?.name) return npc.name;
+    if (/^Nieznana postać/.test(serverLabel)) return serverLabel;
+    return `Nieznana postać${index > 0 ? ` #${index + 1}` : ''}`;
+}
+
 // Public campaign overview for the player. Keep this deliberately limited to
 // the playable map and act titles; scenario director secrets never belong in
 // the UI sidebar.
@@ -2631,7 +2646,11 @@ function renderCampaignSidebar() {
 
     const metadata = world.worldMetadata || {};
     const scenario = world.scenario || metadata.scenario || {};
-    const acts = Array.isArray(scenario.acts) ? scenario.acts : [];
+    const acts = Array.isArray(scenario.acts)
+        ? scenario.acts
+        : Array.isArray(scenario.acts?.titles)
+            ? scenario.acts.titles.map((title, index) => ({ id: `act_${index + 1}`, title }))
+            : [];
     const location = world.getLocation(world.player.locationId);
 
     const title = scenario.title || metadata.name || 'Kampania';
@@ -2639,12 +2658,44 @@ function renderCampaignSidebar() {
     elements.campaignTitle.textContent = title;
     elements.campaignPitch.textContent = pitch;
 
-    const activeActId = world.scenarioState?.activeAct;
+    const activeActId = world.scenarioState?.activeAct || scenario.activeAct;
     const activeAct = acts.find(act => act && act.id === activeActId) || acts[0];
     elements.campaignAct.textContent = activeAct?.title || activeActId || (acts.length ? 'Akt I' : '—');
 
     elements.campaignCurrentLocation.textContent = location?.name || world.player.locationId || '—';
     elements.campaignCurrentLocationDescription.textContent = location?.description || '';
+
+    if (elements.campaignNpcs) {
+        const localNpcs = Array.from(world.npcs?.values?.() || [])
+            .filter(npc => npc && npc.locationId === world.player.locationId && npc.isAlive !== false);
+        elements.campaignNpcs.replaceChildren();
+        if (localNpcs.length === 0) {
+            const item = document.createElement('li');
+            item.className = 'campaign-empty';
+            item.textContent = 'Nie ma tu nikogo, kogo widzisz';
+            elements.campaignNpcs.appendChild(item);
+        } else {
+            localNpcs.forEach((npc, index) => {
+                const item = document.createElement('li');
+                const name = document.createElement('strong');
+                name.textContent = getCampaignNpcDisplayName(npc, world.player, index);
+                item.appendChild(name);
+                if (npc.role) {
+                    const role = document.createElement('span');
+                    role.className = 'campaign-npc-role';
+                    role.textContent = npc.role;
+                    item.appendChild(role);
+                }
+                if (npc.description) {
+                    const description = document.createElement('p');
+                    description.className = 'campaign-npc-description';
+                    description.textContent = npc.description;
+                    item.appendChild(description);
+                }
+                elements.campaignNpcs.appendChild(item);
+            });
+        }
+    }
 
     const exits = (Array.isArray(location?.connections) ? location.connections : [])
         .map(connectionId => world.getLocation(connectionId))

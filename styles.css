@@ -1068,6 +1068,43 @@ button {
     color: #b9c7cf;
 }
 
+.campaign-npcs-list {
+    list-style: none;
+    padding-left: 0;
+}
+
+.campaign-npcs-list li {
+    padding: 9px 10px;
+    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+}
+
+.campaign-npcs-list li + li {
+    margin-top: 8px;
+}
+
+.campaign-npcs-list strong {
+    display: block;
+    color: #f5f7fa;
+    font-size: 0.86rem;
+}
+
+.campaign-npc-role {
+    display: block;
+    margin-top: 3px;
+    color: #00ffc8;
+    font-size: 0.73rem;
+    font-style: italic;
+}
+
+.campaign-npc-description {
+    margin: 6px 0 0;
+    color: #aebbc4;
+    font-size: 0.77rem;
+    line-height: 1.4;
+}
+
 .campaign-locations-list li.campaign-location-current,
 .campaign-acts-list li.campaign-act-current {
     color: #00ffc8;
