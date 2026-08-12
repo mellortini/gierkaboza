@@ -212,17 +212,18 @@ function testScenarioMetadataNormalizationPersistenceAndChoices() {
         locations: [{ id: 'harbor', name: 'Harbor' }],
         scenario: {
             id: ' ash-coast ', title: 'Ash Coast', pitch: 'A city on the edge of war.', tone: 'tense',
-            directorBrief: 'Keep consequences visible.',
+            directorBrief: 'Keep consequences visible. Guide Name is a hidden contact.',
             acts: [{ id: 'act_1', title: 'Arrival' }],
             mainArc: [{ id: 'arc_1', text: 'Find the cause.' }], sideQuests: [{ id: 'side_1', title: 'A favor' }],
-            npcs: [{ id: 'npc_guide', secret: 'safe' }], factions: [{ id: 'guild', goal: 'survive' }],
+            npcs: [{ id: 'npc_guide', role: 'guide' }], factions: [{ id: 'guild', goal: 'survive' }],
             choices: [
                 { id: 'choice_1', prompt: 'Choose', options: [{ id: 'help', nextAct: 'act_2', flagsAdd: ['met_guide', 'opened_gate'], flagsRemove: ['fearful'], variables: { trust: 1 }, note: 'The guide opens the gate.' }, { id: 'leave' }] },
                 { id: 'choice_2', prompt: 'Continue', options: [{ id: 'stay', activeAct: 'act_3', note: 'The party stays.' }] }
             ],
             multiplayerHooks: ['shared rumor'], endings: [{ id: 'end_1', text: 'Dawn' }], antiRailroadingRules: ['Allow retreat'],
             ignoredRootField: 'must not be copied', unsafe: () => 'drop me'
-        }
+        },
+        npcs: [{ id: 'npc_guide', name: 'Guide Name', role: 'guide', description: 'A cautious contact.' }]
     };
     const world = World.createFromBlueprint(blueprint, 'Scenario Player');
     assert.strictEqual(world.scenario.title, 'Ash Coast');
@@ -232,6 +233,9 @@ function testScenarioMetadataNormalizationPersistenceAndChoices() {
     assert.ok(prompt.includes('Ash Coast'));
     assert.ok(prompt.includes('A city on the edge of war.'));
     assert.ok(prompt.length <= 1200);
+    const maskedPrompt = world.getScenarioPrompt(5000, { maskNpcNames: true });
+    assert.strictEqual(maskedPrompt.includes('Guide Name'), false);
+    assert.ok(world.getScenarioPrompt(5000).includes('Guide Name'));
 
     const before = JSON.stringify({ hp: world.player.hp, gold: world.player.gold, items: world.player.inventory });
     const result = world.recordScenarioChoice({ choiceId: 'choice_1', optionId: 'help', flagsAdd: ['met_guide'], variables: { trust: 2 }, note: 'Player helped.' });

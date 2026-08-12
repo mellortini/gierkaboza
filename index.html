@@ -11,6 +11,12 @@
         <header>
             <h1>🎲 AI RPG</h1>
             <p>Stwórz postać. AI poprowadzi Twoją przygodę.</p>
+            <div id="setup-progress" class="setup-progress" aria-label="Postęp konfiguracji">
+                <span data-step="api">1. API</span>
+                <span data-step="character">2. Postać</span>
+                <span data-step="game">3. Gra</span>
+            </div>
+            <button id="toggle-api-config" class="header-settings-btn hidden" type="button">⚙️ Ustawienia API</button>
         </header>
 
         <!-- Konfiguracja API -->
@@ -94,7 +100,21 @@
                     <p style="color: #888; text-align: center; padding: 40px;">Wygeneruj plan świata, aby zobaczyć szczegóły</p>
                 </div>
                 <button id="regenerate-plan" class="btn-secondary" style="margin-top: 20px;">🔄 Regeneruj Plan</button>
-                <button id="load-scenario-popioly" class="btn-secondary" style="margin-top: 12px;">📖 Wczytaj gotową kampanię: Popioły pod Zieloną Doliną</button>
+                <div class="scenario-library">
+                    <div class="scenario-library-heading">
+                        <div>
+                            <h3>📚 Gotowe kampanie</h3>
+                            <p>Wybierz przygotowany świat albo wróć do generatora.</p>
+                        </div>
+                    </div>
+                    <div class="scenario-library-controls">
+                        <select id="ready-scenario" aria-label="Gotowa kampania">
+                            <option value="">Wczytywanie kampanii...</option>
+                        </select>
+                        <button id="load-ready-scenario" class="btn-secondary" type="button">Wczytaj</button>
+                    </div>
+                    <small id="ready-scenario-help" class="input-help"></small>
+                </div>
             </div>
 
             <!-- Tab: Podgląd -->
@@ -140,6 +160,8 @@
                     <textarea id="char-description" placeholder="Kim jest Twoja postać? Wiek, wygląd, osobowość, umiejętności, historia, motywacje..." rows="6"></textarea>
                 </div>
 
+                <details id="advanced-character-settings" class="advanced-settings">
+                    <summary>🎛️ Preferencje opowieści <span>klimat, typ przygody i poziom treści</span></summary>
                 <div class="input-group">
                     <label for="adventure-type">Typ przygody:</label>
                     <select id="adventure-type">
@@ -248,6 +270,8 @@
                     </div>
                 </div>
 
+                </details>
+
                 <div class="world-selection">
                     <button id="use-custom-world" class="btn-secondary">🌍 Użyj własnego świata</button>
                     <button id="skip-world-building" class="btn-secondary">⏭️ Pomiń budowanie świata</button>
@@ -256,6 +280,8 @@
                 <button id="start-game" class="btn-primary btn-large">🎮 ROZPOCZNIJ PRZYGODĘ</button>
                 
                 <!-- Multiplayer Section -->
+                <details id="multiplayer-workspace" class="workspace-panel">
+                    <summary>🌐 Gra z kolegami <span>pokój, scenariusz i lobby</span></summary>
                 <div class="multiplayer-section">
                     <h3>🌐 Gra wieloosobowa (Multiplayer)</h3>
                     <div class="input-group">
@@ -333,6 +359,10 @@
                     <div id="lobby-error" class="lobby-error hidden" role="alert"></div>
                 </div>
                 
+                </details>
+
+                <details id="save-library-panel" class="workspace-panel">
+                    <summary>💾 Zapisy lokalne <span>zapisz, wczytaj lub wyeksportuj</span></summary>
                 <div class="saved-games-section" id="saved-games-section">
                     <h3>📂 Zapisane gry</h3>
                     <div class="saved-games-toolbar">
@@ -347,6 +377,7 @@
                         <input type="file" id="import-file" accept=".json" hidden>
                     </div>
                 </div>
+                </details>
             </div>
         </div>
 
@@ -360,11 +391,13 @@
                 <div class="game-actions">
                     <button id="view-character" class="btn-secondary">📋 Postać</button>
                     <button id="save-game" class="btn-secondary">💾 Zapisz</button>
+                    <button id="save-multiplayer" class="btn-secondary hidden">☁️ Zapisz sesję</button>
                     <button id="load-game" class="btn-secondary">📂 Wczytaj</button>
                     <button id="export-game" class="btn-secondary">💾 Eksport</button>
                     <button id="new-game" class="btn-secondary">🔄 Nowa Gra</button>
                 </div>
             </div>
+            <div id="game-memory-status" class="game-memory-status" aria-live="polite">Pamięć kampanii: przygotowana</div>
             
             <!-- HUD - World Clock & Stats -->
             <div id="game-hud" class="hud-panel">
@@ -404,8 +437,8 @@
                     <span id="player-gold" class="hud-value">100</span>
                 </div>
                 <div class="hud-item hud-inventory">
-                    <span class="hud-icon">Inventory</span>
-                    <span class="hud-label">Items:</span>
+                    <span class="hud-icon">🎒</span>
+                    <span class="hud-label">Ekwipunek:</span>
                     <span id="player-inventory" class="hud-value">-</span>
                 </div>
                 <div class="hud-item hud-survival">
@@ -504,6 +537,7 @@
                     <label for="save-manager-import-file" class="btn-secondary import-btn">📁 Importuj JSON</label>
                     <input type="file" id="save-manager-import-file" accept=".json" hidden>
                 </div>
+                </details>
             </div>
         </div>
     </div>

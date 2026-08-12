@@ -111,7 +111,12 @@ try {
 
 // Prototype persistence. For Railway, mount a volume or replace this adapter
 // with a real database before running multiple replicas.
-const DATA_DIR = path.join(__dirname, 'data');
+// Railway's filesystem is ephemeral unless a Volume is mounted. Allow the
+// deployment to point persistence at a mounted directory without changing
+// the local development default.
+const DATA_DIR = process.env.RPG_DATA_DIR
+    ? path.resolve(process.env.RPG_DATA_DIR)
+    : path.join(__dirname, 'data');
 const ROOMS_FILE = path.join(DATA_DIR, 'rooms.json');
 const SCENARIOS_DIR = path.join(__dirname, 'scenarios');
 const rejoinSessions = new Map();
@@ -126,6 +131,7 @@ function publicScenarioSummary(record) {
     const world = record?.blueprint?.world || {};
     return {
         id: record.id,
+        file: record.fileName,
         title: boundedText(scenario.title, 240) || boundedText(world.name, 240) || record.id,
         name: boundedText(world.name, 240) || null,
         description: boundedText(world.description, 2000) || null,
@@ -178,6 +184,7 @@ function createRoom(roomId, world = null, persisted = {}) {
         lobby: createLobbyState(persisted.lobby || {}, world),
         chatHistory: Array.isArray(persisted.chatHistory) ? persisted.chatHistory.slice(-50) : [],
         playerHistories: persisted.playerHistories || {},
+        actionHistory: Array.isArray(persisted.actionHistory) ? persisted.actionHistory.slice(-120) : [],
         actionQueue: Promise.resolve(),
         narrativeConsolidationPromise: null,
         narrativeConsolidationNextAttemptAt: 0
@@ -313,6 +320,8 @@ function emitGameStarted(socketId, room, player, options = {}) {
         playerName: boundedText(player.name, 80),
         players: selectedLobbyPlayers(room),
         lobby: lobbySnapshot(room),
+        timeline: room.actionHistory.slice(-60),
+        chatHistory: room.chatHistory.slice(-50),
         worldState: serializeWorld(room.world, player.player, player.id),
         options: publicSafeValue(options || {})
     });
@@ -478,11 +487,14 @@ function persistRooms() {
             hostPlayerId: room.hostPlayerId || null,
             lobby: publicSafeValue(room.lobby || createLobbyState({}, room.world)),
             chatHistory: room.chatHistory.slice(-50),
+            actionHistory: room.actionHistory.slice(-120),
             playerHistories: Object.fromEntries(
                 Object.entries(room.playerHistories || {}).map(([id, history]) => [id, history.slice(-100)])
             )
         }));
-        fs.writeFileSync(ROOMS_FILE, JSON.stringify(data, null, 2), 'utf8');
+        const tempFile = `${ROOMS_FILE}.tmp`;
+        fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), 'utf8');
+        fs.renameSync(tempFile, ROOMS_FILE);
     } catch (error) {
         console.error('Could not persist rooms:', error.message);
     }
@@ -948,7 +960,10 @@ io.on('connection', (socket) => {
         let scenarioDirectorContext = '';
         if (world && typeof world.getScenarioPrompt === 'function') {
             try {
-                scenarioDirectorContext = trimPreserveEnds(world.getScenarioPrompt(5000), 5000);
+                scenarioDirectorContext = trimPreserveEnds(
+                    world.getScenarioPrompt(5000, { maskNpcNames: true }),
+                    5000
+                );
             } catch (error) {
                 console.warn('Scenario director context unavailable:', error.message);
             }
@@ -965,8 +980,28 @@ io.on('connection', (socket) => {
                 .join(', ');
             actionContext += `Obok ciebie jest: ${others}. `;
         }
+
+        const nameQuestion = /\b(imie|nazywasz|nazywam|przedstaw|kim jestes|kto ty|twoje imie)\b/i.test(action);
+        const localNpcView = Array.from(world.npcs?.values?.() || [])
+            .filter(npc => npc && npc.locationId === currentPlayer.locationId && npc.isAlive !== false)
+            .slice(0, 8)
+            .map((npc, index) => {
+                const known = currentPlayer.knowsNpcName?.(npc.id) || currentPlayer.knownNpcIds?.has(npc.id);
+                const displayName = known || nameQuestion
+                    ? npc.name
+                    : `Nieznana postać${index > 0 ? ` #${index + 1}` : ''}`;
+                return `- ${displayName} | rola: ${boundedText(npc.role, 80) || 'nieznana'} | id: ${npc.id}`;
+            });
+        if (localNpcView.length > 0) {
+            actionContext += `\n\n## NPC W AKTUALNEJ LOKACJI:\n${localNpcView.join('\n')}\n`;
+            actionContext += nameQuestion
+                ? 'Jeśli NPC podaje imię, użyj imienia z tej listy i nie ujawniaj imion innych NPC bez powodu.\n'
+                : 'Przed pytaniem o imię używaj wyłącznie roli lub opisu „Nieznanej postaci”.\n';
+        }
         
-        // KAŻDY GRACZ MA SWOJĄ HISTORIĘ - nie mieszaj z innymi graczami!
+        // Keep a personal history for saves and backwards compatibility. The
+        // shared action timeline below is the narrator's primary continuity
+        // source, so every player can follow the party's latest decisions.
         const playerHistory = getPlayerHistory(room, playerData.id, socket.id);
 
         // Dołącz historię czatu graczy do kontekstu AI
@@ -979,12 +1014,10 @@ io.on('connection', (socket) => {
             }
         }
         
-        // Dodaj podsumowanie poprzednich akcji TYLKO tego gracza (nie mieszaj z innymi graczami)
-        const recentPlayerActions = playerHistory?.filter((_, i) => i % 2 === 0).slice(-4) || []; // tylko akcje tego gracza
-        if (recentPlayerActions.length > 0) {
-            actionContext += `\n\n## TWOJE POPRZEDNIE AKCJE:\n`;
-            for (const h of recentPlayerActions) {
-                actionContext += `- ${h.content?.substring(0, 80) || '...'}\n`;
+        if (room.actionHistory.length > 0) {
+            actionContext += `\n\n## OSTATNIE WSPÓLNE TURY (skrót):\n`;
+            for (const turn of room.actionHistory.slice(-6)) {
+                actionContext += `- ${turn.playerName}: ${boundedText(turn.action, 180)}\n`;
             }
         }
 
@@ -1032,7 +1065,18 @@ io.on('connection', (socket) => {
         const playerModel = actionModel || playerData.characterData?.model || 'openai/gpt-3.5-turbo';
         console.log(`Using model: ${playerModel} for player: ${playerData.name}`);
         
-        const rawResponse = await callLLM(actionContext, playerData.name, playerApiKey, playerModel, trimNarratorHistory(playerHistory), wantsDetailed);
+        const sharedNarratorHistory = room.actionHistory.flatMap(turn => ([
+            { role: 'user', content: `[${turn.playerName}] ${turn.action}` },
+            { role: 'assistant', content: turn.response }
+        ]));
+        const rawResponse = await callLLM(
+            actionContext,
+            playerData.name,
+            playerApiKey,
+            playerModel,
+            sharedNarratorHistory.length > 0 ? sharedNarratorHistory : trimNarratorHistory(playerHistory),
+            wantsDetailed
+        );
         const parsedNarration = extractScenarioChoiceMarkers(rawResponse);
         const response = parsedNarration.text;
         applyScenarioChoices(world, parsedNarration.choices);
@@ -1044,6 +1088,16 @@ io.on('connection', (socket) => {
         playerHistory.push({ role: 'user', content: action });
         playerHistory.push({ role: 'assistant', content: response });
         room.playerHistories[playerData.id] = playerHistory.slice(-100);
+        room.actionHistory.push({
+            id: `${room.id}:${playerData.id}:${Date.now()}`,
+            playerId: playerData.id,
+            playerName: playerData.name,
+            action: boundedText(action, 2000),
+            response: boundedText(response, 12000),
+            locationId: currentPlayer.locationId,
+            timestamp: Date.now()
+        });
+        if (room.actionHistory.length > 120) room.actionHistory = room.actionHistory.slice(-120);
         // Starsze wpisy pozostają w zapisach gry, ale nie są wysyłane do kolejnego promptu.
 
         // Phase 1-2: Przesuwamy czas i przetwarzamy wydarzenia
@@ -1264,6 +1318,8 @@ io.on('connection', (socket) => {
                 isHost: p.isHost
             })),
             lobby: lobbySnapshot(room),
+            timeline: room.actionHistory.slice(-60),
+            chatHistory: room.chatHistory.slice(-50),
             worldState: serializeWorld(room.world, restoredPlayer, rejoinData.playerId)
         });
         if (room.lobby.status === 'started') {
@@ -1336,6 +1392,8 @@ io.on('connection', (socket) => {
             isHost: room.hostId === socket.id,
             players: playerList,
             lobby: lobbySnapshot(room),
+            timeline: room.actionHistory.slice(-60),
+            chatHistory: room.chatHistory.slice(-50),
             worldState: serializeWorld(room.world, restoredPlayer, playerId)
         });
         if (room.lobby.status === 'started') {
@@ -1413,6 +1471,30 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Actions autosave the room, but a visible checkpoint is useful before a
+    // group closes the browser or changes devices.
+    socket.on('saveRoom', () => {
+        const player = players.get(socket.id);
+        if (!player || !rooms.has(player.roomId)) {
+            socket.emit('roomSaveError', { message: 'Nie jesteś w pokoju.' });
+            return;
+        }
+        const room = rooms.get(player.roomId);
+        try {
+            room.lastActiveAt = Date.now();
+            persistRooms();
+            socket.emit('roomSaved', {
+                roomId: room.id,
+                timestamp: new Date().toISOString(),
+                memoryStatus: typeof room.world?.getNarrativeMemoryStatus === 'function'
+                    ? room.world.getNarrativeMemoryStatus()
+                    : null
+            });
+        } catch (error) {
+            socket.emit('roomSaveError', { message: 'Nie udało się zapisać sesji.' });
+        }
+    });
+
     // Get room state
     socket.on('getRoomState', () => {
         const player = players.get(socket.id);
@@ -1430,6 +1512,8 @@ io.on('connection', (socket) => {
                 name: p.name,
                 isHost: p.isHost
             })),
+            timeline: room.actionHistory.slice(-60),
+            chatHistory: room.chatHistory.slice(-50),
             worldState: serializeWorld(room.world, room.players.get(socket.id)?.player, player.playerId)
         });
     });
@@ -1450,6 +1534,9 @@ function serializeWorld(world, viewerPlayer = null, viewerPlayerId = null) {
         : world.toJSON();
     if (viewerPlayer && typeof viewerPlayer.toJSON === 'function') {
         snapshot.player = viewerPlayer.toJSON();
+    }
+    if (typeof world.getNarrativeMemoryStatus === 'function') {
+        snapshot.memoryStatus = world.getNarrativeMemoryStatus();
     }
     // Scenario director material is server-only. Never trust a future engine
     // serializer (or the legacy fallback) to expose it to clients.

@@ -3068,17 +3068,40 @@ class World {
         return this.factions.get(factionId);
     }
 
-    getScenarioPrompt(maxChars = 12000) {
+    getScenarioPrompt(maxChars = 12000, options = {}) {
         const budget = Number.isSafeInteger(maxChars) && maxChars > 0 ? maxChars : 12000;
         if (!this.scenario) return ''.slice(0, budget);
         const state = this.scenarioState || newScenarioState(this.scenario);
+        const scenario = scenarioSafeValue(this.scenario) || {};
+        if (options && options.maskNpcNames && Array.isArray(scenario.npcs)) {
+            scenario.npcs = scenario.npcs.map(npc => {
+                if (!npc || typeof npc !== 'object') return npc;
+                const { name, ...withoutName } = npc;
+                return withoutName;
+            });
+        }
         const fields = ['id', 'title', 'pitch', 'tone', 'directorBrief', 'acts', 'mainArc', 'sideQuests', 'npcs', 'factions', 'choices', 'multiplayerHooks', 'endings', 'antiRailroadingRules'];
         const lines = ['SCENARIO'];
         for (const field of fields) {
-            if (this.scenario[field] !== undefined) lines.push(`${field}: ${JSON.stringify(this.scenario[field])}`);
+            if (scenario[field] !== undefined) lines.push(`${field}: ${JSON.stringify(scenario[field])}`);
         }
         lines.push(`CURRENT_SCENARIO_STATE: ${JSON.stringify(state)}`);
-        return lines.join('\n').slice(0, budget);
+        let prompt = lines.join('\n');
+        if (options && options.maskNpcNames) {
+            const scenarioNpcNames = Array.isArray(this.scenario.npcs)
+                ? this.scenario.npcs.map(npc => typeof npc?.name === 'string' ? npc.name.trim() : '')
+                : [];
+            const worldNpcNames = this.npcs instanceof Map
+                ? Array.from(this.npcs.values()).map(npc => typeof npc?.name === 'string' ? npc.name.trim() : '')
+                : [];
+            const canonicalNames = [...scenarioNpcNames, ...worldNpcNames]
+                .filter(Boolean)
+                .sort((a, b) => b.length - a.length);
+            for (const name of canonicalNames) {
+                prompt = prompt.split(name).join('Nieznana postać');
+            }
+        }
+        return prompt.slice(0, budget);
     }
 
     recordScenarioChoice({ choiceId, optionId, flagsAdd = [], flagsRemove = [], variables = {}, note = '' } = {}) {
@@ -3282,6 +3305,9 @@ class World {
         world.narrativeMemory = json.narrativeMemory
             ? NarrativeMemory.fromJSON(json.narrativeMemory)
             : NarrativeMemory.migrateLegacy(world.historyNodes);
+        world.memoryStatus = json.memoryStatus && typeof json.memoryStatus === 'object'
+            ? { ...json.memoryStatus }
+            : null;
         world.questDefinitions = Array.isArray(json.questDefinitions) ? json.questDefinitions : [];
         
         return world;
@@ -3484,6 +3510,27 @@ class World {
                 respect: npc.respect
             };
         });
+    }
+
+    /**
+     * Small, non-sensitive status object for the UI and multiplayer saves.
+     * It exposes counts only; narrative facts and hidden director material
+     * still go through the normal viewer filter.
+     */
+    getNarrativeMemoryStatus() {
+        const memory = this.narrativeMemory || new NarrativeMemory();
+        const turns = Array.isArray(memory.turns) ? memory.turns : [];
+        const consolidated = turns.filter(turn => turn && turn.consolidated === true).length;
+        return {
+            revision: Number.isSafeInteger(memory.revision) ? memory.revision : 0,
+            completedTurns: turns.length,
+            consolidatedTurns: consolidated,
+            pendingTurns: Math.max(0, turns.length - consolidated),
+            facts: memory.facts instanceof Map ? memory.facts.size : 0,
+            episodes: Array.isArray(memory.episodes) ? memory.episodes.length : 0,
+            threads: memory.threads instanceof Map ? memory.threads.size : 0,
+            nextConsolidationAt: NARRATIVE_MEMORY_CONSOLIDATION_TURNS
+        };
     }
 
     /**

@@ -109,6 +109,19 @@ rpg-game/
 
 ### Environment Variables (Railway)
 - `PORT` - Server port (default: 3000)
+- `RPG_DATA_DIR` - opcjonalna ścieżka do trwałych zapisów, np. `/data` po podpięciu Railway Volume
+
+### Trwałe zapisy na Railway
+
+Serwer zapisuje pokoje, świat, wspólną oś tur, czat oraz pamięć narratora do `data/rooms.json`.
+Na komputerze lokalnym plik pozostaje na dysku. Railway używa jednak efemerycznego systemu
+plików, dlatego połącz aplikację z Volume i ustaw zmienną `RPG_DATA_DIR` na jego punkt montowania
+(przykładowo `/data`). Bez Volume gra będzie działać, ale pokoje mogą zostać wyczyszczone po
+ponownym uruchomieniu kontenera.
+
+Po restarcie serwer odtwarza zapisany pokój, a gracz może wrócić tym samym ID pokoju. W multiplayerze
+zapisywana jest także wspólna historia ostatnich tur, historia czatu i stan skondensowanej pamięci
+narratora — nie tylko stan postaci hosta.
 
 ### Socket.io Events
 - `joinRoom` - Join/create a game room

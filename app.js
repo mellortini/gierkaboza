@@ -129,6 +129,8 @@ const elements = {
     modelsLoading: document.getElementById('models-loading'),
     apiStatus: document.getElementById('api-status'),
     apiConfigSection: document.getElementById('api-config'),
+    toggleApiConfigBtn: document.getElementById('toggle-api-config'),
+    setupProgress: document.getElementById('setup-progress'),
     worldBuilding: document.getElementById('world-building'),
     worldName: document.getElementById('world-name'),
     worldDescription: document.getElementById('world-description'),
@@ -139,6 +141,9 @@ const elements = {
     generateWorldPlanBtn: document.getElementById('generate-world-plan'),
     regeneratePlanBtn: document.getElementById('regenerate-plan'),
     loadScenarioPopiolyBtn: document.getElementById('load-scenario-popioly'),
+    readyScenario: document.getElementById('ready-scenario'),
+    loadReadyScenarioBtn: document.getElementById('load-ready-scenario'),
+    readyScenarioHelp: document.getElementById('ready-scenario-help'),
     worldPlanContent: document.getElementById('world-plan-content'),
     worldPreviewContent: document.getElementById('world-preview-content'),
     startWithWorldBtn: document.getElementById('start-with-world'),
@@ -177,6 +182,8 @@ const elements = {
     loadGameBtn: document.getElementById('load-game'),
     exportGameBtn: document.getElementById('export-game'),
     newGameBtn: document.getElementById('new-game'),
+    saveMultiplayerBtn: document.getElementById('save-multiplayer'),
+    gameMemoryStatus: document.getElementById('game-memory-status'),
     savedGamesSection: document.getElementById('saved-games-section'),
     savedGamesList: document.getElementById('saved-games-list'),
     saveSlotFromMenuBtn: document.getElementById('save-slot-from-menu'),
@@ -229,43 +236,76 @@ const elements = {
     lobbyError: document.getElementById('lobby-error'),
     multiplayerScenario: document.getElementById('multiplayer-scenario'),
     multiplayerScenarioHelp: document.getElementById('multiplayer-scenario-help')
+    ,multiplayerWorkspace: document.getElementById('multiplayer-workspace')
+    ,saveLibraryPanel: document.getElementById('save-library-panel')
 };
 
 async function loadMultiplayerScenarios() {
     const select = elements.multiplayerScenario;
-    if (!select) return;
+    const readySelect = elements.readyScenario;
+    if (!select && !readySelect) return;
 
-    const selectedId = select.value;
+    const selectedId = select?.value || '';
+    const selectedReadyId = readySelect?.value || '';
     try {
         const response = await fetch('/api/scenarios', { cache: 'no-store' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const scenarios = await response.json();
         if (!Array.isArray(scenarios) || scenarios.length === 0) throw new Error('Brak scenariuszy');
 
-        select.replaceChildren();
+        if (select) select.replaceChildren();
         const customOption = document.createElement('option');
         customOption.value = '';
         customOption.textContent = 'Bez scenariusza — własny świat';
         customOption.dataset.description = '';
-        select.appendChild(customOption);
+        if (select) select.appendChild(customOption);
+        if (readySelect) readySelect.replaceChildren();
         for (const scenario of scenarios) {
             if (!scenario?.id) continue;
-            const option = document.createElement('option');
-            option.value = scenario.id;
-            option.textContent = scenario.title || scenario.name || scenario.id;
-            option.dataset.description = scenario.pitch || scenario.description || '';
-            select.appendChild(option);
+            if (select) {
+                const option = document.createElement('option');
+                option.value = scenario.id;
+                option.textContent = scenario.title || scenario.name || scenario.id;
+                option.dataset.description = scenario.pitch || scenario.description || '';
+                select.appendChild(option);
+            }
+            if (readySelect && scenario.file) {
+                const option = document.createElement('option');
+                option.value = scenario.file;
+                option.textContent = scenario.title || scenario.name || scenario.id;
+                option.dataset.id = scenario.id;
+                option.dataset.description = scenario.pitch || scenario.description || '';
+                readySelect.appendChild(option);
+            }
         }
-        if ([...select.options].some(option => option.value === selectedId)) {
+        if (select && [...select.options].some(option => option.value === selectedId)) {
             select.value = selectedId;
         }
+        if (readySelect && [...readySelect.options].some(option => option.value === selectedReadyId)) {
+            readySelect.value = selectedReadyId;
+        }
         updateMultiplayerScenarioHelp();
+        updateReadyScenarioHelp();
     } catch (error) {
         console.warn('Nie udało się pobrać listy scenariuszy:', error.message);
         if (elements.multiplayerScenarioHelp) {
             elements.multiplayerScenarioHelp.textContent = 'Lista scenariuszy jest chwilowo niedostępna. Wybrany scenariusz zostanie zweryfikowany przez serwer.';
         }
     }
+}
+
+function updateReadyScenarioHelp() {
+    const select = elements.readyScenario;
+    const help = elements.readyScenarioHelp;
+    if (!select || !help) return;
+    const option = select.options[select.selectedIndex];
+    help.textContent = option?.dataset.description || 'Gotowa kampania zawiera mapę, NPC, zadania i konsekwencje decyzji.';
+}
+
+async function loadReadyScenario() {
+    const file = elements.readyScenario?.value;
+    if (!file) return;
+    await loadScenarioFromFile(`/scenarios/${encodeURIComponent(file)}`);
 }
 
 function updateMultiplayerScenarioHelp() {
@@ -411,10 +451,13 @@ async function init() {
 
     // Event listeners - API
     on(elements.saveApiKeyBtn, 'click', saveApiKey);
+    on(elements.toggleApiConfigBtn, 'click', toggleApiConfig);
     on(elements.refreshModelsBtn, 'click', fetchModels);
     on(elements.modelSelect, 'change', saveModel);
     on(elements.refreshWorldModels, 'click', () => fetchModels(true));
     on(elements.multiplayerScenario, 'change', updateMultiplayerScenarioHelp);
+    on(elements.readyScenario, 'change', updateReadyScenarioHelp);
+    on(elements.loadReadyScenarioBtn, 'click', loadReadyScenario);
     loadMultiplayerScenarios();
 
     // Event listeners - Budowanie świata
@@ -510,6 +553,7 @@ async function init() {
     on(elements.viewCharacterBtn, 'click', showCharacterModal);
     on(elements.closeModal, 'click', hideCharacterModal);
     on(elements.saveGameBtn, 'click', saveGameSlot);
+    on(elements.saveMultiplayerBtn, 'click', saveMultiplayerSession);
     on(elements.loadGameBtn, 'click', showSaveManager);
     on(elements.exportGameBtn, 'click', exportGameToJSON);
     on(elements.newGameBtn, 'click', newGame);
@@ -645,7 +689,11 @@ function connectToServer(serverUrl) {
                 state.pendingRoomData = data;
                 if (data?.lobby || Array.isArray(data?.characters)) {
                     state.lobby.supported = true;
-                    showMultiplayerLobby(data);
+                    if (data?.status === 'started' || data?.lobby?.status === 'started') {
+                        startMultiplayerGame(data);
+                    } else {
+                        showMultiplayerLobby(data);
+                    }
                 }
                 if (data.worldState) {
                     try {
@@ -1083,6 +1131,7 @@ function renderMultiplayerLobby(data) {
 
 function showMultiplayerLobby(data) {
     state.lobby.active = true;
+    if (elements.multiplayerWorkspace) elements.multiplayerWorkspace.open = true;
     if (elements.multiplayerLobby) elements.multiplayerLobby.classList.remove('hidden');
     if (elements.gameSection) elements.gameSection.classList.add('hidden');
     renderMultiplayerLobby(data);
@@ -1219,6 +1268,11 @@ function startMultiplayerGame(roomData) {
     // Hide character creation, show game
     elements.characterCreation.classList.add('hidden');
     elements.gameSection.classList.remove('hidden');
+    if (elements.apiConfigSection) elements.apiConfigSection.classList.add('hidden');
+    if (elements.toggleApiConfigBtn) elements.toggleApiConfigBtn.classList.remove('hidden');
+    if (elements.saveMultiplayerBtn) elements.saveMultiplayerBtn.classList.remove('hidden');
+    if (elements.multiplayerWorkspace) elements.multiplayerWorkspace.open = false;
+    updateSetupProgress('game');
     
     // Update game header
     elements.gameCharacterName.textContent = characterData.name || 'Gracz';
@@ -1243,6 +1297,7 @@ function startMultiplayerGame(roomData) {
     addStoryEntry('system', `Witaj w trybie wieloosobowym!`);
     addStoryEntry('system', `ID Pokoju: ${state.roomId}`);
     addStoryEntry('system', `Gracze: ${(Array.isArray(state.players) ? state.players : []).map(p => p.name).join(', ')}`);
+    renderMultiplayerTimeline(roomData?.timeline, roomData?.chatHistory);
     
     // Show player chat area in multiplayer
     const playerChatArea = document.getElementById('player-chat-area');
@@ -1338,6 +1393,16 @@ function setupMultiplayerListeners() {
     state.socket.on('chatError', (data) => {
         addStoryEntry('system', `❌ Błąd czatu: ${data.message}`);
     });
+
+    state.socket.on('roomSaved', (data) => {
+        if (state.world && data?.memoryStatus) state.world.memoryStatus = data.memoryStatus;
+        updateMemoryStatus(state.world);
+        addStoryEntry('system', `☁️ Sesja zapisana na serwerze (${new Date(data?.timestamp || Date.now()).toLocaleTimeString()}).`);
+    });
+
+    state.socket.on('roomSaveError', (data) => {
+        addStoryEntry('system', `❌ Nie udało się zapisać sesji: ${data?.message || 'błąd serwera'}`);
+    });
     
     // Join error (for rejoin)
     state.socket.on('joinError', (data) => {
@@ -1418,6 +1483,31 @@ function showStatus(message, type) {
     }
 }
 
+function updateSetupProgress(step) {
+    if (!elements.setupProgress) return;
+    const order = { api: 1, character: 2, game: 3 };
+    const current = order[step] || 1;
+    elements.setupProgress.querySelectorAll('[data-step]').forEach(item => {
+        const itemStep = item.dataset.step;
+        item.classList.toggle('active', order[itemStep] === current);
+        item.classList.toggle('complete', order[itemStep] < current);
+    });
+}
+
+function saveMultiplayerSession() {
+    if (!state.socket || !state.isMultiplayer) return;
+    state.socket.emit('saveRoom');
+}
+
+function toggleApiConfig() {
+    if (!elements.apiConfigSection) return;
+    const hidden = elements.apiConfigSection.classList.toggle('hidden');
+    if (elements.toggleApiConfigBtn) {
+        elements.toggleApiConfigBtn.textContent = hidden ? '⚙️ Ustawienia API' : '✕ Zamknij ustawienia';
+        elements.toggleApiConfigBtn.classList.remove('hidden');
+    }
+}
+
 // Przełączanie tabów
 function switchTab(tabName) {
     // Ukryj wszystkie taby
@@ -1443,6 +1533,9 @@ function showWorldBuilding() {
     elements.worldBuilding.classList.remove('hidden');
     elements.characterCreation.classList.add('hidden');
     elements.gameSection.classList.add('hidden');
+    if (elements.apiConfigSection && state.apiKey) elements.apiConfigSection.classList.add('hidden');
+    if (elements.toggleApiConfigBtn && state.apiKey) elements.toggleApiConfigBtn.classList.remove('hidden');
+    updateSetupProgress('character');
 }
 
 // Pokazanie tworzenia postaci
@@ -1450,6 +1543,9 @@ function showCharacterCreation() {
     elements.worldBuilding.classList.add('hidden');
     elements.characterCreation.classList.remove('hidden');
     elements.gameSection.classList.add('hidden');
+    if (elements.apiConfigSection && state.apiKey) elements.apiConfigSection.classList.add('hidden');
+    if (elements.toggleApiConfigBtn && state.apiKey) elements.toggleApiConfigBtn.classList.remove('hidden');
+    updateSetupProgress('character');
 }
 
 // Funkcja pomocnicza do opisu poziomu suwaka
@@ -1719,15 +1815,15 @@ Required JSON shape:
 }
 
 // Aktualizacja podglądu świata
-async function loadPopiolyScenario() {
-    const button = elements.loadScenarioPopiolyBtn;
+async function loadScenarioFromFile(filePath) {
+    const button = elements.loadReadyScenarioBtn || elements.loadScenarioPopiolyBtn;
     if (!World || typeof World.validateBlueprint !== 'function') {
         alert('Silnik gry nie jest jeszcze gotowy.');
         return;
     }
     if (button) button.disabled = true;
     try {
-        const response = await fetch('/scenarios/popioly-pod-zielona-dolina.json', { cache: 'no-store' });
+        const response = await fetch(filePath, { cache: 'no-store' });
         if (!response.ok) throw new Error(`Błąd HTTP: ${response.status}`);
         const payload = await response.json();
         const sourceBlueprint = payload?.blueprint || payload?.worldBlueprint || payload;
@@ -1739,7 +1835,7 @@ async function loadPopiolyScenario() {
             ...(payload?.scenarioState ? { scenarioState: payload.scenarioState } : {})
         };
         const metadata = validatedBlueprint.world || {};
-        worldData.name = String(payload.name || metadata.name || 'Popioły pod Zieloną Doliną');
+        worldData.name = String(payload.name || metadata.name || payload?.scenario?.title || 'Gotowa kampania');
         worldData.description = String(payload.description || metadata.description || '');
         worldData.plan = blueprintToPlan(validatedBlueprint);
         worldData.generated = true;
@@ -1750,13 +1846,17 @@ async function loadPopiolyScenario() {
         }
         updateWorldPreview();
         showCharacterCreation();
-        showStatus('Gotowa kampania wczytana. Stwórz swoją postać.', 'success');
+        showStatus(`Wczytano kampanię: ${worldData.name}. Stwórz swoją postać.`, 'success');
     } catch (error) {
         console.error('Błąd wczytywania scenariusza:', error);
         alert(`Nie udało się wczytać gotowej kampanii: ${error.message}`);
     } finally {
         if (button) button.disabled = false;
     }
+}
+
+async function loadPopiolyScenario() {
+    return loadScenarioFromFile('/scenarios/popioly-pod-zielona-dolina.json');
 }
 
 function updateWorldPreview() {
@@ -1857,7 +1957,7 @@ function buildNarratorPrompt() {
 8. Używaj formatowania: **pogrubienie** dla ważnych elementów, *kursywa* dla myśli.
 
 ## PLAN ŚWIATA (TRZYMAJ SIĘ TEGO):
-${worldData.plan ? worldData.plan : 'Brak planu - stwórz własny świat'}
+${buildSafeNarratorPlan(mechanicalWorld)}
 
 ## KANONICZNY STAN MECHANICZNY (NADRZĘDNY WOBEC PROZY):
 **Nazwa świata:** ${worldMetadata.name || worldData.name || settingDescriptions[characterData.setting] || characterData.setting}
@@ -1947,6 +2047,28 @@ ${s.sexual >= 8 ? `
 
     prompt += `\n\n## UKRYTE WYBORY SCENARIUSZA:\nJeśli akcja gracza wyraźnie rozstrzyga jedną z wyborów wymienionych w briefie reżysera, na samym końcu odpowiedzi dodaj dokładnie jeden marker: [[SCENARIO_CHOICE:{"choiceId":"...","optionId":"..."}]]. Nie pokazuj ani nie omawiaj markera. Jeśli żadna wybór nie została wyraźnie rozstrzygnięta, nie dodawaj markera.`;
     return prompt;
+}
+
+function buildSafeNarratorPlan(world) {
+    const fallback = worldData.plan || 'Brak planu - stwórz własny świat';
+    let parsed = null;
+    try {
+        const source = world?.scenario
+            ? { scenario: world.scenario }
+            : JSON.parse(fallback);
+        parsed = JSON.parse(JSON.stringify(source));
+    } catch (error) {
+        return String(fallback).slice(0, 12000);
+    }
+    const npcLists = [parsed.npcs, parsed.scenario?.npcs].filter(Array.isArray);
+    const knownIds = new Set(Array.from(world?.player?.knownNpcIds || []));
+    for (const list of npcLists) {
+        for (const npc of list) {
+            if (!npc || typeof npc !== 'object') continue;
+            if (!knownIds.has(npc.id)) delete npc.name;
+        }
+    }
+    return JSON.stringify(parsed, null, 2).slice(0, 12000);
 }
 
 /**
@@ -2112,6 +2234,24 @@ function buildLlmMessages(memoryContext = '') {
         if (recent.length > 0 && nextChars > LLM_CONTEXT_LIMITS.maxRecentChars) break;
         recent.unshift({ role: message.role, content: content.slice(0, LLM_CONTEXT_LIMITS.maxRecentChars) });
         recentChars = nextChars;
+    }
+
+    const asksForNpcName = /\b(imie|nazywasz|nazywam|przedstaw|kim jestes|kto ty|twoje imie)\b/i.test(String(userAction || ''));
+    const localNpcs = Array.from(world.npcs?.values?.() || [])
+        .filter(npc => npc && npc.locationId === player.locationId && npc.isAlive !== false)
+        .slice(0, 8)
+        .map((npc, index) => {
+            const known = player.knowsNpcName?.(npc.id) || player.knownNpcIds?.has(npc.id);
+            const displayName = known || asksForNpcName
+                ? npc.name
+                : `Nieznana postać${index > 0 ? ` #${index + 1}` : ''}`;
+            return `- ${displayName} | rola: ${npc.role || 'nieznana'} | id: ${npc.id}`;
+        });
+    if (localNpcs.length > 0) {
+        context += `\n\n**NPC W AKTUALNEJ LOKACJI:**\n${localNpcs.join('\n')}`;
+        context += asksForNpcName
+            ? '\nJeśli NPC przedstawia się, użyj imienia z tej listy.\n'
+            : '\nNie ujawniaj imion, dopóki gracz wyraźnie o nie nie zapyta.\n';
     }
 
     const messages = [{ role: systemMessage.role, content: systemMessage.content }];
@@ -2351,6 +2491,8 @@ async function consolidateNarrativeMemory(world) {
 async function startGame() {
     state.sessionGeneration += 1;
     state.isLoading = false;
+    state.isMultiplayer = false;
+    state.multiplayerGameStarted = false;
     cancelNarrativeConsolidation();
     // Zbierz dane postaci
     characterData.name = elements.charName.value.trim();
@@ -2394,6 +2536,10 @@ async function startGame() {
     // Pokaż sekcję gry
     elements.characterCreation.classList.add('hidden');
     elements.gameSection.classList.remove('hidden');
+    if (elements.saveMultiplayerBtn) elements.saveMultiplayerBtn.classList.add('hidden');
+    if (elements.apiConfigSection) elements.apiConfigSection.classList.add('hidden');
+    if (elements.toggleApiConfigBtn) elements.toggleApiConfigBtn.classList.remove('hidden');
+    updateSetupProgress('game');
     elements.gameCharacterName.textContent = characterData.name;
     elements.gameSetting.textContent = characterData.settingName;
 
@@ -2562,6 +2708,27 @@ async function generateStory(userAction = null) {
             state.isLoading = false;
             elements.sendActionBtn.disabled = false;
             elements.suggestActionsBtn.disabled = false;
+        }
+    }
+}
+
+function renderMultiplayerTimeline(timeline, chatHistory = []) {
+    if ((!Array.isArray(timeline) || timeline.length === 0) && (!Array.isArray(chatHistory) || chatHistory.length === 0)) return;
+    const fullTimeline = Array.isArray(timeline) ? timeline : [];
+    const visibleTimeline = fullTimeline.slice(-20);
+    if (fullTimeline.length > 0) {
+        const hiddenCount = fullTimeline.length - visibleTimeline.length;
+        const suffix = hiddenCount > 0 ? ` Pokazuję ${visibleTimeline.length} najnowszych, starsze nadal są zapisane.` : '';
+        addStoryEntry('system', `📜 Przywrócono ${fullTimeline.length} ostatnich tur wspólnej historii.${suffix}`);
+    }
+    for (const turn of visibleTimeline) {
+        if (turn?.action) addStoryEntry('player', `[${turn.playerName || 'Gracz'}]: ${turn.action}`);
+        if (turn?.response) addStoryEntry('narrator', turn.response);
+    }
+    if (Array.isArray(chatHistory) && chatHistory.length > 0) {
+        addStoryEntry('system', `💬 Przywrócono ${chatHistory.length} wiadomości między graczami.`);
+        for (const message of chatHistory) {
+            if (message?.message) addStoryEntry('player', `💬 [${message.playerName || 'Gracz'}]: ${message.message}`);
         }
     }
 }
@@ -2803,7 +2970,29 @@ function updateGameHUD() {
     
     // Add warning class if survival stats are critical
     updateSurvivalWarnings(player);
+    updateMemoryStatus(world);
     renderCampaignSidebar();
+}
+
+function updateMemoryStatus(world = state.world) {
+    const element = elements.gameMemoryStatus;
+    if (!element || !world) return;
+    const status = world.memoryStatus || world.getNarrativeMemoryStatus?.();
+    if (!status) {
+        element.textContent = state.isMultiplayer
+            ? '☁️ Sesja multiplayer: zapis automatyczny'
+            : '💾 Pamięć kampanii: lokalna';
+        return;
+    }
+    const pending = Number(status.pendingTurns) || 0;
+    const completed = Number(status.completedTurns) || 0;
+    const next = Math.max(1, Number(status.nextConsolidationAt) || 6);
+    const memoryText = pending > 0
+        ? `pamięć robocza ${pending}/${next}`
+        : `pamięć skonsolidowana (${completed} tur)`;
+    element.textContent = state.isMultiplayer
+        ? `☁️ Zapis sesji: automatyczny • ${memoryText}`
+        : `💾 Pamięć kampanii: ${memoryText}`;
 }
 
 /**
@@ -3183,6 +3372,8 @@ function applyLoadedGame(saveData) {
     // Pokaż sekcję gry
     elements.characterCreation.classList.add('hidden');
     elements.gameSection.classList.remove('hidden');
+    if (elements.saveMultiplayerBtn) elements.saveMultiplayerBtn.classList.add('hidden');
+    updateSetupProgress('game');
     elements.gameCharacterName.textContent = characterData.name;
     elements.gameSetting.textContent = characterData.settingName || 'Własny';
     
@@ -3295,6 +3486,9 @@ function newGame() {
         cancelNarrativeConsolidation();
         state.gameState = [];
         state.storyHistory = [];
+        state.isMultiplayer = false;
+        state.multiplayerGameStarted = false;
+        if (elements.saveMultiplayerBtn) elements.saveMultiplayerBtn.classList.add('hidden');
         elements.gameStory.innerHTML = '';
         showCharacterCreation();
     }
