@@ -71,6 +71,21 @@ function testPlayerActionsAndRoundTrip() {
     assert.ok(restored.locations.size >= 3);
 }
 
+function testNaturalTravelFormsAndUnknownDestination() {
+    const world = World.createStarterWorld('Natural Travel Tester', 'town_central');
+    const player = world.player;
+
+    const naturalTravel = world.performPlayerAction('idziemy do city_gate_north', player);
+    assert.strictEqual(naturalTravel.success, true);
+    assert.strictEqual(player.locationId, 'city_gate_north');
+
+    const beforeUnknownTravel = player.locationId;
+    const unknownTravel = world.performPlayerAction('idziemy do karczmy', player);
+    assert.strictEqual(unknownTravel.success, false);
+    assert.strictEqual(player.locationId, beforeUnknownTravel);
+    assert.match(unknownTravel.message, /celu podróży|celu podróży/i);
+}
+
 function testStatusEffectDuration() {
     const world = World.createStarterWorld('Tester', 'town_central');
     const player = world.player;
@@ -434,6 +449,7 @@ function testNarrativePatchValidationPendingTurnsAndBudget() {
 
 testTimeValidation();
 testPlayerActionsAndRoundTrip();
+testNaturalTravelFormsAndUnknownDestination();
 testStatusEffectDuration();
 testEventQueueCountersAndCancellation();
 testTradeCombatAndQuestLoop();

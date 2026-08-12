@@ -425,24 +425,57 @@
                 </div>
             </div>
             
-            <div id="game-story"></div>
-            
-            <!-- Player chat area (visible only in multiplayer) -->
-            <div id="player-chat-area" class="game-input-area hidden">
-                <div class="input-hint">💬 Dialog z innymi graczami (AI widzi ale nie odpowiada)</div>
-                <textarea id="player-chat-input" placeholder="np. [Thorgar] co tam ziomeczku, u ciebie słychać?" rows="2"></textarea>
-                <div class="action-buttons">
-                    <button id="send-player-chat" class="btn-secondary">💬 Wyślij do graczy</button>
+            <div class="game-layout">
+                <div class="game-main-column">
+                    <div id="game-story"></div>
+
+                    <!-- Player chat area (visible only in multiplayer) -->
+                    <div id="player-chat-area" class="game-input-area hidden">
+                        <div class="input-hint">💬 Dialog z innymi graczami (AI widzi ale nie odpowiada)</div>
+                        <textarea id="player-chat-input" placeholder="np. [Thorgar] co tam ziomeczku, u ciebie słychać?" rows="2"></textarea>
+                        <div class="action-buttons">
+                            <button id="send-player-chat" class="btn-secondary">💬 Wyślij do graczy</button>
+                        </div>
+                    </div>
+
+                    <div class="game-input-area">
+                        <div class="input-hint">Co robisz? (Napisz swoją akcję lub wybierz jedną z sugerowanych)</div>
+                        <textarea id="player-action" placeholder="np. Wyciągam miecz i podchodzę do drzwi. Oglądam się uważnie na wszystkie strony..." rows="3"></textarea>
+                        <div class="action-buttons">
+                            <button id="send-action" class="btn-primary">Wykonaj akcję</button>
+                            <button id="suggest-actions" class="btn-secondary">💡 Sugeruj akcje</button>
+                        </div>
+                    </div>
                 </div>
-            </div>
-            
-            <div class="game-input-area">
-                <div class="input-hint">Co robisz? (Napisz swoją akcję lub wybierz jedną z sugerowanych)</div>
-                <textarea id="player-action" placeholder="np. Wyciągam miecz i podchodzę do drzwi. Oglądam się uważnie na wszystkie strony..." rows="3"></textarea>
-                <div class="action-buttons">
-                    <button id="send-action" class="btn-primary">Wykonaj akcję</button>
-                    <button id="suggest-actions" class="btn-secondary">💡 Sugeruj akcje</button>
-                </div>
+
+                <aside id="campaign-sidebar" class="campaign-sidebar" aria-label="Spis kampanii">
+                    <div class="campaign-sidebar-header">
+                        <p class="campaign-sidebar-kicker">SPIS KAMPANII</p>
+                        <h3 id="campaign-title">Kampania</h3>
+                        <p id="campaign-pitch" class="campaign-pitch"></p>
+                    </div>
+                    <section class="campaign-sidebar-section">
+                        <h4>Akt</h4>
+                        <p id="campaign-act" class="campaign-act">—</p>
+                    </section>
+                    <section class="campaign-sidebar-section">
+                        <h4>Teraz</h4>
+                        <p id="campaign-current-location" class="campaign-current-location">—</p>
+                        <p id="campaign-current-location-description" class="campaign-location-description"></p>
+                    </section>
+                    <section class="campaign-sidebar-section">
+                        <h4>Dostępne przejścia</h4>
+                        <ul id="campaign-exits" class="campaign-list"></ul>
+                    </section>
+                    <section class="campaign-sidebar-section">
+                        <h4>Lokacje kampanii</h4>
+                        <ul id="campaign-locations" class="campaign-list campaign-locations-list"></ul>
+                    </section>
+                    <section class="campaign-sidebar-section">
+                        <h4>Akty kampanii</h4>
+                        <ol id="campaign-acts" class="campaign-list campaign-acts-list"></ol>
+                    </section>
+                </aside>
             </div>
         </div>
 

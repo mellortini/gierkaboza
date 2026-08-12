@@ -203,6 +203,15 @@ const elements = {
     playerHunger: document.getElementById('player-hunger'),
     playerThirst: document.getElementById('player-thirst'),
     playerFatigue: document.getElementById('player-fatigue'),
+    campaignSidebar: document.getElementById('campaign-sidebar'),
+    campaignTitle: document.getElementById('campaign-title'),
+    campaignPitch: document.getElementById('campaign-pitch'),
+    campaignAct: document.getElementById('campaign-act'),
+    campaignCurrentLocation: document.getElementById('campaign-current-location'),
+    campaignCurrentLocationDescription: document.getElementById('campaign-current-location-description'),
+    campaignExits: document.getElementById('campaign-exits'),
+    campaignLocations: document.getElementById('campaign-locations'),
+    campaignActs: document.getElementById('campaign-acts'),
     multiplayerLobby: document.getElementById('multiplayer-lobby'),
     lobbyScenarioName: document.getElementById('lobby-scenario-name'),
     lobbyScenarioDescription: document.getElementById('lobby-scenario-description'),
@@ -2613,6 +2622,83 @@ function sanitizeStoryHtml(html) {
     return template.innerHTML;
 }
 
+// Public campaign overview for the player. Keep this deliberately limited to
+// the playable map and act titles; scenario director secrets never belong in
+// the UI sidebar.
+function renderCampaignSidebar() {
+    const world = state.world;
+    if (!world || !elements.campaignSidebar || !world.player) return;
+
+    const metadata = world.worldMetadata || {};
+    const scenario = world.scenario || metadata.scenario || {};
+    const acts = Array.isArray(scenario.acts) ? scenario.acts : [];
+    const location = world.getLocation(world.player.locationId);
+
+    const title = scenario.title || metadata.name || 'Kampania';
+    const pitch = scenario.pitch || metadata.description || '';
+    elements.campaignTitle.textContent = title;
+    elements.campaignPitch.textContent = pitch;
+
+    const activeActId = world.scenarioState?.activeAct;
+    const activeAct = acts.find(act => act && act.id === activeActId) || acts[0];
+    elements.campaignAct.textContent = activeAct?.title || activeActId || (acts.length ? 'Akt I' : '—');
+
+    elements.campaignCurrentLocation.textContent = location?.name || world.player.locationId || '—';
+    elements.campaignCurrentLocationDescription.textContent = location?.description || '';
+
+    const exits = (Array.isArray(location?.connections) ? location.connections : [])
+        .map(connectionId => world.getLocation(connectionId))
+        .filter(Boolean);
+    elements.campaignExits.replaceChildren();
+    if (exits.length === 0) {
+        const item = document.createElement('li');
+        item.className = 'campaign-empty';
+        item.textContent = 'Brak bezpośrednich przejść';
+        elements.campaignExits.appendChild(item);
+    } else {
+        exits.forEach(exit => {
+            const item = document.createElement('li');
+            item.textContent = exit.name;
+            elements.campaignExits.appendChild(item);
+        });
+    }
+
+    const locations = Array.from(world.locations?.values?.() || [])
+        .filter(candidate => candidate && candidate.public !== false && candidate.hidden !== true);
+    elements.campaignLocations.replaceChildren();
+    if (locations.length === 0) {
+        const item = document.createElement('li');
+        item.className = 'campaign-empty';
+        item.textContent = 'Brak danych o lokacjach';
+        elements.campaignLocations.appendChild(item);
+    } else {
+        locations.forEach(candidate => {
+            const item = document.createElement('li');
+            item.textContent = candidate.name || candidate.id;
+            if (candidate.id === world.player.locationId) {
+                item.classList.add('campaign-location-current');
+                item.setAttribute('aria-current', 'location');
+            }
+            elements.campaignLocations.appendChild(item);
+        });
+    }
+
+    elements.campaignActs.replaceChildren();
+    if (acts.length === 0) {
+        const item = document.createElement('li');
+        item.className = 'campaign-empty';
+        item.textContent = 'Brak rozpisanych aktów';
+        elements.campaignActs.appendChild(item);
+    } else {
+        acts.forEach(act => {
+            const item = document.createElement('li');
+            item.textContent = act?.title || act?.id || 'Bez nazwy';
+            if (act?.id === activeActId) item.classList.add('campaign-act-current');
+            elements.campaignActs.appendChild(item);
+        });
+    }
+}
+
 // ========== PHASE 1: HUD Update Function ==========
 /**
  * Update the game HUD with current world state
@@ -2658,6 +2744,7 @@ function updateGameHUD() {
     
     // Add warning class if survival stats are critical
     updateSurvivalWarnings(player);
+    renderCampaignSidebar();
 }
 
 /**

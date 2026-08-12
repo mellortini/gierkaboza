@@ -1673,7 +1673,11 @@ class World {
         let timeCostMinutes = 10;
 
         const targetLocation = this._findLocationInAction(normalized);
-        const travelIntent = /\b(idź|idz|udaj|podąż|podaz|przenieś|przenies|jedź|jedz|wędruj|wedruj|podróżuj|podrozuj)\b/i.test(normalized);
+        // Rozpoznawaj zarówno rozkazy, jak i naturalne deklaracje gracza:
+        // „idź do…”, „idziemy do…”, „ruszamy do…”, „chodźmy do…”.
+        // Dzięki temu takie zdanie nie zostanie błędnie przekazane narratorowi
+        // jako akcja, która może samowolnie zmienić miejsce sceny.
+        const travelIntent = /\b(idźmy|idzmy|idziemy|idę|ide|idź|idz|udajmy|udajmy się|udajemy|udajemy się|udaj|ruszmy|ruszmy się|ruszamy|ruszamy się|rusz|chodźmy|chodzmy|chodzimy|chodź|chodz|podążajmy|podazajmy|podążamy|podazamy|podąż|podaz|przenieśmy|przeniesmy|przenieś|przenies|jedźmy|jedzmy|jedziemy|jedź|jedz|wędrujmy|wedrujmy|wędrujemy|wedrujemy|wędruj|wedruj|podróżujmy|podrozujmy|podróżujemy|podrozujemy|podróżuj|podrozuj)\b/i.test(normalized);
 
         if (travelIntent && targetLocation) {
             const currentLocation = this.getLocation(player.locationId);

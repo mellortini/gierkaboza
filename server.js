@@ -889,9 +889,27 @@ io.on('connection', (socket) => {
 
         // Get current player state for context
         const location = world.getLocation(currentPlayer.locationId);
-        const mechanicsContext = mechanicalResult
-            ? `Mechanika: ${mechanicalResult.success ? 'akcja wykonana' : 'brak zmiany stanu'} — ${mechanicalResult.message}. `
+        const worldChanges = Array.isArray(mechanicalResult?.worldChanges)
+            ? mechanicalResult.worldChanges
+            : Array.isArray(mechanicalResult?.changes)
+                ? mechanicalResult.changes
+                : [];
+        const mechanicStatus = mechanicalResult
+            ? mechanicalResult.success && worldChanges.length > 0
+                ? 'akcja wykonana i stan świata zmieniony'
+                : mechanicalResult.success
+                    ? 'akcja zarejestrowana, ale stan świata nie został zmieniony'
+                    : 'akcja odrzucona — stan świata nie został zmieniony'
             : '';
+        const mechanicsContext = mechanicalResult
+            ? `Mechanika: ${mechanicStatus} — ${mechanicalResult.message}. `
+            : '';
+        const availableExits = Array.isArray(location?.connections)
+            ? location.connections
+                .map(connectionId => world.getLocation(connectionId))
+                .filter(Boolean)
+                .map(exit => exit.name)
+            : [];
 
         // Build action context - be brief, don't describe location every time
         let actionContext = `Jesteś ${playerData.name}. `;
@@ -899,6 +917,10 @@ io.on('connection', (socket) => {
         actionContext += mechanicsContext;
         actionContext += `To dzieje się w ${location ? location.name : currentPlayer.locationId}. `;
         actionContext += `Jest ${world.getFormattedTime()}, dzień ${world.getDayNumber()}. `;
+        actionContext += availableExits.length > 0
+            ? `Bezpośrednio dostępne przejścia: ${availableExits.join(', ')}. `
+            : 'Brak zdefiniowanych bezpośrednich przejść z tej lokacji. ';
+        actionContext += 'Mechaniczny stan świata jest nadrzędny: narrator nie może przenieść postaci do innej lokacji, jeśli mechanika nie zgłosiła udanej podróży. Nie zastępuj nieznanego lub niedostępnego celu inną lokacją; opisz brak możliwości i poproś o poprawny cel. ';
         
         const narrativeEntityIds = [currentPlayer.locationId];
         for (const npc of world.npcs?.values?.() || []) {
@@ -985,6 +1007,8 @@ io.on('connection', (socket) => {
 - Opisz SZCZEGÓŁOWO co się dzieje w tej scenie
 - POKAŻ konkretne działania postaci, nie ogólniki
 - UWZGLĘDNIJ reakcje NPC w czasie rzeczywistym (jęki, słowa, ruchy)
+- Nie zmieniaj lokacji, pozycji ani dostępnych przejść w samym opisie. Traktuj komunikat „stan świata nie został zmieniony” dosłownie.
+- Jeśli gracz podał cel podróży, którego nie ma na liście lokacji lub nie ma go w bezpośrednich przejściach, nie kieruj go do młyna ani żadnego innego miejsca zastępczego.
 - NIE używaj szablonowych zakończeń typu "Czy ta decyzja..."
 - NIE pisz o przyszłych konsekwencjach - opisuj TYLKO teraz`;
         
@@ -1665,6 +1689,7 @@ Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
         // Obrabiamy tylko ostatnie wiadomości z historii; pełna pamięć nie trafia do promptu.
         systemMessage.content += '\n\nSECURITY: The response is broadcast to every player in the room. Never reveal, imply, or invent actor-private facts, facts hidden from the public, or GM/director secrets. Use only public memory facts present in this prompt.';
         systemMessage.content += ' The scenario director brief is internal guidance only: never reveal its secrets directly or as narrator knowledge; reveal them only through player-discoverable events.';
+        systemMessage.content += ' The mechanics section in the user prompt is authoritative. Never invent a successful travel or relocate a character when the mechanics say that the world state did not change.';
         systemMessage.content += ' If the player action clearly resolves one listed scenario choice, append exactly one marker at the very end in this exact format: [[SCENARIO_CHOICE:{"choiceId":"...","optionId":"..."}]]. Otherwise append no marker. Never explain or reveal the marker.';
 
         // Bound the complete prompt, not only individual history sections.
