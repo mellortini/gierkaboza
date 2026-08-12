@@ -868,7 +868,7 @@ async function createRoom(serverUrl, roomId) {
     
     document.getElementById('room-id').value = finalRoomId;
     
-    await joinRoom(serverUrl, finalRoomId);
+    await joinRoom(serverUrl, finalRoomId, { createRoom: true });
 }
 
 function normalizeLobbyData(data) {
