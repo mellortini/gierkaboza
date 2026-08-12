@@ -1319,6 +1319,14 @@ function setupMultiplayerListeners() {
     // Player-to-player chat message (only from other players - server uses socket.to() so sender never gets this)
     state.socket.on('playerChatMessage', (data) => {
         addStoryEntry('player', `💬 [${data.playerName}]: ${data.message}`);
+        if (data.worldState) {
+            try {
+                state.world = World.fromJSON(data.worldState);
+                updateGameHUD();
+            } catch (error) {
+                console.error('Error applying shared NPC knowledge:', error);
+            }
+        }
     });
 
     // Action error (when bot fails to respond)

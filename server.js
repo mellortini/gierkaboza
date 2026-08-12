@@ -1382,14 +1382,30 @@ io.on('connection', (socket) => {
                 room.chatHistory = room.chatHistory.slice(-50);
             }
 
-            // Broadcast only to OTHER players in room (sender already added message locally)
-            socket.to(player.roomId).emit('playerChatMessage', {
-                playerId: playerData.id,
-                playerName: playerData.name,
-                message: message,
-                type: type || 'player_dialogue',
-                timestamp: Date.now()
-            });
+            const mentionedNpcIds = typeof room.world?.getKnownNpcIdsMentionedInText === 'function'
+                ? room.world.getKnownNpcIdsMentionedInText(message, playerData.player)
+                : [];
+            // A player-to-player message is visible to every other player in
+            // the room. Share only names the sender already knows, and send a
+            // viewer-specific world snapshot to recipients whose knowledge changed.
+            for (const [recipientSocketId, recipientData] of room.players.entries()) {
+                if (recipientSocketId === socket.id) continue;
+                let knowledgeChanged = false;
+                for (const npcId of mentionedNpcIds) {
+                    if (recipientData.player?.revealNpcName?.(npcId)) knowledgeChanged = true;
+                }
+                const payload = {
+                    playerId: playerData.id,
+                    playerName: playerData.name,
+                    message: message,
+                    type: type || 'player_dialogue',
+                    timestamp: Date.now()
+                };
+                if (knowledgeChanged) {
+                    payload.worldState = serializeWorld(room.world, recipientData.player, recipientData.id);
+                }
+                io.to(recipientSocketId).emit('playerChatMessage', payload);
+            }
 
             console.log(`Player chat from ${playerData.name}: ${message.substring(0, 50)}`); 
         } catch (err) {

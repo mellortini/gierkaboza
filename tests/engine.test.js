@@ -113,6 +113,9 @@ function testNpcNameDiscoveryAndPersistence() {
     );
     assert.deepStrictEqual(revealed, ['npc_mira']);
     assert.strictEqual(world.getLiveState().npcInteractions[0].name, 'Mira Wrona');
+    assert.deepStrictEqual(world.getKnownNpcIdsMentionedInText('Piotr, to Mira Wrona.', world.player), ['npc_mira']);
+    assert.deepStrictEqual(world.getKnownNpcIdsMentionedInText('Piotr, to Mira.', world.player), ['npc_mira']);
+    assert.deepStrictEqual(world.getKnownNpcIdsMentionedInText('Mira Wrona', new Player('Piotr', 'village')), []);
 
     const restored = World.fromJSON(JSON.parse(JSON.stringify(world.toJSON())));
     assert.strictEqual(restored.player.knowsNpcName('npc_mira'), true);

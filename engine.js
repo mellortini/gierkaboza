@@ -3515,6 +3515,34 @@ class World {
         return revealed;
     }
 
+    /**
+     * Find NPC names that a player who already knows them is explicitly
+     * mentioning in a player-to-player message.
+     */
+    getKnownNpcIdsMentionedInText(text, player = this.player) {
+        if (!player || typeof text !== 'string') return [];
+        const normalize = value => String(value || '')
+            .toLocaleLowerCase('pl-PL')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '');
+        const words = normalize(text).split(/[^a-z0-9]+/).filter(Boolean);
+        const knownNpcs = Array.from(this.npcs.values()).filter(npc => {
+            return npc?.name && (player.knowsNpcName?.(npc.id) || player.knownNpcIds?.has(npc.id));
+        });
+        const mentioned = [];
+        for (const npc of knownNpcs) {
+            const nameWords = normalize(npc.name).split(/[^a-z0-9]+/).filter(Boolean);
+            if (nameWords.length === 0) continue;
+            const fullNameMentioned = nameWords.every((word, index) => words[index] === word)
+                || words.some((_, start) => nameWords.every((word, offset) => words[start + offset] === word));
+            const uniqueFirstNameMentioned = nameWords.length > 1
+                && words.includes(nameWords[0])
+                && knownNpcs.filter(candidate => normalize(candidate.name).split(/[^a-z0-9]+/).filter(Boolean)[0] === nameWords[0]).length === 1;
+            if (fullNameMentioned || uniqueFirstNameMentioned) mentioned.push(npc.id);
+        }
+        return mentioned;
+    }
+
     // ========================================================================
     // PHASE 4: CONTEXTUAL MEMORY SYSTEM - COMPRESSION
     // ========================================================================
