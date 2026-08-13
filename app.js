@@ -2218,11 +2218,14 @@ function extractSceneTags(actionText) {
     return tags;
 }
 
-function buildLlmMessages(memoryContext = '') {
+function buildLlmMessages(memoryContext = '', userAction = '') {
     const systemMessage = state.gameState.find(message => message.role === 'system') || {
         role: 'system',
         content: 'Jesteś narratorem gry RPG.'
     };
+    const world = state.world;
+    const player = world?.player;
+    let context = '';
     const conversation = state.gameState.filter(message => message !== systemMessage && message.role !== 'system');
     const recent = [];
     let recentChars = 0;
@@ -2237,11 +2240,11 @@ function buildLlmMessages(memoryContext = '') {
     }
 
     const asksForNpcName = /\b(imie|nazywasz|nazywam|przedstaw|kim jestes|kto ty|twoje imie)\b/i.test(String(userAction || ''));
-    const localNpcs = Array.from(world.npcs?.values?.() || [])
-        .filter(npc => npc && npc.locationId === player.locationId && npc.isAlive !== false)
+    const localNpcs = Array.from(world?.npcs?.values?.() || [])
+        .filter(npc => npc && npc.locationId === player?.locationId && npc.isAlive !== false)
         .slice(0, 8)
         .map((npc, index) => {
-            const known = player.knowsNpcName?.(npc.id) || player.knownNpcIds?.has(npc.id);
+            const known = player?.knowsNpcName?.(npc.id) || player?.knownNpcIds?.has(npc.id);
             const displayName = known || asksForNpcName
                 ? npc.name
                 : `Nieznana postać${index > 0 ? ` #${index + 1}` : ''}`;
@@ -2255,6 +2258,9 @@ function buildLlmMessages(memoryContext = '') {
     }
 
     const messages = [{ role: systemMessage.role, content: systemMessage.content }];
+    if (context) {
+        messages.push({ role: 'system', content: context });
+    }
     if (memoryContext) {
         messages.push({
             role: 'system',
@@ -2639,7 +2645,7 @@ async function generateStory(userAction = null) {
             },
             body: JSON.stringify({
                 model: state.model,
-                messages: buildLlmMessages(memoryContext),
+                messages: buildLlmMessages(memoryContext, userAction),
                 temperature: 0.9,
                 max_tokens: 2000
             })
