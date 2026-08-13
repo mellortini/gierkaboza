@@ -14,6 +14,16 @@ const state = {
     narrativeConsolidationInFlight: false,
     narrativeConsolidationTimer: null,
     narrativeConsolidationController: null,
+    auth: {
+        token: localStorage.getItem('rpg_auth_token') || '',
+        user: null,
+        serverUrl: localStorage.getItem('rpg_auth_server') || window.location.origin,
+        friends: [],
+        incoming: [],
+        outgoing: [],
+        invites: []
+    },
+    authRefreshTimer: null,
     
     // Multiplayer state
     isMultiplayer: false,
@@ -122,6 +132,24 @@ const settingNames = {
 
 // Elementy DOM
 const elements = {
+    accountSection: document.getElementById('account-section'),
+    accountLoginForm: document.getElementById('account-login-form'),
+    accountServerUrl: document.getElementById('account-server-url'),
+    accountUsername: document.getElementById('account-username'),
+    accountPassword: document.getElementById('account-password'),
+    accountStatus: document.getElementById('account-status'),
+    accountIdentity: document.getElementById('account-identity'),
+    accountDashboard: document.getElementById('account-dashboard'),
+    accountWelcome: document.getElementById('account-welcome'),
+    accountLogout: document.getElementById('account-logout'),
+    accountRefresh: document.getElementById('account-refresh'),
+    friendsList: document.getElementById('friends-list'),
+    friendRequestForm: document.getElementById('friend-request-form'),
+    friendUsername: document.getElementById('friend-username'),
+    friendRequests: document.getElementById('friend-requests'),
+    invitesList: document.getElementById('invites-list'),
+    inviteCount: document.getElementById('invite-count'),
+    lobbyFriendsList: document.getElementById('lobby-friends-list'),
     apiKeyInput: document.getElementById('api-key'),
     saveApiKeyBtn: document.getElementById('save-api-key'),
     modelSelect: document.getElementById('model-select'),
@@ -490,6 +518,26 @@ async function init() {
         if (element) element.addEventListener(event, handler);
     };
 
+    if (elements.accountServerUrl) elements.accountServerUrl.value = state.auth.serverUrl;
+    on(elements.accountLoginForm, 'submit', loginAccount);
+    on(elements.accountLogout, 'click', () => logoutAccount(true));
+    on(elements.accountRefresh, 'click', () => refreshAccountDashboard(true));
+    on(elements.friendRequestForm, 'submit', sendFriendRequest);
+    on(elements.friendsList, 'click', handleAccountAction);
+    on(elements.friendRequests, 'click', handleAccountAction);
+    on(elements.invitesList, 'click', handleAccountAction);
+    on(elements.lobbyFriendsList, 'click', handleAccountAction);
+    renderAccountDashboard();
+    if (state.auth.token) {
+        refreshAccountDashboard(false).then(() => {
+            if (state.auth.user) {
+                if (state.authRefreshTimer) clearInterval(state.authRefreshTimer);
+                state.authRefreshTimer = setInterval(() => refreshAccountDashboard(false), 15000);
+                connectToServer(state.auth.serverUrl).catch(error => console.warn('Account reconnect unavailable:', error.message));
+            }
+        });
+    }
+
     // Event listeners - API
     on(elements.saveApiKeyBtn, 'click', saveApiKey);
     on(elements.toggleApiConfigBtn, 'click', toggleApiConfig);
@@ -657,6 +705,190 @@ async function saveApiKey() {
 }
 
 // ============================================================================
+// ACCOUNT, FRIENDS AND GAME INVITES
+// ============================================================================
+
+function normalizeServerUrl(value) {
+    let url = String(value || '').trim();
+    if (!url) url = window.location.origin;
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    return url.replace(/\/+$/, '');
+}
+
+function accountStatus(message, type = '') {
+    if (!elements.accountStatus) return;
+    elements.accountStatus.textContent = message || '';
+    elements.accountStatus.className = `status${type ? ` ${type}` : ''}`;
+}
+
+async function accountFetch(path, options = {}) {
+    if (!state.auth.token) throw new Error('Zaloguj się najpierw.');
+    const headers = { ...(options.headers || {}), Authorization: `Bearer ${state.auth.token}` };
+    if (options.body && typeof options.body !== 'string') {
+        headers['Content-Type'] = 'application/json';
+        options = { ...options, body: JSON.stringify(options.body) };
+    }
+    const response = await fetch(`${normalizeServerUrl(state.auth.serverUrl)}${path}`, { ...options, headers });
+    let payload = null;
+    try { payload = await response.json(); } catch (error) { payload = null; }
+    if (!response.ok) throw new Error(payload?.message || `Błąd serwera (${response.status})`);
+    return payload;
+}
+
+function applyAccountSnapshot(payload, serverUrl = state.auth.serverUrl) {
+    if (!payload || typeof payload !== 'object') return;
+    state.auth.serverUrl = normalizeServerUrl(serverUrl);
+    state.auth.user = payload.user || state.auth.user;
+    state.auth.friends = Array.isArray(payload.friends) ? payload.friends : [];
+    state.auth.incoming = Array.isArray(payload.incoming) ? payload.incoming : [];
+    state.auth.outgoing = Array.isArray(payload.outgoing) ? payload.outgoing : [];
+    state.auth.invites = Array.isArray(payload.invites) ? payload.invites : [];
+    localStorage.setItem('rpg_auth_server', state.auth.serverUrl);
+    renderAccountDashboard();
+}
+
+function renderAccountDashboard() {
+    const user = state.auth.user;
+    const loggedIn = Boolean(user && state.auth.token);
+    elements.accountLoginForm?.classList.toggle('hidden', loggedIn);
+    elements.accountDashboard?.classList.toggle('hidden', !loggedIn);
+    elements.accountIdentity?.classList.toggle('hidden', !loggedIn);
+    if (!loggedIn) return;
+
+    const label = `${user.displayName || user.username} (@${user.username})`;
+    if (elements.accountIdentity) elements.accountIdentity.textContent = label;
+    if (elements.accountWelcome) elements.accountWelcome.textContent = `Witaj, ${user.displayName || user.username}`;
+
+    if (elements.friendsList) {
+        const friends = state.auth.friends;
+        elements.friendsList.innerHTML = friends.length
+            ? friends.map(friend => `<div class="friend-row"><div><strong>${escapeHtml(friend.displayName || friend.username)}</strong><small>@${escapeHtml(friend.username)} · <span class="presence ${friend.online ? 'online' : ''}">${friend.online ? 'online' : 'offline'}</span></small></div><button class="btn-secondary btn-small" data-account-action="invite" data-username="${escapeHtml(friend.username)}" ${state.roomId ? '' : 'disabled'}>Zaproś do gry</button></div>`).join('')
+            : '<p class="account-empty">Brak znajomych.</p>';
+    }
+    if (elements.friendRequests) {
+        const requests = [
+            ...state.auth.incoming.map(friend => `<div class="request-row"><span>Zaproszenie od <strong>${escapeHtml(friend.displayName || friend.username)}</strong></span><span><button class="btn-secondary btn-small" data-account-action="accept-friend" data-username="${escapeHtml(friend.username)}">Akceptuj</button> <button class="btn-secondary btn-small" data-account-action="reject-friend" data-username="${escapeHtml(friend.username)}">Odrzuć</button></span></div>`),
+            ...state.auth.outgoing.map(friend => `<div class="request-row muted">Wysłano do <strong>${escapeHtml(friend.displayName || friend.username)}</strong></div>`)
+        ];
+        elements.friendRequests.innerHTML = requests.join('');
+    }
+    if (elements.inviteCount) elements.inviteCount.textContent = String(state.auth.invites.length);
+    if (elements.invitesList) {
+        elements.invitesList.innerHTML = state.auth.invites.length
+            ? state.auth.invites.map(invite => `<div class="invite-row"><div><strong>${escapeHtml(invite.from?.displayName || invite.from?.username || 'Gracz')}</strong> zaprasza do <span>${escapeHtml(invite.roomName || invite.roomId)}</span><small>ID pokoju: ${escapeHtml(invite.roomId)}</small></div><span><button class="btn-secondary btn-small" data-account-action="accept-invite" data-invite-id="${escapeHtml(invite.id)}">Akceptuj</button> <button class="btn-secondary btn-small" data-account-action="reject-invite" data-invite-id="${escapeHtml(invite.id)}">Odrzuć</button></span></div>`).join('')
+            : '<p class="account-empty">Brak oczekujących zaproszeń.</p>';
+    }
+    renderLobbyFriends();
+}
+
+function renderLobbyFriends() {
+    if (!elements.lobbyFriendsList) return;
+    if (!state.auth.user) {
+        elements.lobbyFriendsList.innerHTML = '<p class="lobby-empty">Zaloguj się, aby zapraszać znajomych.</p>';
+        return;
+    }
+    elements.lobbyFriendsList.innerHTML = state.auth.friends.length
+        ? state.auth.friends.map(friend => `<div class="friend-row"><div><strong>${escapeHtml(friend.displayName || friend.username)}</strong><small>@${escapeHtml(friend.username)} · <span class="presence ${friend.online ? 'online' : ''}">${friend.online ? 'online' : 'offline'}</span></small></div><button class="btn-secondary btn-small" data-account-action="invite" data-username="${escapeHtml(friend.username)}" ${state.roomId ? '' : 'disabled'}>Zaproś</button></div>`).join('')
+        : '<p class="lobby-empty">Nie masz jeszcze znajomych.</p>';
+}
+
+async function refreshAccountDashboard(showMessage = false) {
+    if (!state.auth.token) return;
+    try {
+        const payload = await accountFetch('/api/auth/me');
+        applyAccountSnapshot(payload);
+        if (showMessage) accountStatus('Dane konta odświeżone.', 'success');
+    } catch (error) {
+        if (/zaloguj|401|sesja/i.test(error.message)) logoutAccount(false);
+        else if (showMessage) accountStatus(error.message, 'error');
+    }
+}
+
+async function loginAccount(event) {
+    event?.preventDefault();
+    const serverUrl = normalizeServerUrl(elements.accountServerUrl?.value);
+    const username = elements.accountUsername?.value.trim().toLowerCase();
+    const password = elements.accountPassword?.value || '';
+    if (!username || !password) return accountStatus('Wpisz login i hasło.', 'error');
+    accountStatus('Logowanie…', 'connecting');
+    try {
+        const response = await fetch(`${serverUrl}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.message || 'Nie udało się zalogować.');
+        state.auth.token = payload.token;
+        localStorage.setItem('rpg_auth_token', state.auth.token);
+        applyAccountSnapshot(payload, serverUrl);
+        elements.accountPassword.value = '';
+        accountStatus(`Zalogowano jako ${payload.user.displayName}.`, 'success');
+        const multiplayerServer = document.getElementById('server-url');
+        if (multiplayerServer && (!multiplayerServer.value || multiplayerServer.value.includes('localhost'))) multiplayerServer.value = serverUrl;
+        if (state.authRefreshTimer) clearInterval(state.authRefreshTimer);
+        state.authRefreshTimer = setInterval(() => refreshAccountDashboard(false), 15000);
+        connectToServer(serverUrl).catch(error => console.warn('Account socket unavailable:', error.message));
+    } catch (error) {
+        accountStatus(error.message, 'error');
+    }
+}
+
+function logoutAccount(showMessage = true) {
+    if (state.authRefreshTimer) clearInterval(state.authRefreshTimer);
+    state.authRefreshTimer = null;
+    if (state.auth.token) accountFetch('/api/auth/logout').catch(() => {});
+    state.auth = { token: '', user: null, serverUrl: state.auth.serverUrl, friends: [], incoming: [], outgoing: [], invites: [] };
+    localStorage.removeItem('rpg_auth_token');
+    if (state.socket && !state.roomId) state.socket.disconnect();
+    renderAccountDashboard();
+    if (showMessage) accountStatus('Wylogowano.', 'success');
+}
+
+async function sendFriendRequest(event) {
+    event?.preventDefault();
+    const username = elements.friendUsername?.value.trim().toLowerCase();
+    if (!username) return;
+    try {
+        applyAccountSnapshot(await accountFetch('/api/friends/request', { method: 'POST', body: { username } }));
+        elements.friendUsername.value = '';
+        accountStatus(`Wysłano zaproszenie do ${username}.`, 'success');
+    } catch (error) { accountStatus(error.message, 'error'); }
+}
+
+async function inviteFriend(username) {
+    if (!state.roomId) return accountStatus('Najpierw utwórz albo dołącz do pokoju.', 'error');
+    try {
+        await accountFetch('/api/invites', { method: 'POST', body: { friendUsername: username, roomId: state.roomId, roomName: state.lobby.data?.scenario?.name || `Pokój ${state.roomId}` } });
+        accountStatus(`Wysłano zaproszenie do ${username}.`, 'success');
+    } catch (error) { accountStatus(error.message, 'error'); }
+}
+
+async function handleAccountAction(event) {
+    const button = event.target.closest('[data-account-action]');
+    if (!button) return;
+    const action = button.dataset.accountAction;
+    try {
+        if (action === 'invite') return inviteFriend(button.dataset.username);
+        if (action === 'accept-friend' || action === 'reject-friend') {
+            applyAccountSnapshot(await accountFetch(`/api/friends/${encodeURIComponent(button.dataset.username)}/${action === 'accept-friend' ? 'accept' : 'reject'}`, { method: 'POST' }));
+            accountStatus(action === 'accept-friend' ? 'Znajomy dodany.' : 'Zaproszenie odrzucone.', 'success');
+            return;
+        }
+        if (action === 'accept-invite' || action === 'reject-invite') {
+            const endpoint = `/api/invites/${encodeURIComponent(button.dataset.inviteId)}/${action === 'accept-invite' ? 'accept' : 'reject'}`;
+            const response = await accountFetch(endpoint, { method: 'POST' });
+            if (action === 'accept-invite' && response?.roomId) {
+                const roomInput = document.getElementById('room-id');
+                if (roomInput) roomInput.value = response.roomId;
+                accountStatus(`Zaproszenie przyjęte. Pokój ${response.roomId} jest wpisany w multiplayerze.`, 'success');
+            }
+            await refreshAccountDashboard(false);
+        }
+    } catch (error) { accountStatus(error.message, 'error'); }
+}
+
+// ============================================================================
 // MULTIPLAYER FUNCTIONS
 // ============================================================================
 
@@ -688,7 +920,8 @@ function connectToServer(serverUrl) {
                 reconnectionDelay: 1000,
                 timeout: 20000,
                 forceNew: true,
-                withCredentials: false
+                withCredentials: false,
+                auth: state.auth.token ? { token: state.auth.token } : {}
             });
 
             state.socket.on('connect', () => {
@@ -816,6 +1049,13 @@ async function joinRoom(serverUrl, roomId, options = {}) {
     if (effectiveWorldOption === 'new' && worldData.generated && !worldData.blueprint) {
         statusEl.textContent = 'Ten plan świata nie jest jeszcze grywalny. Wygeneruj go ponownie.';
         statusEl.className = 'multiplayer-status error';
+        return;
+    }
+
+    if (!state.auth.user || !state.auth.token) {
+        statusEl.textContent = 'Zaloguj się na konto Mat albo Rob, aby grać multiplayer.';
+        statusEl.className = 'multiplayer-status error';
+        elements.accountUsername?.focus();
         return;
     }
     
@@ -1363,6 +1603,28 @@ function startMultiplayerGame(roomData) {
 function setupMultiplayerListeners() {
     if (!state.socket || state.multiplayerListenersSetup) return;
     state.multiplayerListenersSetup = true;
+
+    state.socket.on('accountPresence', (data) => {
+        const friend = state.auth.friends.find(item => item.id === data?.userId);
+        if (friend) {
+            friend.online = data.online === true;
+            renderAccountDashboard();
+        }
+    });
+    state.socket.on('friendRequest', () => {
+        refreshAccountDashboard(false);
+        accountStatus('Masz nowe zaproszenie do znajomych.', 'success');
+    });
+    state.socket.on('friendUpdate', (data) => applyAccountSnapshot(data));
+    state.socket.on('gameInvite', (invite) => {
+        const known = state.auth.invites.some(item => item.id === invite?.id);
+        if (!known && invite) state.auth.invites.unshift(invite);
+        renderAccountDashboard();
+        accountStatus(`Nowe zaproszenie do gry od ${invite?.from?.displayName || 'znajomego'}.`, 'success');
+    });
+    state.socket.on('inviteAccepted', (invite) => {
+        accountStatus(`${invite?.to?.displayName || 'Znajomy'} przyjął zaproszenie do gry.`, 'success');
+    });
 
     state.socket.on('lobbyUpdate', handleLobbyUpdate);
     state.socket.on('lobbyError', (data) => {

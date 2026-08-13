@@ -330,6 +330,183 @@ button {
     margin-bottom: 15px;
 }
 
+/* Account, friends and invitations */
+.account-section {
+    border-color: rgba(0, 255, 200, 0.22);
+    background: linear-gradient(135deg, rgba(11, 36, 53, 0.82), rgba(17, 24, 45, 0.78));
+}
+
+.account-section-header,
+.account-dashboard-toolbar,
+.account-card-heading,
+.friend-row,
+.request-row,
+.invite-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.account-kicker {
+    margin: 0 0 5px;
+    color: #00ffc8;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+}
+
+.account-intro {
+    margin: -10px 0 0;
+    color: #aebbc4;
+    line-height: 1.45;
+}
+
+.account-identity {
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: rgba(0, 255, 200, 0.12);
+    color: #8dffe4;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+.account-login-form {
+    display: grid;
+    grid-template-columns: 1.3fr 0.8fr 0.8fr auto;
+    gap: 12px;
+    align-items: end;
+    margin-top: 18px;
+}
+
+.account-login-form .input-group {
+    margin: 0;
+}
+
+.account-login-form button {
+    margin-bottom: 15px;
+}
+
+.account-dashboard {
+    margin-top: 18px;
+}
+
+.account-dashboard-toolbar {
+    padding: 12px 14px;
+    border-radius: 9px;
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.account-online-label {
+    margin-left: 8px;
+    color: #63eca2;
+    font-size: 0.78rem;
+}
+
+.account-dashboard-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-top: 14px;
+}
+
+.account-card {
+    min-width: 0;
+    padding: 15px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.account-card h3,
+.account-card h4 {
+    margin: 0;
+    color: #f5f7fa;
+}
+
+.btn-small {
+    padding: 6px 10px;
+    font-size: 0.76rem;
+}
+
+.friends-list,
+.friend-requests,
+.invites-list,
+.lobby-friends-list {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.friend-row,
+.request-row,
+.invite-row {
+    padding: 10px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.045);
+}
+
+.friend-row small,
+.invite-row small {
+    display: block;
+    margin-top: 3px;
+    color: #9fb0bb;
+    font-size: 0.76rem;
+}
+
+.presence {
+    color: #aebbc4;
+}
+
+.presence.online {
+    color: #63eca2;
+}
+
+.account-empty {
+    margin: 8px 0;
+    color: #9fb0bb;
+    font-size: 0.86rem;
+}
+
+.request-row,
+.invite-row {
+    align-items: flex-start;
+    font-size: 0.84rem;
+}
+
+.request-row.muted {
+    color: #9fb0bb;
+}
+
+.friend-request-form {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.friend-request-form input {
+    min-width: 0;
+    flex: 1;
+    padding: 9px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 7px;
+    background: rgba(0, 0, 0, 0.25);
+    color: #fff;
+}
+
+.lobby-invite-panel {
+    margin-top: 16px;
+    padding: 15px;
+    border: 1px solid rgba(0, 255, 200, 0.13);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.16);
+}
+
+.lobby-invite-panel h4 {
+    margin: 0;
+    color: #f5f7fa;
+}
+
 .saved-games-toolbar,
 .save-manager-actions {
     display: flex;
@@ -718,6 +895,24 @@ button {
 }
 
 @media (max-width: 760px) {
+    .account-login-form,
+    .account-dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .account-login-form button {
+        margin-bottom: 0;
+    }
+
+    .account-section-header,
+    .account-dashboard-toolbar,
+    .friend-row,
+    .request-row,
+    .invite-row {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
     .lobby-columns {
         grid-template-columns: 1fr;
     }

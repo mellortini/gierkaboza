@@ -19,6 +19,65 @@
             <button id="toggle-api-config" class="header-settings-btn hidden" type="button">⚙️ Ustawienia API</button>
         </header>
 
+        <!-- Konto, znajomi i zaproszenia -->
+        <section id="account-section" class="section account-section">
+            <div class="account-section-header">
+                <div>
+                    <p class="account-kicker">KONTO GRACZA</p>
+                    <h2>👤 Zaloguj się do swojej drużyny</h2>
+                    <p class="account-intro">Konto pozwala zachować znajomych, postacie i zaproszenia między sesjami.</p>
+                </div>
+                <span id="account-identity" class="account-identity hidden"></span>
+            </div>
+            <form id="account-login-form" class="account-login-form">
+                <div class="input-group">
+                    <label for="account-server-url">Adres serwera kont</label>
+                    <input id="account-server-url" type="text" placeholder="https://gierkaboza-production.up.railway.app">
+                </div>
+                <div class="input-group">
+                    <label for="account-username">Login</label>
+                    <input id="account-username" type="text" maxlength="80" autocomplete="username" placeholder="mat albo rob" required>
+                </div>
+                <div class="input-group">
+                    <label for="account-password">Hasło</label>
+                    <input id="account-password" type="password" maxlength="200" autocomplete="current-password" placeholder="Hasło" required>
+                </div>
+                <button id="account-login" class="btn-primary" type="submit">Zaloguj</button>
+            </form>
+            <div id="account-status" class="status" role="status"></div>
+            <div id="account-dashboard" class="account-dashboard hidden">
+                <div class="account-dashboard-toolbar">
+                    <div>
+                        <strong id="account-welcome">Witaj</strong>
+                        <span class="account-online-label">● konto aktywne</span>
+                    </div>
+                    <button id="account-logout" class="btn-secondary" type="button">Wyloguj</button>
+                </div>
+                <div class="account-dashboard-grid">
+                    <section class="account-card">
+                        <div class="account-card-heading">
+                            <h3>Znajomi</h3>
+                            <button id="account-refresh" class="btn-secondary btn-small" type="button">Odśwież</button>
+                        </div>
+                        <div id="friends-list" class="friends-list"><p class="account-empty">Brak znajomych.</p></div>
+                        <form id="friend-request-form" class="friend-request-form">
+                            <input id="friend-username" type="text" maxlength="80" placeholder="Login znajomego, np. rob" required>
+                            <button class="btn-secondary" type="submit">Dodaj znajomego</button>
+                        </form>
+                        <div id="friend-requests" class="friend-requests"></div>
+                    </section>
+                    <section class="account-card">
+                        <div class="account-card-heading">
+                            <h3>Zaproszenia do gry</h3>
+                            <span id="invite-count" class="lobby-count">0</span>
+                        </div>
+                        <div id="invites-list" class="invites-list"><p class="account-empty">Brak oczekujących zaproszeń.</p></div>
+                        <small class="input-help">Zaproszenie wysyła się z aktywnego pokoju w lobby.</small>
+                    </section>
+                </div>
+            </div>
+        </section>
+
         <!-- Konfiguracja API -->
         <div id="api-config" class="section">
             <h2>🔑 Konfiguracja API</h2>
@@ -349,6 +408,15 @@
                             </form>
                         </section>
                     </div>
+                    <section id="lobby-invite-panel" class="lobby-invite-panel">
+                        <div class="account-card-heading">
+                            <div>
+                                <h4>Zaproś znajomego do tej kampanii</h4>
+                                <small class="input-help">Znajomi muszą być zalogowani na swoje konta, żeby otrzymać zaproszenie.</small>
+                            </div>
+                        </div>
+                        <div id="lobby-friends-list" class="lobby-friends-list"><p class="lobby-empty">Zaloguj się, aby zapraszać znajomych.</p></div>
+                    </section>
                     <div class="lobby-footer">
                         <p id="lobby-help" class="lobby-help">Dodaj postać, wybierz ją, a następnie poczekaj na start hosta.</p>
                         <div class="lobby-participants-wrap">

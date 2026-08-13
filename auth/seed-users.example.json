@@ -1,0 +1,9 @@
+{
+  "users": [
+    { "id": "user_mat", "username": "mat", "displayName": "Mat", "passwordEnv": "RPG_MAT_PASSWORD" },
+    { "id": "user_rob", "username": "rob", "displayName": "Rob", "passwordEnv": "RPG_ROB_PASSWORD" }
+  ],
+  "friendships": [
+    { "id": "friendship_mat_rob", "userA": "user_mat", "userB": "user_rob", "status": "accepted", "requestedBy": "user_mat" }
+  ]
+}

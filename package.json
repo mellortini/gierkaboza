@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node tests/engine.test.js"
+    "test": "node tests/engine.test.js && node tests/auth.test.js"
   },
   "dependencies": {
     "express": "^4.18.2",

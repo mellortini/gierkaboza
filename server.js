@@ -9,6 +9,7 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 const server = http.createServer(app);
@@ -17,7 +18,7 @@ const server = http.createServer(app);
 app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', process.env.CLIENT_ORIGIN || '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
-    res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With,content-type');
+    res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With,content-type,Authorization');
     res.setHeader('Access-Control-Allow-Credentials', 'false');
     if (req.method === 'OPTIONS') {
         res.sendStatus(200);
@@ -56,6 +57,11 @@ io.use((socket, next) => {
         console.log(`Connection rejected: max connections (${MAX_CONNECTIONS}) reached`);
         return next(new Error('Server is full. Please try again later.'));
     }
+    const token = socket.handshake?.auth?.token || '';
+    socket.authUser = token ? authUserFromToken(token) : null;
+    if (token && !socket.authUser) {
+        return next(new Error('Sesja konta wygasła. Zaloguj się ponownie.'));
+    }
     next();
 });
 
@@ -93,6 +99,8 @@ const rooms = new Map();
 // Player sessions - keyed by socket ID
 const players = new Map();
 const actionRateLimits = new Map();
+const accountSockets = new Map();
+const authLoginAttempts = new Map();
 
 // ====================== PEŁNY SILNIK (fazy 1-5) ======================
 let World;
@@ -118,9 +126,245 @@ const DATA_DIR = process.env.RPG_DATA_DIR
     ? path.resolve(process.env.RPG_DATA_DIR)
     : path.join(__dirname, 'data');
 const ROOMS_FILE = path.join(DATA_DIR, 'rooms.json');
+const AUTH_FILE = path.join(DATA_DIR, 'auth.json');
+const AUTH_SEED_FILE = path.join(__dirname, 'auth', 'seed-users.example.json');
 const SCENARIOS_DIR = path.join(__dirname, 'scenarios');
 const rejoinSessions = new Map();
 const scenarioCatalog = new Map();
+
+const AUTH_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+let authState = {
+    users: {},
+    friendships: [],
+    invites: [],
+    sessions: {}
+};
+
+function safeAuthText(value, max = 120) {
+    return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+function friendshipUsers(userA, userB) {
+    return [String(userA || ''), String(userB || '')].sort();
+}
+
+function friendshipKey(userA, userB) {
+    return friendshipUsers(userA, userB).join(':');
+}
+
+function hashSessionToken(token) {
+    return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+function verifyPassword(password, encodedHash) {
+    if (typeof password !== 'string' || typeof encodedHash !== 'string') return false;
+    const parts = encodedHash.split('$');
+    if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
+    const N = Number(parts[1]);
+    const r = Number(parts[2]);
+    const p = Number(parts[3]);
+    const salt = parts[4];
+    const expectedHex = parts[5];
+    if (!Number.isInteger(N) || !Number.isInteger(r) || !Number.isInteger(p) || !salt || !/^[a-f0-9]+$/i.test(expectedHex)) return false;
+    try {
+        const actual = crypto.scryptSync(password, salt, expectedHex.length / 2, { N, r, p });
+        const expected = Buffer.from(expectedHex, 'hex');
+        return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+    } catch (error) {
+        return false;
+    }
+}
+
+function createPasswordHash(password) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const N = 16384;
+    const r = 8;
+    const p = 1;
+    const derived = crypto.scryptSync(String(password), salt, 64, { N, r, p }).toString('hex');
+    return `scrypt$${N}$${r}$${p}$${salt}$${derived}`;
+}
+
+function publicUser(userId) {
+    const user = authState.users[userId];
+    if (!user) return null;
+    return {
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName || user.username,
+        online: accountSockets.has(user.id)
+    };
+}
+
+function persistAuthState() {
+    try {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        const tempFile = `${AUTH_FILE}.tmp`;
+        fs.writeFileSync(tempFile, JSON.stringify(authState, null, 2), 'utf8');
+        fs.renameSync(tempFile, AUTH_FILE);
+    } catch (error) {
+        console.error('Could not persist auth state:', error.message);
+    }
+}
+
+function loadAuthState() {
+    let changed = false;
+    try {
+        if (fs.existsSync(AUTH_FILE)) {
+            const stored = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
+            if (stored && typeof stored === 'object') {
+                authState = {
+                    users: stored.users && typeof stored.users === 'object' ? stored.users : {},
+                    friendships: Array.isArray(stored.friendships) ? stored.friendships : [],
+                    invites: Array.isArray(stored.invites) ? stored.invites : [],
+                    sessions: stored.sessions && typeof stored.sessions === 'object' ? stored.sessions : {}
+                };
+            }
+        }
+    } catch (error) {
+        console.error('Could not load auth state:', error.message);
+    }
+
+    try {
+        if (fs.existsSync(AUTH_SEED_FILE)) {
+            const seed = JSON.parse(fs.readFileSync(AUTH_SEED_FILE, 'utf8'));
+            for (const user of Array.isArray(seed.users) ? seed.users : []) {
+                const password = user?.passwordEnv ? process.env[user.passwordEnv] : '';
+                if (!user?.id || !user?.username || !password) continue;
+                if (!authState.users[user.id]) {
+                    authState.users[user.id] = {
+                        id: user.id,
+                        username: String(user.username).toLowerCase(),
+                        displayName: user.displayName || user.username,
+                        passwordHash: createPasswordHash(password),
+                        createdAt: Date.now()
+                    };
+                    changed = true;
+                }
+            }
+            for (const friendship of Array.isArray(seed.friendships) ? seed.friendships : []) {
+                const key = friendshipKey(friendship.userA, friendship.userB);
+                if (!key || authState.friendships.some(item => friendshipKey(item.userA, item.userB) === key)) continue;
+                authState.friendships.push({
+                    id: friendship.id || `friendship_${key}`,
+                    userA: friendship.userA,
+                    userB: friendship.userB,
+                    status: friendship.status === 'accepted' ? 'accepted' : 'pending',
+                    requestedBy: friendship.requestedBy || friendship.userA,
+                    createdAt: Date.now(),
+                    updatedAt: Date.now()
+                });
+                changed = true;
+            }
+        }
+    } catch (error) {
+        console.error('Could not load auth seed:', error.message);
+    }
+
+    const now = Date.now();
+    for (const [hash, session] of Object.entries(authState.sessions)) {
+        if (!session || Number(session.expiresAt) <= now || !authState.users[session.userId]) {
+            delete authState.sessions[hash];
+            changed = true;
+        }
+    }
+    if (changed || !fs.existsSync(AUTH_FILE)) persistAuthState();
+}
+
+function createAuthSession(userId) {
+    const token = crypto.randomBytes(32).toString('base64url');
+    const expiresAt = Date.now() + AUTH_SESSION_TTL_MS;
+    authState.sessions[hashSessionToken(token)] = { userId, expiresAt, createdAt: Date.now() };
+    persistAuthState();
+    return { token, expiresAt };
+}
+
+function authUserFromToken(token) {
+    const normalized = safeAuthText(token, 300);
+    if (!normalized) return null;
+    const hash = hashSessionToken(normalized);
+    const session = authState.sessions[hash];
+    if (!session || Number(session.expiresAt) <= Date.now()) {
+        if (session) {
+            delete authState.sessions[hash];
+            persistAuthState();
+        }
+        return null;
+    }
+    return authState.users[session.userId] || null;
+}
+
+function requestAuthUser(req) {
+    const header = typeof req.headers.authorization === 'string' ? req.headers.authorization : '';
+    const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+    return authUserFromToken(token);
+}
+
+function requireAuth(req, res, next) {
+    const user = requestAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'auth_required', message: 'Zaloguj się, aby korzystać z konta.' });
+    req.authUser = user;
+    next();
+}
+
+function findUserByUsername(username) {
+    const normalized = safeAuthText(username, 80).toLowerCase();
+    return Object.values(authState.users).find(user => user.username === normalized) || null;
+}
+
+function getFriendship(userA, userB) {
+    const key = friendshipKey(userA, userB);
+    return authState.friendships.find(item => friendshipKey(item.userA, item.userB) === key) || null;
+}
+
+function accountSnapshot(userId) {
+    const friends = [];
+    const incoming = [];
+    const outgoing = [];
+    for (const friendship of authState.friendships) {
+        const isParticipant = friendship.userA === userId || friendship.userB === userId;
+        if (!isParticipant) continue;
+        const otherId = friendship.userA === userId ? friendship.userB : friendship.userA;
+        if (friendship.status === 'accepted') {
+            const user = publicUser(otherId);
+            if (user) friends.push(user);
+        } else if (friendship.requestedBy === userId) {
+            const user = publicUser(otherId);
+            if (user) outgoing.push(user);
+        } else {
+            const user = publicUser(otherId);
+            if (user) incoming.push(user);
+        }
+    }
+    const invites = authState.invites
+        .filter(invite => invite.toUserId === userId && invite.status === 'pending' && Number(invite.expiresAt) > Date.now())
+        .map(publicInvite)
+        .filter(Boolean);
+    return { user: publicUser(userId), friends, incoming, outgoing, invites };
+}
+
+function publicInvite(invite) {
+    if (!invite) return null;
+    const from = publicUser(invite.fromUserId);
+    const to = publicUser(invite.toUserId);
+    return {
+        id: invite.id,
+        roomId: invite.roomId,
+        roomName: invite.roomName || invite.roomId,
+        from: from ? { id: from.id, username: from.username, displayName: from.displayName } : null,
+        to: to ? { id: to.id, username: to.username, displayName: to.displayName } : null,
+        status: invite.status,
+        createdAt: invite.createdAt,
+        expiresAt: invite.expiresAt
+    };
+}
+
+function emitAccountEvent(userId, event, payload) {
+    const sockets = accountSockets.get(userId);
+    if (!sockets) return;
+    for (const socketId of sockets) io.to(socketId).emit(event, payload);
+}
+
+loadAuthState();
 
 function normalizeScenarioId(value) {
     return typeof value === 'string' ? value.trim().slice(0, 120) : '';
@@ -177,6 +421,7 @@ function createRoom(roomId, world = null, persisted = {}) {
         world,
         players: new Map(),
         savedPlayers: new Map(Object.entries(persisted.savedPlayers || {})),
+        savedPlayerOwners: new Map(Object.entries(persisted.savedPlayerOwners || {})),
         createdAt: persisted.createdAt || Date.now(),
         lastActiveAt: persisted.lastActiveAt || Date.now(),
         hostId: null,
@@ -482,6 +727,7 @@ function persistRooms() {
             id: room.id,
             world: room.world ? room.world.toJSON() : null,
             savedPlayers: Object.fromEntries(room.savedPlayers || []),
+            savedPlayerOwners: Object.fromEntries(room.savedPlayerOwners || []),
             createdAt: room.createdAt,
             lastActiveAt: room.lastActiveAt,
             hostPlayerId: room.hostPlayerId || null,
@@ -522,6 +768,11 @@ loadPersistedRooms();
 
 io.on('connection', (socket) => {
     console.log(`Player connected: ${socket.id}, transport: ${socket.conn.transport.name}`);
+    if (socket.authUser) {
+        if (!accountSockets.has(socket.authUser.id)) accountSockets.set(socket.authUser.id, new Set());
+        accountSockets.get(socket.authUser.id).add(socket.id);
+        emitAccountEvent(socket.authUser.id, 'accountPresence', { userId: socket.authUser.id, online: true });
+    }
 
     // Handle transport upgrade
     socket.conn.on('upgrade', (transport) => {
@@ -551,6 +802,11 @@ io.on('connection', (socket) => {
             const playerName = String(rawPlayerName || '').trim();
             const scenarioId = normalizeScenarioId(rawScenarioId);
             const roomAlreadyExists = rooms.has(roomId);
+
+            if (!socket.authUser) {
+                socket.emit('joinError', { code: 'auth_required', message: 'Zaloguj się na konto, zanim dołączysz do multiplayera.' });
+                return;
+            }
 
             console.log(`Join room request: ${roomId}, player: ${playerName}, worldOption: ${worldOption}, scenarioId: ${scenarioId || 'none'}, createRoom: ${createRoomRequest === true}`);
             
@@ -640,7 +896,10 @@ io.on('connection', (socket) => {
         if (!room.lobby) room.lobby = createLobbyState({}, room.world);
         room.lobby.campaign = publicCampaignSnapshot(room.world);
         // Add or restore a player. The world remains shared, while character state is per socket/player.
-        const playerId = (requestedPlayerId && room.savedPlayers.has(requestedPlayerId))
+        const savedPlayerOwner = requestedPlayerId ? room.savedPlayerOwners.get(requestedPlayerId) : null;
+        const canRestoreRequestedPlayer = requestedPlayerId && room.savedPlayers.has(requestedPlayerId)
+            && (!savedPlayerOwner || savedPlayerOwner === socket.authUser.id);
+        const playerId = canRestoreRequestedPlayer
             ? requestedPlayerId
             : `player_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
         const savedPlayer = room.savedPlayers.get(playerId);
@@ -652,6 +911,7 @@ io.on('connection', (socket) => {
                 : new Player(playerName, room.world.player?.locationId || 'town_central'));
         gamePlayer.name = playerName;
         room.savedPlayers.delete(playerId);
+        room.savedPlayerOwners.delete(playerId);
         const activeHost = room.hostId && room.players.has(room.hostId);
         if (!activeHost && (!room.hostPlayerId || room.hostPlayerId === playerId || room.lobby.participants?.[room.hostPlayerId]?.connected !== true)) {
             room.hostId = socket.id;
@@ -661,6 +921,7 @@ io.on('connection', (socket) => {
         room.players.set(socket.id, {
             id: playerId,
             socketId: socket.id,
+            authUserId: socket.authUser.id,
             name: playerName,
             characterData: characterData || {},
             player: gamePlayer,
@@ -679,6 +940,7 @@ io.on('connection', (socket) => {
             roomId,
             playerId,
             playerName,
+            authUserId: socket.authUser.id,
             characterData: characterData || {}
         });
 
@@ -1186,9 +1448,11 @@ ${world.isSandbox
 
             if (playerData?.player) {
                 room.savedPlayers.set(playerId, playerData.player.toJSON());
+                room.savedPlayerOwners.set(playerId, player.authUserId || playerData.authUserId || socket.authUser?.id || null);
                 rejoinSessions.set(`${roomId}:${playerId}`, {
                     roomId,
                     playerId,
+                    authUserId: player.authUserId || playerData.authUserId || socket.authUser?.id || null,
                     playerName,
                     characterData: characterData || {},
                     player: playerData.player.toJSON(),
@@ -1254,11 +1518,21 @@ ${world.isSandbox
 
         players.delete(socket.id);
         actionRateLimits.delete(socket.id);
+        if (socket.authUser) {
+            const sockets = accountSockets.get(socket.authUser.id);
+            sockets?.delete(socket.id);
+            if (sockets && sockets.size === 0) accountSockets.delete(socket.authUser.id);
+            emitAccountEvent(socket.authUser.id, 'accountPresence', { userId: socket.authUser.id, online: accountSockets.has(socket.authUser.id) });
+        }
         console.log(`Player disconnected: ${socket.id}`);
     });
 
     // Rejoin room after reconnect
     socket.on('legacyRejoinRoom', (data) => {
+        if (!socket.authUser) {
+            socket.emit('joinError', { message: 'Zaloguj się ponownie, aby wrócić do pokoju.' });
+            return;
+        }
         const { roomId } = data;
         
         // Sprawdź czy są dane do ponownego dołączenia
@@ -1281,9 +1555,14 @@ ${world.isSandbox
         
         const room = rooms.get(roomId);
         const rejoinData = socket.rejoinData;
+        if (rejoinData.authUserId && rejoinData.authUserId !== socket.authUser.id) {
+            socket.emit('joinError', { message: 'Ta sesja należy do innego konta.' });
+            return;
+        }
         const savedPlayer = room.savedPlayers.get(rejoinData.playerId) || rejoinData.player;
         const restoredPlayer = savedPlayer ? Player.fromJSON(savedPlayer) : new Player(rejoinData.playerName, room.world?.player?.locationId || 'town_central');
         room.savedPlayers.delete(rejoinData.playerId);
+        room.savedPlayerOwners.delete(rejoinData.playerId);
         if (!room.hostId || !room.players.has(room.hostId) || room.hostPlayerId === rejoinData.playerId) {
             room.hostId = socket.id;
             room.hostPlayerId = rejoinData.playerId;
@@ -1293,6 +1572,7 @@ ${world.isSandbox
         room.players.set(socket.id, {
             id: rejoinData.playerId,
             socketId: socket.id,
+            authUserId: socket.authUser.id,
             name: rejoinData.playerName,
             characterData: rejoinData.characterData,
             player: restoredPlayer,
@@ -1310,7 +1590,9 @@ ${world.isSandbox
         players.set(socket.id, {
             roomId,
             playerId: rejoinData.playerId,
-            playerName: rejoinData.playerName
+            playerName: rejoinData.playerName,
+            authUserId: socket.authUser.id,
+            characterData: rejoinData.characterData || {}
         });
         
         // Wyślij potwierdzenie
@@ -1353,6 +1635,10 @@ ${world.isSandbox
 
     // Rejoin using the persisted session key, since a new socket cannot carry old socket properties.
     socket.on('rejoinRoom', (data) => {
+        if (!socket.authUser) {
+            socket.emit('joinError', { message: 'Zaloguj się ponownie, aby wrócić do pokoju.' });
+            return;
+        }
         const roomId = String(data?.roomId || '').trim();
         const playerId = String(data?.playerId || '').trim();
         const key = `${roomId}:${playerId}`;
@@ -1364,9 +1650,14 @@ ${world.isSandbox
         }
 
         const room = rooms.get(roomId);
+        if (rejoinData.authUserId && rejoinData.authUserId !== socket.authUser.id) {
+            socket.emit('joinError', { message: 'Ta sesja należy do innego konta.' });
+            return;
+        }
         const savedPlayer = room.savedPlayers.get(playerId) || rejoinData.player;
         const restoredPlayer = Player.fromJSON(savedPlayer);
         room.savedPlayers.delete(playerId);
+        room.savedPlayerOwners.delete(playerId);
         if (!room.hostId || !room.players.has(room.hostId)) {
             room.hostId = socket.id;
             room.hostPlayerId = playerId;
@@ -1374,6 +1665,7 @@ ${world.isSandbox
         room.players.set(socket.id, {
             id: playerId,
             socketId: socket.id,
+            authUserId: socket.authUser.id,
             name: rejoinData.playerName,
             characterData: rejoinData.characterData || {},
             player: restoredPlayer,
@@ -1388,6 +1680,7 @@ ${world.isSandbox
             roomId,
             playerId,
             playerName: rejoinData.playerName,
+            authUserId: socket.authUser.id,
             characterData: rejoinData.characterData || {}
         });
 
@@ -1945,6 +2238,153 @@ app.get('/api/scenarios', (req, res) => {
     res.json(Array.from(scenarioCatalog.values())
         .map(publicScenarioSummary)
         .sort((a, b) => a.title.localeCompare(b.title, 'pl')));
+});
+
+// ============================================================================
+// ACCOUNT, FRIENDS AND GAME INVITES
+// ============================================================================
+
+app.post('/api/auth/login', (req, res) => {
+    const username = safeAuthText(req.body?.username, 80).toLowerCase();
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const attemptKey = `${req.ip || 'unknown'}:${username}`;
+    const now = Date.now();
+    const attempts = authLoginAttempts.get(attemptKey);
+    if (attempts && now - attempts.startedAt < 15 * 60 * 1000 && attempts.count >= 10) {
+        return res.status(429).json({ error: 'login_rate_limited', message: 'Za dużo nieudanych prób. Spróbuj ponownie za kilka minut.' });
+    }
+    const user = findUserByUsername(username);
+    if (!user || !verifyPassword(password, user.passwordHash)) {
+        if (!attempts || now - attempts.startedAt >= 15 * 60 * 1000) {
+            authLoginAttempts.set(attemptKey, { startedAt: now, count: 1 });
+        } else {
+            attempts.count += 1;
+        }
+        return res.status(401).json({ error: 'invalid_credentials', message: 'Nieprawidłowy login lub hasło.' });
+    }
+    authLoginAttempts.delete(attemptKey);
+    const session = createAuthSession(user.id);
+    res.json({ ...accountSnapshot(user.id), token: session.token, expiresAt: session.expiresAt });
+});
+
+app.post('/api/auth/logout', requireAuth, (req, res) => {
+    const header = typeof req.headers.authorization === 'string' ? req.headers.authorization : '';
+    const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+    if (token) delete authState.sessions[hashSessionToken(token)];
+    persistAuthState();
+    res.json({ ok: true });
+});
+
+app.get('/api/auth/me', requireAuth, (req, res) => {
+    res.json(accountSnapshot(req.authUser.id));
+});
+
+app.get('/api/friends', requireAuth, (req, res) => {
+    res.json(accountSnapshot(req.authUser.id));
+});
+
+app.post('/api/friends/request', requireAuth, (req, res) => {
+    const target = findUserByUsername(req.body?.username);
+    if (!target) return res.status(404).json({ error: 'user_not_found', message: 'Nie znaleziono takiego konta.' });
+    if (target.id === req.authUser.id) return res.status(400).json({ error: 'self_friend_request', message: 'Nie możesz dodać samego siebie.' });
+    const existing = getFriendship(req.authUser.id, target.id);
+    if (existing?.status === 'accepted') return res.status(409).json({ error: 'already_friends', message: 'To konto jest już na liście znajomych.' });
+    if (existing) return res.status(409).json({ error: 'request_exists', message: 'Zaproszenie do znajomych już istnieje.' });
+    const friendship = {
+        id: `friendship_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
+        userA: req.authUser.id,
+        userB: target.id,
+        status: 'pending',
+        requestedBy: req.authUser.id,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+    };
+    authState.friendships.push(friendship);
+    persistAuthState();
+    emitAccountEvent(target.id, 'friendRequest', { from: publicUser(req.authUser.id) });
+    res.status(201).json(accountSnapshot(req.authUser.id));
+});
+
+app.post('/api/friends/:username/accept', requireAuth, (req, res) => {
+    const target = findUserByUsername(req.params.username);
+    const friendship = target ? getFriendship(req.authUser.id, target.id) : null;
+    if (!friendship || friendship.status !== 'pending' || friendship.requestedBy === req.authUser.id) {
+        return res.status(404).json({ error: 'friend_request_not_found', message: 'Nie znaleziono przychodzącego zaproszenia.' });
+    }
+    friendship.status = 'accepted';
+    friendship.updatedAt = Date.now();
+    persistAuthState();
+    emitAccountEvent(target.id, 'friendUpdate', accountSnapshot(target.id));
+    res.json(accountSnapshot(req.authUser.id));
+});
+
+app.post('/api/friends/:username/reject', requireAuth, (req, res) => {
+    const target = findUserByUsername(req.params.username);
+    const friendship = target ? getFriendship(req.authUser.id, target.id) : null;
+    if (!friendship || friendship.status !== 'pending') {
+        return res.status(404).json({ error: 'friend_request_not_found', message: 'Nie znaleziono zaproszenia.' });
+    }
+    authState.friendships = authState.friendships.filter(item => item.id !== friendship.id);
+    persistAuthState();
+    emitAccountEvent(target.id, 'friendUpdate', accountSnapshot(target.id));
+    res.json(accountSnapshot(req.authUser.id));
+});
+
+app.get('/api/invites', requireAuth, (req, res) => {
+    res.json(accountSnapshot(req.authUser.id).invites);
+});
+
+app.post('/api/invites', requireAuth, (req, res) => {
+    const target = findUserByUsername(req.body?.friendUsername || req.body?.username);
+    const roomId = safeAuthText(req.body?.roomId, 64);
+    const roomName = safeAuthText(req.body?.roomName, 160) || roomId;
+    if (!target) return res.status(404).json({ error: 'user_not_found', message: 'Nie znaleziono znajomego.' });
+    if (!getFriendship(req.authUser.id, target.id) || getFriendship(req.authUser.id, target.id).status !== 'accepted') {
+        return res.status(403).json({ error: 'friend_required', message: 'Możesz zapraszać tylko zaakceptowanych znajomych.' });
+    }
+    if (!roomId || !rooms.has(roomId)) return res.status(404).json({ error: 'room_not_found', message: 'Najpierw utwórz lub otwórz pokój gry.' });
+    const inviterIsInRoom = Array.from(rooms.get(roomId).players.values()).some(player => player.authUserId === req.authUser.id);
+    if (!inviterIsInRoom) return res.status(403).json({ error: 'room_access_required', message: 'Nie jesteś aktywnym uczestnikiem tego pokoju.' });
+    const duplicate = authState.invites.find(invite => invite.fromUserId === req.authUser.id && invite.toUserId === target.id && invite.roomId === roomId && invite.status === 'pending');
+    if (duplicate) return res.status(409).json({ error: 'invite_exists', message: 'To zaproszenie już czeka na odpowiedź.' });
+    const invite = {
+        id: `invite_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
+        fromUserId: req.authUser.id,
+        toUserId: target.id,
+        roomId,
+        roomName,
+        status: 'pending',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000
+    };
+    authState.invites.push(invite);
+    persistAuthState();
+    emitAccountEvent(target.id, 'gameInvite', publicInvite(invite));
+    res.status(201).json(publicInvite(invite));
+});
+
+app.post('/api/invites/:inviteId/accept', requireAuth, (req, res) => {
+    const invite = authState.invites.find(item => item.id === req.params.inviteId && item.toUserId === req.authUser.id);
+    if (!invite || invite.status !== 'pending' || Number(invite.expiresAt) <= Date.now()) {
+        return res.status(404).json({ error: 'invite_not_found', message: 'Zaproszenie wygasło albo nie istnieje.' });
+    }
+    if (!rooms.has(invite.roomId)) {
+        return res.status(404).json({ error: 'room_not_found', message: 'Pokój nie jest już dostępny.' });
+    }
+    invite.status = 'accepted';
+    invite.updatedAt = Date.now();
+    persistAuthState();
+    emitAccountEvent(invite.fromUserId, 'inviteAccepted', publicInvite(invite));
+    res.json({ ok: true, roomId: invite.roomId, invite: publicInvite(invite) });
+});
+
+app.post('/api/invites/:inviteId/reject', requireAuth, (req, res) => {
+    const invite = authState.invites.find(item => item.id === req.params.inviteId && item.toUserId === req.authUser.id);
+    if (!invite || invite.status !== 'pending') return res.status(404).json({ error: 'invite_not_found', message: 'Zaproszenie nie istnieje.' });
+    invite.status = 'rejected';
+    invite.updatedAt = Date.now();
+    persistAuthState();
+    res.json({ ok: true });
 });
 
 // Health check

@@ -1,5 +1,29 @@
 # Multiplayer RPG - Deployment Guide
 
+## Konta, znajomi i zaproszenia
+
+Multiplayer ma teraz warstwę kont. W wersji testowej są przygotowane dwa konta:
+
+| Login | Hasło | Znajomy |
+|---|---|---|
+| `mat` | wartość `RPG_MAT_PASSWORD` | `rob` |
+| `rob` | wartość `RPG_ROB_PASSWORD` | `mat` |
+
+Po zalogowaniu panel konta pokazuje status znajomych oraz oczekujące zaproszenia. Host może wysłać zaproszenie do aktywnego pokoju przyciskiem `Zaproś do gry`. Drugi gracz przyjmuje je na swoim koncie, a ID pokoju zostaje automatycznie wpisane w sekcji multiplayer.
+
+Hasła nie są przechowywane w repozytorium. Serwer tworzy hash scrypt przy pierwszym seedowaniu kont na podstawie zmiennych `RPG_MAT_PASSWORD` i `RPG_ROB_PASSWORD`. Aby zachować ustalone hasło testowe, ustaw obie zmienne na `123` w Railway. Stan sesji, znajomych i zaproszeń jest zapisywany w `data/auth.json`, podobnie jak pokoje w `data/rooms.json`.
+
+Na Railway trzeba ustawić `RPG_DATA_DIR` na zamontowany Volume albo później podłączyć adapter PostgreSQL. Bez trwałego dysku konta testowe odtworzą się z seeda po restarcie, ale aktywne sesje i zaproszenia mogą zostać utracone.
+
+### API kont
+
+- `POST /api/auth/login` — logowanie i token sesji;
+- `GET /api/auth/me` — konto, znajomi i zaproszenia;
+- `POST /api/friends/request` — zaproszenie do znajomych;
+- `POST /api/friends/:username/accept` — akceptacja znajomego;
+- `POST /api/invites` — zaproszenie znajomego do aktywnego pokoju;
+- `POST /api/invites/:inviteId/accept` — przyjęcie zaproszenia do pokoju.
+
 ## 🚀 Quick Start (Local Development)
 
 ### 1. Install Dependencies
