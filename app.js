@@ -34,6 +34,7 @@ const state = {
     players: [],
     multiplayerListenersSetup: false,
     multiplayerGameStarted: false,
+    pendingRoll: null,
     pendingRoomData: null,
     lobbyFallbackTimer: null,
     lobby: {
@@ -212,6 +213,11 @@ const elements = {
     newGameBtn: document.getElementById('new-game'),
     saveMultiplayerBtn: document.getElementById('save-multiplayer'),
     gameMemoryStatus: document.getElementById('game-memory-status'),
+    d20Panel: document.getElementById('d20-panel'),
+    d20Title: document.getElementById('d20-title'),
+    d20Description: document.getElementById('d20-description'),
+    d20Result: document.getElementById('d20-result'),
+    rollD20Btn: document.getElementById('roll-d20'),
     savedGamesSection: document.getElementById('saved-games-section'),
     savedGamesList: document.getElementById('saved-games-list'),
     saveSlotFromMenuBtn: document.getElementById('save-slot-from-menu'),
@@ -235,6 +241,10 @@ const elements = {
     playerMana: document.getElementById('player-mana'),
     playerGold: document.getElementById('player-gold'),
     playerInventory: document.getElementById('player-inventory'),
+    playerLevel: document.getElementById('player-level'),
+    playerStatsPanel: document.getElementById('player-stats-panel'),
+    playerStats: document.getElementById('player-stats'),
+    statPointsLeft: document.getElementById('stat-points-left'),
     playerHunger: document.getElementById('player-hunger'),
     playerThirst: document.getElementById('player-thirst'),
     playerFatigue: document.getElementById('player-fatigue'),
@@ -621,6 +631,8 @@ async function init() {
 
     // Event listeners - Gra
     on(elements.sendActionBtn, 'click', sendAction);
+    on(elements.rollD20Btn, 'click', rollD20);
+    on(elements.playerStats, 'click', handleStatPanelClick);
     on(elements.playerAction, 'keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -951,12 +963,14 @@ function connectToServer(serverUrl) {
                 console.log('Connection lost:', data);
                 updateMultiplayerStatus('Utracono połączenie z pokojem. Łączę ponownie...', 'error');
                 state.isMultiplayer = false;
+                state.pendingRoll = null;
             });
             
             // Ponowne dołączenie do pokoju
             state.socket.on('roomRejoined', (data) => {
                 console.log('Room rejoined:', data);
                 state.isMultiplayer = true;
+                state.pendingRoll = null;
                 state.roomId = data.roomId;
                 state.playerId = data.playerId;
                 state.playerName = data.playerName;
@@ -1123,6 +1137,7 @@ async function joinRoom(serverUrl, roomId, options = {}) {
         state.socket.once('roomJoined', (data) => {
             state.isMultiplayer = true;
             state.multiplayerGameStarted = false;
+            state.pendingRoll = null;
             state.pendingRoomData = data;
             state.lobby.active = true;
             state.lobby.supported = false;
@@ -1538,6 +1553,8 @@ function updateMultiplayerStatus(message, type) {
 function startMultiplayerGame(roomData) {
     if (state.multiplayerGameStarted) return;
     state.multiplayerGameStarted = true;
+    state.pendingRoll = null;
+    if (elements.d20Panel) elements.d20Panel.classList.add('hidden');
     state.lobby.active = false;
     if (state.lobbyFallbackTimer) window.clearTimeout(state.lobbyFallbackTimer);
     state.lobbyFallbackTimer = null;
@@ -1668,6 +1685,29 @@ function setupMultiplayerListeners() {
         }
     });
 
+    state.socket.on('rollRequested', handleRollRequested);
+
+    state.socket.on('rollResolved', handleRollResolved);
+
+    state.socket.on('rollError', (data) => {
+        state.pendingRoll = null;
+        if (elements.rollD20Btn) elements.rollD20Btn.disabled = true;
+        addStoryEntry('system', `❌ Błąd kości: ${data?.message || 'Nie udało się wykonać rzutu.'}`);
+    });
+
+    state.socket.on('statsUpdated', (data) => {
+        if (data?.worldState) {
+            state.world = World.fromJSON(data.worldState);
+            updateGameHUD();
+        }
+        if (data?.message) addStoryEntry('system', `📊 ${data.message}`);
+    });
+
+    state.socket.on('statsError', (data) => {
+        updateGameHUD();
+        addStoryEntry('system', `❌ Błąd statystyk: ${data?.message || 'Nie udało się zmienić statystyki.'}`);
+    });
+
     // Action started
     state.socket.on('actionStarted', (data) => {
         addStoryEntry('system', `${data.playerName} wykonuje akcję: ${data.action}...`);
@@ -1716,6 +1756,107 @@ function setupMultiplayerListeners() {
         addStoryEntry('system', `❌ Błąd dołączania: ${data.message}`);
         state.isMultiplayer = false;
     });
+}
+
+function formatSignedNumber(value) {
+    const number = Number(value) || 0;
+    return `${number >= 0 ? '+' : ''}${number}`;
+}
+
+function handleRollRequested(data) {
+    if (!data?.rollId) return;
+    state.pendingRoll = data;
+    if (elements.d20Panel) elements.d20Panel.classList.remove('hidden');
+    if (elements.d20Title) {
+        elements.d20Title.textContent = `${data.label || 'Test kości'} — trudność ${data.difficulty ?? '?'}`;
+    }
+    if (elements.d20Description) {
+        const actor = data.playerId === state.playerId ? 'Twoja akcja' : `${data.playerName || 'Gracz'} wykonuje test`;
+        elements.d20Description.textContent = `${actor}. Premia: ${formatSignedNumber(data.modifier)}${data.targetName ? ` • Cel: ${data.targetName}` : ''}`;
+    }
+    if (elements.d20Result) elements.d20Result.textContent = data.reason || 'Rzut jest losowany po stronie serwera.';
+    if (elements.rollD20Btn) {
+        elements.rollD20Btn.disabled = data.playerId !== state.playerId || !state.socket;
+        elements.rollD20Btn.textContent = data.playerId === state.playerId ? '🎲 Rzuć kością' : '⏳ Czeka na gracza';
+        elements.rollD20Btn.classList.remove('d20-button-rolling');
+    }
+    addStoryEntry('system', data.playerId === state.playerId
+        ? `🎲 ${data.label || 'Test kości'}: rzuć d20, aby rozstrzygnąć akcję.`
+        : `🎲 ${data.playerName || 'Gracz'} wykonuje test: ${data.label || 'd20'}.`);
+}
+
+function rollD20() {
+    const pending = state.pendingRoll;
+    if (!pending || pending.playerId !== state.playerId || !state.socket) return;
+    if (elements.rollD20Btn) {
+        elements.rollD20Btn.disabled = true;
+        elements.rollD20Btn.textContent = '🎲 Losowanie...';
+        elements.rollD20Btn.classList.add('d20-button-rolling');
+    }
+    state.socket.emit('rollD20', { rollId: pending.rollId });
+}
+
+function handleRollResolved(data) {
+    if (!data?.rollId) return;
+    const total = (Number(data.value) || 0) + (Number(data.modifier) || 0);
+    const successText = Number(data.value) === 20 || (Number(data.value) !== 1 && total >= Number(data.difficulty))
+        ? 'sukces'
+        : 'porażka';
+    if (elements.d20Panel) elements.d20Panel.classList.remove('hidden');
+    if (elements.d20Title) elements.d20Title.textContent = `${data.label || 'Test kości'} — wynik: ${data.value}`;
+    if (elements.d20Description) elements.d20Description.textContent = `${data.playerName || 'Gracz'} wyrzucił ${data.value} ${formatSignedNumber(data.modifier)} = ${total} przeciwko ${data.difficulty}.`;
+    if (elements.d20Result) elements.d20Result.textContent = `Test: ${successText}${data.targetName ? ` • Cel: ${data.targetName}` : ''}`;
+    if (data.rollId === state.pendingRoll?.rollId) state.pendingRoll = null;
+    if (elements.rollD20Btn) {
+        elements.rollD20Btn.disabled = true;
+        elements.rollD20Btn.textContent = '✅ Wynik rozstrzygnięty';
+        elements.rollD20Btn.classList.remove('d20-button-rolling');
+    }
+    addStoryEntry('system', `🎲 ${data.playerName || 'Gracz'}: ${data.value} ${formatSignedNumber(data.modifier)} = ${total} (${successText}).`);
+}
+
+const STAT_LABELS = Object.freeze({
+    strength: 'Siła',
+    dexterity: 'Zręczność',
+    constitution: 'Kondycja',
+    intelligence: 'Inteligencja',
+    wisdom: 'Mądrość',
+    charisma: 'Charyzma'
+});
+
+function renderPlayerStats(player) {
+    if (!elements.playerStats) return;
+    const stats = player?.stats || {};
+    const points = Math.max(0, Number(player?.unspentStatPoints) || 0);
+    if (elements.statPointsLeft) elements.statPointsLeft.textContent = `Punkty: ${points}`;
+    elements.playerStats.innerHTML = Object.entries(STAT_LABELS).map(([key, label]) => {
+        const score = Math.max(1, Number(stats[key]) || 10);
+        const modifier = Math.floor((score - 10) / 2);
+        const disabled = points <= 0 || score >= 20;
+        return `
+            <div class="stat-card">
+                <div class="stat-card-heading"><strong>${label}</strong><small>${formatSignedNumber(modifier)}</small></div>
+                <span class="stat-card-score">${score}</span>
+                <button type="button" class="stat-card-button" data-stat-key="${key}" ${disabled ? 'disabled' : ''}>+1</button>
+            </div>
+        `;
+    }).join('');
+}
+
+function handleStatPanelClick(event) {
+    const button = event.target.closest?.('[data-stat-key]');
+    if (!button || button.disabled) return;
+    const ability = button.dataset.statKey;
+    if (!Object.prototype.hasOwnProperty.call(STAT_LABELS, ability)) return;
+    if (state.isMultiplayer && state.socket) {
+        button.disabled = true;
+        state.socket.emit('spendStatPoint', { ability });
+        return;
+    }
+    if (state.world?.player?.spendStatPoint?.(ability)) {
+        updateGameHUD();
+        addStoryEntry('system', `📊 Rozwijasz statystykę: ${STAT_LABELS[ability]}.`);
+    }
 }
 
 /**
@@ -2828,6 +2969,8 @@ async function startGame() {
     state.isLoading = false;
     state.isMultiplayer = false;
     state.multiplayerGameStarted = false;
+    state.pendingRoll = null;
+    if (elements.d20Panel) elements.d20Panel.classList.add('hidden');
     cancelNarrativeConsolidation();
     // Zbierz dane postaci
     characterData.name = elements.charName.value.trim();
@@ -3290,6 +3433,10 @@ function updateGameHUD() {
     // Gold
     elements.playerGold.textContent = player.gold;
 
+    if (elements.playerLevel) {
+        elements.playerLevel.textContent = `${Number(player.level) || 1} (${Number(player.xp) || 0} XP)`;
+    }
+
     if (elements.playerInventory) {
         const inventory = (player.inventory || [])
             .filter(item => item && item.quantity > 0)
@@ -3302,6 +3449,8 @@ function updateGameHUD() {
     elements.playerHunger.textContent = `${Math.round(player.hunger)}%`;
     elements.playerThirst.textContent = `${Math.round(player.thirst)}%`;
     elements.playerFatigue.textContent = `${Math.round(player.fatigue)}%`;
+
+    renderPlayerStats(player);
     
     // Add warning class if survival stats are critical
     updateSurvivalWarnings(player);
@@ -3823,6 +3972,8 @@ function newGame() {
         state.storyHistory = [];
         state.isMultiplayer = false;
         state.multiplayerGameStarted = false;
+        state.pendingRoll = null;
+        if (elements.d20Panel) elements.d20Panel.classList.add('hidden');
         if (elements.saveMultiplayerBtn) elements.saveMultiplayerBtn.classList.add('hidden');
         elements.gameStory.innerHTML = '';
         showCharacterCreation();

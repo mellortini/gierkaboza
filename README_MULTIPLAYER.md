@@ -116,6 +116,12 @@ Po dołączeniu do nowego pokoju gracze nie trafiają od razu do gry. Najpierw p
 
 Lobby nie przesyła kluczy API ani tajnego briefu reżysera. Po starcie serwer wysyła każdemu wybraną postać oraz właściwy snapshot wspólnego świata. Lista scenariuszy jest publicznym katalogiem metadanych (`GET /api/scenarios`); sekrety pozostają po stronie serwera.
 
+### Statystyki i kość d20
+
+Każda nowa postać zaczyna z sześcioma statystykami na poziomie 10 oraz pulą 27 punktów rozwoju. W panelu „Statystyki postaci” można je rozdawać przyciskiem `+1`; w multiplayerze zmiana jest zatwierdzana i zapisywana przez serwer. Każdy poziom daje dodatkowe punkty.
+
+Akcje, które wymagają testu — na przykład atak, skradanie, perswazja, otwieranie zamka albo przeszukiwanie — zatrzymują akcję i pokazują panel d20. Kość jest losowana wyłącznie na serwerze przez `crypto.randomInt(1, 21)`. Gracz nie wysyła wyniku, więc nie może go zmienić w narzędziach przeglądarki. Dopiero po wyniku silnik oblicza sukces, obrażenia, kontratak, EXP i czas świata, a narrator dostaje ten rezultat jako kontekst.
+
 ## 📁 Project Structure
 
 ```

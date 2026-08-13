@@ -1889,10 +1889,10 @@ button {
     gap: 7px;
 }
 
-.game-actions button {
-    padding: 8px 11px;
-    font-size: 0.78rem;
-}
+    .game-actions button {
+        padding: 8px 11px;
+        font-size: 0.78rem;
+    }
 
 .game-memory-status {
     margin: 0 0 14px;
@@ -1927,6 +1927,149 @@ button {
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 0.86rem;
+}
+
+.d20-panel {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 12px 0 16px;
+    padding: 13px 15px;
+    background: linear-gradient(135deg, rgba(80, 55, 13, 0.5), rgba(24, 29, 48, 0.92));
+    border: 1px solid rgba(255, 209, 102, 0.72);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.d20-visual {
+    display: grid;
+    flex: 0 0 54px;
+    width: 54px;
+    height: 54px;
+    place-items: center;
+    color: #1d1720;
+    background: linear-gradient(145deg, #ffe49a, #ffb84d);
+    border: 2px solid #fff0bd;
+    border-radius: 14px 10px 15px 9px;
+    font-weight: 900;
+    letter-spacing: -0.04em;
+    transform: rotate(-6deg);
+}
+
+.d20-copy {
+    display: grid;
+    flex: 1;
+    gap: 3px;
+    min-width: 0;
+}
+
+.d20-copy strong {
+    color: #fff4ce;
+}
+
+.d20-copy span,
+.d20-copy small {
+    overflow: hidden;
+    color: var(--text-soft);
+    text-overflow: ellipsis;
+}
+
+.d20-button {
+    min-width: 150px;
+}
+
+.d20-button-rolling {
+    animation: d20-pulse 0.65s ease-in-out infinite alternate;
+}
+
+@keyframes d20-pulse {
+    from { transform: translateY(0) rotate(-1deg); }
+    to { transform: translateY(-2px) rotate(1deg); }
+}
+
+.player-stats-panel {
+    margin: 0 0 16px;
+    background: rgba(4, 13, 24, 0.58);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+}
+
+.player-stats-panel summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 13px;
+    color: var(--text-main);
+    cursor: pointer;
+    font-size: 0.86rem;
+    font-weight: 700;
+    list-style-position: inside;
+}
+
+.player-stats-panel summary span {
+    color: var(--accent-warm);
+    font-size: 0.76rem;
+    font-weight: 600;
+}
+
+.player-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    padding: 0 12px 12px;
+}
+
+.stat-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 10px;
+    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(160, 190, 215, 0.13);
+    border-radius: 8px;
+}
+
+.stat-card-heading {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+
+.stat-card-heading strong {
+    overflow: hidden;
+    color: var(--text-main);
+    font-size: 0.78rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.stat-card-heading small {
+    color: var(--accent-warm);
+    font-size: 0.72rem;
+}
+
+.stat-card-score {
+    color: #fff4ce;
+    font-size: 1.1rem;
+    font-weight: 800;
+}
+
+.stat-card-button {
+    min-width: 31px;
+    padding: 4px 7px;
+    color: var(--text-main);
+    background: rgba(77, 173, 255, 0.16);
+    border: 1px solid rgba(77, 173, 255, 0.45);
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 800;
+}
+
+.stat-card-button:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
 }
 
 .game-layout {
@@ -2049,6 +2192,19 @@ button {
 
     .game-actions button {
         flex: 1 1 auto;
+    }
+
+    .d20-panel {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .d20-button {
+        width: 100%;
+    }
+
+    .player-stats-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     #game-story {

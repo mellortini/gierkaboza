@@ -36,6 +36,8 @@ const IMPORTANCE_TABLE = {
     "player_healed": 0.10,
     "player_damaged": 0.20,
     "combat_happened": 0.35,
+    "d20_rolled": 0.08,
+    "d20_check_resolved": 0.18,
     "xp_gained": 0.10,
     "quest_accepted": 0.25,
     "quest_completed": 0.45,
@@ -94,6 +96,34 @@ const ITEM_CATALOG = Object.freeze({
     iron_sword: { id: "iron_sword", name: "iron sword", aliases: ["iron sword", "sword", "miecz"], price: 75, type: "weapon", attack: 5 },
     leather_armor: { id: "leather_armor", name: "leather armor", aliases: ["leather armor", "armor", "zbroja"], price: 60, type: "armor", defense: 2 }
 });
+
+const ABILITY_KEYS = Object.freeze([
+    'strength',
+    'dexterity',
+    'constitution',
+    'intelligence',
+    'wisdom',
+    'charisma'
+]);
+
+const DEFAULT_PLAYER_STATS = Object.freeze({
+    strength: 10,
+    dexterity: 10,
+    constitution: 10,
+    intelligence: 10,
+    wisdom: 10,
+    charisma: 10
+});
+
+function normalizeAbilityKey(value) {
+    const key = String(value || '').trim().toLowerCase();
+    return ABILITY_KEYS.includes(key) ? key : null;
+}
+
+function abilityModifier(score) {
+    const safeScore = Number.isFinite(score) ? Math.floor(score) : 10;
+    return Math.floor((safeScore - 10) / 2);
+}
 
 // Scenario blueprints are authored content, not simulation state. Keep them
 // deliberately bounded and JSON-safe before putting them in a world/save.
@@ -983,7 +1013,42 @@ class Player {
         this.xp = 0;
         this.attack = 8;
         this.defense = 0;
+        this.stats = { ...DEFAULT_PLAYER_STATS };
+        this.unspentStatPoints = 27;
+        this.skillPoints = 0;
+        this.proficiencyBonus = 2;
         this.quests = [];
+    }
+
+    getAbilityScore(ability) {
+        const key = normalizeAbilityKey(ability);
+        return key ? Math.max(1, Math.min(30, Math.floor(Number(this.stats?.[key]) || 10))) : 10;
+    }
+
+    getAbilityModifier(ability) {
+        return abilityModifier(this.getAbilityScore(ability));
+    }
+
+    getStatSummary() {
+        return ABILITY_KEYS.reduce((summary, key) => {
+            summary[key] = {
+                score: this.getAbilityScore(key),
+                modifier: this.getAbilityModifier(key)
+            };
+            return summary;
+        }, {});
+    }
+
+    spendStatPoint(ability) {
+        const key = normalizeAbilityKey(ability);
+        if (!key || this.unspentStatPoints <= 0 || this.getAbilityScore(key) >= 20) return false;
+        this.stats[key] = this.getAbilityScore(key) + 1;
+        this.unspentStatPoints -= 1;
+        if (key === 'constitution') {
+            this.maxHp += 2;
+            this.hp = Math.min(this.maxHp, this.hp + 2);
+        }
+        return true;
     }
 
     getItem(itemId) {
@@ -1018,14 +1083,14 @@ class Player {
         const weaponBonus = this.inventory
             .filter(item => item.quantity > 0)
             .reduce((total, item) => total + (ITEM_CATALOG[item.id]?.attack || 0), 0);
-        return Math.max(1, this.attack + weaponBonus);
+        return Math.max(1, this.attack + this.getAbilityModifier('strength') + weaponBonus);
     }
 
     getDefensePower() {
         const armorBonus = this.inventory
             .filter(item => item.quantity > 0)
             .reduce((total, item) => total + (ITEM_CATALOG[item.id]?.defense || 0), 0);
-        return Math.max(0, this.defense + armorBonus);
+        return Math.max(0, this.defense + this.getAbilityModifier('dexterity') + armorBonus);
     }
 
     addQuest(quest) {
@@ -1048,6 +1113,9 @@ class Player {
             this.maxHp += 10;
             this.hp = this.maxHp;
             this.attack += 2;
+            this.unspentStatPoints += 2;
+            this.skillPoints += 1;
+            this.proficiencyBonus = 2 + Math.floor((this.level - 1) / 4);
             levelsGained += 1;
         }
         return levelsGained;
@@ -1111,6 +1179,10 @@ class Player {
             xp: this.xp,
             attack: this.attack,
             defense: this.defense,
+            stats: { ...this.stats },
+            unspentStatPoints: this.unspentStatPoints,
+            skillPoints: this.skillPoints,
+            proficiencyBonus: this.proficiencyBonus,
             reputation: Object.fromEntries(this.reputation),
             statusEffects: this.statusEffects.map(e => ({
                 name: e.name,
@@ -1141,6 +1213,20 @@ class Player {
         player.xp = Number.isFinite(json.xp) ? Math.max(0, Math.floor(json.xp)) : player.xp;
         player.attack = Number.isFinite(json.attack) ? json.attack : player.attack;
         player.defense = Number.isFinite(json.defense) ? json.defense : player.defense;
+        if (json.stats && typeof json.stats === 'object') {
+            for (const key of ABILITY_KEYS) {
+                if (Number.isFinite(json.stats[key])) player.stats[key] = Math.max(1, Math.min(30, Math.floor(json.stats[key])));
+            }
+        }
+        player.unspentStatPoints = Number.isFinite(json.unspentStatPoints)
+            ? Math.max(0, Math.floor(json.unspentStatPoints))
+            : player.unspentStatPoints;
+        player.skillPoints = Number.isFinite(json.skillPoints)
+            ? Math.max(0, Math.floor(json.skillPoints))
+            : player.skillPoints;
+        player.proficiencyBonus = Number.isFinite(json.proficiencyBonus)
+            ? Math.max(2, Math.floor(json.proficiencyBonus))
+            : 2 + Math.floor((player.level - 1) / 4);
         // FIX: Handle both Map (array of entries) and plain object
         if (Array.isArray(json.reputation)) {
             player.reputation = new Map(json.reputation);
@@ -1665,6 +1751,80 @@ class World {
         player.hp = Math.max(0, player.hp - retaliation);
         changes.push(new WorldChange('player_damaged', player.name, -retaliation, `${target.name} hits back`, 'local'));
         return { success: true, message: `Ranisz ${target.name}, ale przeciwnik odpowiada ciosem za ${retaliation} HP.`, timeCostMinutes: 2, changes };
+    }
+
+    /**
+     * Resolve an action after the server-authoritative d20 roll is complete.
+     * The narrator receives this result later; it cannot invent a hit, damage
+     * or success that is not returned here.
+     */
+    resolveD20Action(action, player, check, rollValue) {
+        if (!player || !check || !Number.isInteger(rollValue) || rollValue < 1 || rollValue > 20) {
+            return new ActionResult(false, 'Nieprawidłowy test kości.', 1);
+        }
+        const roll = rollValue;
+        const modifier = Number.isFinite(check.modifier) ? Math.floor(check.modifier) : 0;
+        const difficulty = Number.isFinite(check.difficulty) ? Math.max(1, Math.floor(check.difficulty)) : 10;
+        const total = roll + modifier;
+        const criticalSuccess = roll === 20;
+        const criticalFailure = roll === 1;
+        const success = criticalSuccess || (!criticalFailure && total >= difficulty);
+        const changes = [new WorldChange(
+            'd20_rolled',
+            player.name,
+            { roll, modifier, total, difficulty, success, criticalSuccess, criticalFailure },
+            `${check.label || 'Test'}: d20 ${roll} ${modifier >= 0 ? '+' : ''}${modifier} = ${total} przeciwko ${difficulty}`,
+            'local'
+        )];
+
+        if (check.kind === 'attack') {
+            const target = this.npcs.get(check.targetId);
+            if (!target || target.locationId !== player.locationId || target.isAlive === false) {
+                return new ActionResult(false, 'Cel walki nie jest już dostępny.', 1, changes);
+            }
+            if (player.stamina < 5) {
+                return new ActionResult(false, 'Brakuje ci staminy na atak.', 1, changes);
+            }
+            player.stamina -= 5;
+            if (success) {
+                const damage = Math.max(1, player.getAttackPower() - Math.floor(Number(target.defense) || 0));
+                target.hp = Math.max(0, target.hp - damage);
+                changes.push(new WorldChange('combat_happened', target.id, damage, `Trafiasz ${target.name} za ${damage} obrażeń.`, 'local'));
+                if (target.hp <= 0) {
+                    target.isAlive = false;
+                    player.gold += target.goldReward;
+                    player.gainXp(target.xpReward);
+                    changes.push(new WorldChange('npc_killed', target.id, true, `${target.name} zostaje pokonany.`, 'local'));
+                    if (target.goldReward > 0) changes.push(new WorldChange('gold_changed', player.name, target.goldReward, 'Zdobyto złoto.', 'local'));
+                    if (target.xpReward > 0) changes.push(new WorldChange('xp_gained', player.name, target.xpReward, 'Zdobyto doświadczenie.', 'local'));
+                    this._completeKillQuests(player, target, changes);
+                    const result = new ActionResult(true, `Trafiasz ${target.name} i pokonujesz przeciwnika.`, 2, changes);
+                    this.advanceWorldTimeForPlayer(player, result.timeCostMinutes);
+                    for (const change of result.worldChanges) this.logWorldChange(change);
+                    return result;
+                }
+                const result = new ActionResult(true, `Trafiasz ${target.name}. Przeciwnik traci ${damage} HP.`, 2, changes);
+                this.advanceWorldTimeForPlayer(player, result.timeCostMinutes);
+                for (const change of result.worldChanges) this.logWorldChange(change);
+                return result;
+            }
+            const retaliation = Math.max(1, (Number(target.attack) || 0) - player.getDefensePower());
+            player.hp = Math.max(0, player.hp - retaliation);
+            changes.push(new WorldChange('player_damaged', player.name, -retaliation, `${target.name} unika i kontratakuje za ${retaliation} HP.`, 'local'));
+            const result = new ActionResult(false, `Nie trafiasz ${target.name}; przeciwnik robi unik i kontratakuje.`, 2, changes);
+            this.advanceWorldTimeForPlayer(player, result.timeCostMinutes);
+            for (const change of result.worldChanges) this.logWorldChange(change);
+            return result;
+        }
+
+        const message = success
+            ? `${check.label || 'Test'} zakończony sukcesem: ${total} przeciwko ${difficulty}.`
+            : `${check.label || 'Test'} nieudany: ${total} przeciwko ${difficulty}.`;
+        changes.push(new WorldChange('d20_check_resolved', player.name, success, message, 'local'));
+        const result = new ActionResult(success, message, 5, changes);
+        this.advanceWorldTimeForPlayer(player, result.timeCostMinutes);
+        for (const change of result.worldChanges) this.logWorldChange(change);
+        return result;
     }
 
     _completeKillQuests(player, target, changes) {

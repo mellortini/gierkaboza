@@ -431,6 +431,7 @@ function createRoom(roomId, world = null, persisted = {}) {
         playerHistories: persisted.playerHistories || {},
         actionHistory: Array.isArray(persisted.actionHistory) ? persisted.actionHistory.slice(-120) : [],
         actionQueue: Promise.resolve(),
+        pendingRolls: new Map(),
         narrativeConsolidationPromise: null,
         narrativeConsolidationNextAttemptAt: 0
     };
@@ -718,6 +719,68 @@ function allowAction(socketId) {
     if (current.count >= 20) return false;
     current.count += 1;
     return true;
+}
+
+function buildD20Check(world, player, rawAction) {
+    const action = String(rawAction || '').trim();
+    const normalized = action.toLocaleLowerCase('pl-PL');
+    if (!world || !player || !action) return null;
+
+    const combatIntent = /\b(atak|atakuję|atakuje|uderz|cios|walcz|zabij|strzel|fight|attack|punch|hit)\w*/i.test(normalized);
+    if (combatIntent && typeof world._findNpcInAction === 'function') {
+        const target = world._findNpcInAction(normalized, player, true);
+        if (!target) return null;
+        const targetDefense = Math.max(8, Math.min(25, 10 + (Number(target.defense) || 0)));
+        const modifier = player.getAbilityModifier?.('strength') || 0;
+        const proficiency = Number.isFinite(player.proficiencyBonus) ? player.proficiencyBonus : 2;
+        return {
+            kind: 'attack',
+            ability: 'strength',
+            skill: 'unarmed_attack',
+            label: 'Atak',
+            targetId: target.id,
+            targetName: target.name,
+            difficulty: targetDefense,
+            modifier: modifier + proficiency,
+            reason: `Obrona celu: ${targetDefense}`
+        };
+    }
+
+    const explicitCheck = /\b(test|rzut|sprawdzam|próbuję|probuje|przekon|perswad|zastrasz|skrad|ukryj|wspin|otwier|wyważ|wywaz|przeszuk|zauważ|zauwaz|nasłuch|nasluch|czaruj|rzucam czar)\w*/i.test(normalized);
+    if (!explicitCheck) return null;
+    let ability = 'wisdom';
+    let label = 'Test percepcji';
+    if (/\b(przekon|perswad|zastrasz|blef|kłam|klam)/i.test(normalized)) {
+        ability = 'charisma';
+        label = 'Test charyzmy';
+    } else if (/\b(skrad|ukryj|zwin|krad|unikan)/i.test(normalized)) {
+        ability = 'dexterity';
+        label = 'Test zręczności';
+    } else if (/\b(wyważ|wywaz|podnie|łam|lam|wspin|siłą|sila)/i.test(normalized)) {
+        ability = 'strength';
+        label = 'Test siły';
+    } else if (/\b(czar|mag|wied|run|zaklę|zakle)/i.test(normalized)) {
+        ability = 'intelligence';
+        label = 'Test inteligencji';
+    }
+    const difficulty = /\b(niemoż|niemoz|król|krol|potęż|potez|legend)/i.test(normalized)
+        ? 18
+        : /\b(trud|cięż|ciez|siln|niebez)/i.test(normalized)
+            ? 15
+            : /\b(łatw|latw|prosty|prosta)/i.test(normalized)
+                ? 10
+                : 12;
+    const modifier = (player.getAbilityModifier?.(ability) || 0)
+        + (Number.isFinite(player.proficiencyBonus) ? player.proficiencyBonus : 2);
+    return {
+        kind: 'check',
+        ability,
+        skill: ability,
+        label,
+        difficulty,
+        modifier,
+        reason: `Trudność testu: ${difficulty}`
+    };
 }
 
 function persistRooms() {
@@ -1120,7 +1183,75 @@ io.on('connection', (socket) => {
             });
     });
 
-    async function processPlayerAction(socket, data) {
+    socket.on('rollD20', (data) => {
+        const player = players.get(socket.id);
+        if (!player || !rooms.has(player.roomId)) {
+            socket.emit('rollError', { message: 'Nie jesteś w pokoju gry.' });
+            return;
+        }
+        const room = rooms.get(player.roomId);
+        const pending = room.pendingRolls?.get(String(data?.rollId || ''));
+        if (!pending || pending.socketId !== socket.id || pending.playerId !== player.playerId) {
+            socket.emit('rollError', { message: 'Ten test kości nie jest już dostępny.' });
+            return;
+        }
+        room.pendingRolls.delete(pending.rollId);
+        const value = crypto.randomInt(1, 21);
+        const result = {
+            rollId: pending.rollId,
+            playerId: player.playerId,
+            playerName: player.playerName,
+            value,
+            difficulty: pending.check.difficulty,
+            modifier: pending.check.modifier,
+            label: pending.check.label,
+            targetName: pending.check.targetName || null
+        };
+        io.to(player.roomId).emit('rollResolved', result);
+        room.actionQueue = (room.actionQueue || Promise.resolve())
+            .then(() => processPlayerAction(socket, pending.actionData, {
+                check: pending.check,
+                value,
+                rollId: pending.rollId
+            }))
+            .catch((err) => {
+                console.error('Error processing rolled action:', err);
+                socket.emit('actionError', { message: 'Nie udało się rozstrzygnąć testu kości.' });
+            });
+    });
+
+    socket.on('spendStatPoint', (data) => {
+        const session = players.get(socket.id);
+        if (!session || !rooms.has(session.roomId)) {
+            socket.emit('statsError', { message: 'Nie jesteś w pokoju gry.' });
+            return;
+        }
+        if (!allowAction(socket.id)) {
+            socket.emit('statsError', { message: 'Za dużo zmian statystyk. Odczekaj chwilę.' });
+            return;
+        }
+        const room = rooms.get(session.roomId);
+        const roomPlayer = room.players.get(socket.id);
+        const ability = String(data?.ability || '').trim().toLocaleLowerCase('en-US');
+        const allowedAbilities = new Set(['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']);
+        if (!roomPlayer?.player || !allowedAbilities.has(ability)) {
+            socket.emit('statsError', { message: 'Nieprawidłowa statystyka.' });
+            return;
+        }
+        if (!roomPlayer.player.spendStatPoint?.(ability)) {
+            socket.emit('statsError', { message: 'Nie masz punktów rozwoju albo osiągnięto limit tej statystyki.' });
+            return;
+        }
+        room.lastActiveAt = Date.now();
+        persistRooms();
+        socket.emit('statsUpdated', {
+            ability,
+            message: 'Statystyka została zwiększona. Zmiana jest zapisana w pokoju.',
+            worldState: serializeWorld(room.world, roomPlayer.player, roomPlayer.id)
+        });
+    });
+
+    async function processPlayerAction(socket, data, trustedRoll = null) {
         const { action: rawAction, sceneType, sceneTags, model: actionModel } = data || {};
         const action = typeof rawAction === 'string' ? rawAction.trim() : '';
         const player = players.get(socket.id);
@@ -1142,12 +1273,47 @@ io.on('connection', (socket) => {
         }
 
         const currentPlayer = playerData.player;
+        let d20Check = trustedRoll?.check || null;
+        if (!trustedRoll) {
+            d20Check = buildD20Check(world, currentPlayer, action);
+            if (d20Check) {
+                if (Array.from(room.pendingRolls?.values?.() || []).some(pending => pending.playerId === playerData.id)) {
+                    socket.emit('actionError', { message: 'Najpierw rozstrzygnij oczekujący rzut kością.' });
+                    return;
+                }
+                const rollId = `${room.id}:roll:${playerData.id}:${Date.now()}:${crypto.randomBytes(3).toString('hex')}`;
+                room.pendingRolls.set(rollId, {
+                    rollId,
+                    socketId: socket.id,
+                    playerId: playerData.id,
+                    playerName: playerData.name,
+                    actionData: { action, sceneType, sceneTags, model: actionModel },
+                    check: d20Check,
+                    createdAt: Date.now()
+                });
+                io.to(player.roomId).emit('rollRequested', {
+                    rollId,
+                    playerId: playerData.id,
+                    playerName: playerData.name,
+                    action,
+                    label: d20Check.label,
+                    ability: d20Check.ability,
+                    difficulty: d20Check.difficulty,
+                    modifier: d20Check.modifier,
+                    reason: d20Check.reason,
+                    targetName: d20Check.targetName || null
+                });
+                return;
+            }
+        }
         // Context builders use World.player as the viewpoint; switch it to the actor
         // for this serialized turn while the character sheet remains per player.
         world.player = currentPlayer;
-        const mechanicalResult = world.performPlayerAction
-            ? world.performPlayerAction(action, currentPlayer)
-            : null;
+        const mechanicalResult = d20Check && trustedRoll
+            ? world.resolveD20Action(action, currentPlayer, d20Check, trustedRoll.value)
+            : world.performPlayerAction
+                ? world.performPlayerAction(action, currentPlayer)
+                : null;
 
         // Build context for the action
         let context = '';
@@ -1182,6 +1348,9 @@ io.on('connection', (socket) => {
         const mechanicsContext = mechanicalResult
             ? `Mechanika: ${mechanicStatus} — ${mechanicalResult.message}. `
             : '';
+        const rollContext = d20Check && trustedRoll
+            ? `Test kości: d20 ${trustedRoll.value} ${d20Check.modifier >= 0 ? '+' : ''}${d20Check.modifier} = ${trustedRoll.value + d20Check.modifier}; trudność ${d20Check.difficulty}. `
+            : '';
         const availableExits = Array.isArray(location?.connections)
             ? location.connections
                 .map(connectionId => world.getLocation(connectionId))
@@ -1192,7 +1361,7 @@ io.on('connection', (socket) => {
         // Build action context - be brief, don't describe location every time
         let actionContext = `Jesteś ${playerData.name}. `;
         actionContext += `Akcja: "${action}". `;
-        actionContext += mechanicsContext;
+        actionContext += mechanicsContext + rollContext;
         actionContext += `To dzieje się w ${location ? location.name : currentPlayer.locationId}. `;
         actionContext += `Jest ${world.getFormattedTime()}, dzień ${world.getDayNumber()}. `;
         actionContext += availableExits.length > 0
@@ -1408,6 +1577,13 @@ ${world.isSandbox
                 action,
                 response,
                 mechanics: mechanicalResult?.toJSON ? mechanicalResult.toJSON() : mechanicalResult,
+                roll: trustedRoll ? {
+                    rollId: trustedRoll.rollId,
+                    value: trustedRoll.value,
+                    difficulty: d20Check?.difficulty,
+                    modifier: d20Check?.modifier,
+                    success: mechanicalResult?.success === true
+                } : null,
                 worldState: serializeWorld(world, roomPlayer.player, roomPlayer.id)
             });
         }

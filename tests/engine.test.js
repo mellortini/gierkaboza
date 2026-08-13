@@ -71,6 +71,47 @@ function testPlayerActionsAndRoundTrip() {
     assert.ok(restored.locations.size >= 3);
 }
 
+function testPlayerStatsAndD20Resolution() {
+    const world = World.createStarterWorld('D20 Tester', 'town_central');
+    const player = world.player;
+
+    assert.strictEqual(player.unspentStatPoints, 27);
+    assert.strictEqual(player.getAbilityModifier('strength'), 0);
+    assert.strictEqual(player.spendStatPoint('strength'), true);
+    assert.strictEqual(player.stats.strength, 11);
+    assert.strictEqual(player.unspentStatPoints, 26);
+    assert.strictEqual(player.gainXp(100), 1);
+    assert.strictEqual(player.level, 2);
+    assert.strictEqual(player.unspentStatPoints, 28);
+    assert.strictEqual(player.proficiencyBonus, 2);
+
+    const savedPlayer = Player.fromJSON(JSON.parse(JSON.stringify(player.toJSON())));
+    assert.strictEqual(savedPlayer.stats.strength, 11);
+    assert.strictEqual(savedPlayer.unspentStatPoints, 28);
+    assert.strictEqual(savedPlayer.level, 2);
+
+    const beforeTime = world.currentTimeMinutes;
+    const check = world.resolveD20Action('przeszukuję ślady', player, {
+        kind: 'check', label: 'Test percepcji', difficulty: 15, modifier: 4
+    }, 11);
+    assert.strictEqual(check.success, true);
+    assert.match(check.message, /sukcesem/);
+    assert.strictEqual(world.currentTimeMinutes, beforeTime + 5);
+    assert.ok(check.worldChanges.some(change => change.type === 'd20_rolled'));
+    assert.ok(check.worldChanges.some(change => change.type === 'd20_check_resolved'));
+
+    world.performPlayerAction('idz do city_gate_north', player);
+    world.performPlayerAction('idz do forest_entrance', player);
+    const target = world.getNPC('npc_forest_bandit');
+    const attack = world.resolveD20Action('atak npc_forest_bandit', player, {
+        kind: 'attack', label: 'Atak', targetId: target.id, targetName: target.name,
+        difficulty: 25, modifier: 2
+    }, 1);
+    assert.strictEqual(attack.success, false);
+    assert.match(attack.message, /Nie trafiasz/);
+    assert.ok(attack.worldChanges.some(change => change.type === 'player_damaged'));
+}
+
 function testNaturalTravelFormsAndUnknownDestination() {
     const world = World.createStarterWorld('Natural Travel Tester', 'town_central');
     const player = world.player;
@@ -512,6 +553,7 @@ function testNarrativePatchValidationPendingTurnsAndBudget() {
 
 testTimeValidation();
 testPlayerActionsAndRoundTrip();
+testPlayerStatsAndD20Resolution();
 testNaturalTravelFormsAndUnknownDestination();
 testSandboxCreatesAndPersistsFreeformLocations();
 testNpcNameDiscoveryAndPersistence();

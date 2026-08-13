@@ -468,6 +468,16 @@
                 </div>
             </div>
             <div id="game-memory-status" class="game-memory-status" aria-live="polite">Pamięć kampanii: przygotowana</div>
+
+            <section id="d20-panel" class="d20-panel hidden" aria-live="polite">
+                <div class="d20-visual" aria-hidden="true">d20</div>
+                <div class="d20-copy">
+                    <strong id="d20-title">Test kości oczekuje</strong>
+                    <span id="d20-description">Narrator przygotuje test, gdy akcja będzie wymagać rzutu.</span>
+                    <small id="d20-result"></small>
+                </div>
+                <button id="roll-d20" class="btn-primary d20-button" type="button" disabled>🎲 Rzuć kością</button>
+            </section>
             
             <!-- HUD - World Clock & Stats -->
             <div id="game-hud" class="hud-panel">
@@ -511,6 +521,11 @@
                     <span class="hud-label">Ekwipunek:</span>
                     <span id="player-inventory" class="hud-value">-</span>
                 </div>
+                <div class="hud-item hud-level">
+                    <span class="hud-icon">⭐</span>
+                    <span class="hud-label">Poziom:</span>
+                    <span id="player-level" class="hud-value">1</span>
+                </div>
                 <div class="hud-item hud-survival">
                     <span class="hud-icon">🍖</span>
                     <span class="hud-label">Głód:</span>
@@ -527,6 +542,11 @@
                     <span id="player-fatigue" class="hud-value">0%</span>
                 </div>
             </div>
+
+            <details id="player-stats-panel" class="player-stats-panel">
+                <summary>📊 Statystyki postaci <span id="stat-points-left">Punkty: 27</span></summary>
+                <div id="player-stats" class="player-stats-grid"></div>
+            </details>
             
             <div class="game-layout">
                 <div class="game-main-column">

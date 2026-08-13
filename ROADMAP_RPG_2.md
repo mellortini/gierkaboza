@@ -53,17 +53,19 @@ Do wykonania:
 - rozłączenie i ponowne dołączenie bez utraty tożsamości;
 - host, współhost i uprawnienia do ustawień kampanii.
 
-## Etap C — model postaci
+## Etap C — model postaci — bazowa wersja wdrożona
 
 Postać otrzyma sześć cech: Siła, Zręczność, Kondycja, Inteligencja, Mądrość i Charyzma.
 
-Tworzenie:
+Wdrożone w pierwszym kroku:
 
-- wartość bazowa 8;
-- pula 27 punktów;
-- limit 15 przed premiami pochodzenia;
-- walidacja po stronie klienta i serwera;
-- pochodzenie, archetyp, opis i umiejętności.
+- sześć cech z wartością bazową 10;
+- pula 27 punktów oraz przycisk rozdawania punktów w karcie postaci;
+- limit 20 na pojedynczą cechę;
+- modyfikatory cech wpływające na atak, obronę i testy;
+- zapis oraz odtwarzanie statystyk, poziomu, EXP i punktów po stronie serwera.
+
+Do uzupełnienia: walidacja statystyk podczas tworzenia postaci, pochodzenie, archetyp, biegłości i pełny model umiejętności.
 
 Rozwój:
 
@@ -72,7 +74,7 @@ Rozwój:
 - osobne premie umiejętności;
 - zapis poziomu i EXP w stanie postaci, nigdy w odpowiedzi AI.
 
-## Etap D — d20 i akcje wymagające testu
+## Etap D — d20 i akcje wymagające testu — bazowa wersja wdrożona
 
 Przepływ:
 
@@ -96,7 +98,9 @@ Przykładowy oczekujący test:
 }
 ```
 
-Wynik jest losowany przez `crypto.randomInt(1, 21)`. Klient nie wysyła liczby. Naturalne 1 i 20, przewaga, utrudnienie oraz rzuty przeciwstawne są rozstrzygane przez silnik.
+Wdrożone: oczekujący test w Socket.IO, serwerowe losowanie przez `crypto.randomInt(1, 21)`, naturalne 1 i 20, testy ataku oraz kilka testów ogólnych, konsekwencje w silniku i panel wyniku widoczny dla całej drużyny. Klient nie wysyła liczby.
+
+Do uzupełnienia: jawne `actionId`, przewaga/utrudnienie, rzuty przeciwstawne, inicjatywa i rozbudowana klasyfikacja umiejętności.
 
 ## Etap E — otwarte scenariusze
 
