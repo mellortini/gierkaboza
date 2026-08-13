@@ -124,7 +124,9 @@ Akcje, które wymagają testu — na przykład atak, skradanie, perswazja, otwie
 
 ### Ekwipunek
 
-Panel „Ekwipunek” pokazuje przedmioty z ilością i pixelartową ikoną. Broń, pancerz, tarcza i amulet mają osobne sloty; przyciski „Załóż” i „Zdejmij” wysyłają zwykłą akcję do serwera, więc zmiana jest wspólna i zapisywana tak samo jak pozostałe działania. Założone wyposażenie wpływa na atak, obronę oraz modyfikatory testów.
+Panel „Ekwipunek” pokazuje przedmioty z ilością, wagą i pixelartową ikoną. Broń, pancerz, tarcza i amulet mają osobne sloty; przyciski „Załóż” i „Zdejmij” wysyłają zwykłą akcję do serwera, więc zmiana jest wspólna i zapisywana tak samo jak pozostałe działania. Założone wyposażenie wpływa na atak, obronę oraz modyfikatory testów.
+
+Gdy w aktualnej lokacji znajduje się kupiec, pojawia się panel sklepu. Można kupować towary przyciskiem, a z plecaka sprzedawać niezałożone przedmioty. Kupiec ma własne złoto, które zmienia się po każdej transakcji; zakup jest blokowany przy braku złota albo miejsca w udźwigu.
 
 ## 📁 Project Structure
 

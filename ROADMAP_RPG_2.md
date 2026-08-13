@@ -143,9 +143,11 @@ item_definition → item_instance → inventory_entry → equipment_slot
 
 Do uzupełnienia: trwałość, jakość, ciężar, porównanie przedmiotów, osobne egzemplarze i pełne sloty ubioru.
 
-## Etap H — sklepy i gospodarka
+## Etap H — sklepy i gospodarka — pierwsza wersja wdrożona
 
-Kupiec posiada własny magazyn, złoto, preferencje, reputację i ceny. Zakup jest transakcją serwerową. Dwie równoczesne próby zakupu ostatniej sztuki rozstrzyga blokada lub transakcja bazy, więc przedmiot nie zostanie wydany dwóm graczom.
+Wdrożone: kupiec posiada własne złoto i magazyn, kupno zwiększa jego kasę, sprzedaż ją zmniejsza, a przedmiot trafia do jego inventory. Gracz ma limit udźwigu zależny od Siły; UI pokazuje wagę, stock, ceny i przyciski kupna/sprzedaży. Zakup, sprzedaż i zmiana magazynu są rozstrzygane przez serwer i zapisywane w pokoju.
+
+Do uzupełnienia: reputacja wpływająca na ceny, preferencje kupców, różne marże, podatki, konkurencja między sklepami i transakcje bazodanowe przy skalowaniu na wiele procesów.
 
 ## Etap I — pamięć AI
 

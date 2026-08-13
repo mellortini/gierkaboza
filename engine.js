@@ -93,14 +93,14 @@ const STRATEGIC_UPDATE_INTERVAL = 10080; // 7 days in minutes
 // Small deterministic item catalogue used by the starter game and the
 // action resolver. Items are data, so saves remain stable as the rules grow.
 const ITEM_CATALOG = Object.freeze({
-    bread: { id: "bread", name: "Chleb", aliases: ["bread", "chleb"], price: 5, type: "food", icon: "/assets/items/bread.png", hungerRestore: 15 },
-    healing_potion: { id: "healing_potion", name: "Mikstura lecznicza", aliases: ["healing potion", "potion", "mikstura", "lecznicza"], price: 25, type: "consumable", icon: "/assets/items/healing-potion.png", heal: 30 },
-    iron_sword: { id: "iron_sword", name: "Żelazny miecz", aliases: ["iron sword", "sword", "miecz"], price: 75, type: "weapon", slot: "weapon", icon: "/assets/items/iron-sword.png", attack: 5 },
-    leather_armor: { id: "leather_armor", name: "Skórzana zbroja", aliases: ["leather armor", "armor", "zbroja", "zbroję", "zbroje"], price: 60, type: "armor", slot: "armor", icon: "/assets/items/leather-armor.png", defense: 2 },
-    wooden_shield: { id: "wooden_shield", name: "Drewniana tarcza", aliases: ["wooden shield", "shield", "tarcza", "tarczę", "tarcze"], price: 45, type: "shield", slot: "offhand", icon: "/assets/items/wooden-shield.png", defense: 1 },
-    torch: { id: "torch", name: "Pochodnia", aliases: ["torch", "pochodnia"], price: 3, type: "tool", icon: "/assets/items/torch.png" },
-    iron_key: { id: "iron_key", name: "Żelazny klucz", aliases: ["iron key", "key", "klucz"], price: 1, type: "quest", icon: "/assets/items/iron-key.png" },
-    moon_amulet: { id: "moon_amulet", name: "Amulet księżyca", aliases: ["moon amulet", "amulet", "księżyca", "ksiezyca"], price: 120, type: "accessory", slot: "accessory", icon: "/assets/items/moon-amulet.png", statBonuses: { wisdom: 1 }, defense: 1 }
+    bread: { id: "bread", name: "Chleb", aliases: ["bread", "chleb"], price: 5, weight: 0.4, type: "food", icon: "/assets/items/bread.png", hungerRestore: 15, description: "Prosty, sycący bochenek." },
+    healing_potion: { id: "healing_potion", name: "Mikstura lecznicza", aliases: ["healing potion", "potion", "mikstura", "lecznicza"], price: 25, weight: 0.3, type: "consumable", icon: "/assets/items/healing-potion.png", heal: 30, description: "Przywraca do 30 HP." },
+    iron_sword: { id: "iron_sword", name: "Żelazny miecz", aliases: ["iron sword", "sword", "miecz"], price: 75, weight: 3.2, type: "weapon", slot: "weapon", icon: "/assets/items/iron-sword.png", attack: 5, description: "Solidna broń z wykutym jelcem." },
+    leather_armor: { id: "leather_armor", name: "Skórzana zbroja", aliases: ["leather armor", "armor", "zbroja", "zbroję", "zbroje"], price: 60, weight: 5.5, type: "armor", slot: "armor", icon: "/assets/items/leather-armor.png", defense: 2, description: "Lekka ochrona na drogę." },
+    wooden_shield: { id: "wooden_shield", name: "Drewniana tarcza", aliases: ["wooden shield", "shield", "tarcza", "tarczę", "tarcze"], price: 45, weight: 2.6, type: "shield", slot: "offhand", icon: "/assets/items/wooden-shield.png", defense: 1, description: "Tarcza z desek, dobra na pierwszy cios." },
+    torch: { id: "torch", name: "Pochodnia", aliases: ["torch", "pochodnia"], price: 3, weight: 0.5, type: "tool", icon: "/assets/items/torch.png", description: "Rozprasza ciemność przez kilka godzin." },
+    iron_key: { id: "iron_key", name: "Żelazny klucz", aliases: ["iron key", "key", "klucz"], price: 1, weight: 0.1, type: "quest", icon: "/assets/items/iron-key.png", description: "Pasuje do zamka, którego jeszcze nie znasz." },
+    moon_amulet: { id: "moon_amulet", name: "Amulet księżyca", aliases: ["moon amulet", "amulet", "księżyca", "ksiezyca"], price: 120, weight: 0.2, type: "accessory", slot: "accessory", icon: "/assets/items/moon-amulet.png", statBonuses: { wisdom: 1 }, defense: 1, description: "Chłodny kamień reagujący na szepty." }
 });
 
 const ABILITY_KEYS = Object.freeze([
@@ -908,6 +908,7 @@ class NPC {
         this.isAlive = true;
         this.isMerchant = false;
         this.isQuestGiver = false;
+        this.gold = 0;
         this.inventory = [];
     }
 
@@ -947,6 +948,7 @@ class NPC {
             isAlive: this.isAlive,
             isMerchant: this.isMerchant,
             isQuestGiver: this.isQuestGiver,
+            gold: this.gold,
             inventory: this.inventory
         };
     }
@@ -973,7 +975,12 @@ class NPC {
         npc.isAlive = json.isAlive !== false;
         npc.isMerchant = json.isMerchant === true;
         npc.isQuestGiver = json.isQuestGiver === true;
-        npc.inventory = Array.isArray(json.inventory) ? json.inventory : [];
+        npc.gold = Number.isFinite(json.gold) ? Math.max(0, Math.floor(json.gold)) : (npc.isMerchant ? 500 : 0);
+        npc.inventory = Array.isArray(json.inventory)
+            ? json.inventory
+                .filter(item => item && ITEM_CATALOG[item.id] && Number.isInteger(item.quantity) && item.quantity > 0)
+                .map(item => ({ id: item.id, quantity: Math.min(1000, item.quantity) }))
+            : [];
         return npc;
     }
 }
@@ -1091,6 +1098,24 @@ class Player {
 
     getItemQuantity(itemId) {
         return this.getItem(itemId)?.quantity || 0;
+    }
+
+    getInventoryWeight() {
+        return this.inventory.reduce((total, entry) => {
+            const item = ITEM_CATALOG[entry.id];
+            return total + (item ? (Number(item.weight) || 0) * Math.max(0, Number(entry.quantity) || 0) : 0);
+        }, 0);
+    }
+
+    getCarryCapacity() {
+        return 20 + (this.getAbilityScore('strength') * 2);
+    }
+
+    canCarry(itemId, quantity = 1) {
+        const item = ITEM_CATALOG[itemId];
+        const amount = Number.isInteger(quantity) ? quantity : 0;
+        if (!item || amount <= 0) return false;
+        return this.getInventoryWeight() + ((Number(item.weight) || 0) * amount) <= this.getCarryCapacity();
     }
 
     getEquippedItemIds() {
@@ -1724,29 +1749,44 @@ class World {
         const changes = [];
         const isSell = /(sell|sprzed|oddaj)/i.test(normalizedAction);
         const stock = merchant.inventory.find(entry => entry.id === item.id);
+        const buyPrice = Math.max(1, Math.floor(item.price));
+        const sellPrice = Math.max(1, Math.floor(item.price * 0.5));
+        if (!Number.isFinite(merchant.gold)) merchant.gold = 500;
         if (isSell) {
             if (player.getItemQuantity(item.id) < 1) {
                 return { success: false, message: `Nie masz przedmiotu: ${item.name}.`, timeCostMinutes: 1, changes: [] };
             }
-            const value = Math.max(1, Math.floor(item.price * 0.5));
+            if (player.isItemEquipped(item.id)) {
+                return { success: false, message: `Najpierw zdejmij ${item.name}, aby go sprzedać.`, timeCostMinutes: 1, changes: [] };
+            }
+            if (merchant.gold < sellPrice) {
+                return { success: false, message: `Kupiec nie ma dość złota, aby zapłacić za ${item.name}.`, timeCostMinutes: 1, changes: [] };
+            }
             player.removeItem(item.id, 1);
-            player.gold += value;
-            changes.push(new WorldChange('item_sold', item.id, -1, `Sold ${item.name}`, 'local'));
-            changes.push(new WorldChange('gold_changed', player.name, value, `Received ${value} gold`, 'local'));
-            return { success: true, message: `Sprzedajesz ${item.name} za ${value} zlota.`, timeCostMinutes: 5, changes };
+            player.gold += sellPrice;
+            merchant.gold -= sellPrice;
+            if (stock) stock.quantity += 1;
+            else merchant.inventory.push({ id: item.id, quantity: 1 });
+            changes.push(new WorldChange('item_sold', item.id, -1, `Sprzedano ${item.name}.`, 'local'));
+            changes.push(new WorldChange('gold_changed', player.name, sellPrice, `Otrzymano ${sellPrice} złota.`, 'local'));
+            return { success: true, message: `Sprzedajesz ${item.name} za ${sellPrice} złota.`, timeCostMinutes: 5, changes };
         }
         if (!stock || stock.quantity < 1) {
             return { success: false, message: `Kupiec nie ma przedmiotu: ${item.name}.`, timeCostMinutes: 1, changes: [] };
         }
-        if (player.gold < item.price) {
-            return { success: false, message: `Brakuje ci zlota. Cena to ${item.price}.`, timeCostMinutes: 1, changes: [] };
+        if (player.gold < buyPrice) {
+            return { success: false, message: `Brakuje ci złota. Cena to ${buyPrice}.`, timeCostMinutes: 1, changes: [] };
         }
-        player.gold -= item.price;
+        if (!player.canCarry(item.id, 1)) {
+            return { success: false, message: `Nie masz miejsca na ${item.name}. Waga: ${player.getInventoryWeight().toFixed(1)}/${player.getCarryCapacity().toFixed(1)} kg.`, timeCostMinutes: 1, changes: [] };
+        }
+        player.gold -= buyPrice;
+        merchant.gold += buyPrice;
         player.addItem(item.id, 1);
         stock.quantity -= 1;
         changes.push(new WorldChange('item_bought', item.id, 1, `Bought ${item.name}`, 'local'));
-        changes.push(new WorldChange('gold_changed', player.name, -item.price, `Spent ${item.price} gold`, 'local'));
-        return { success: true, message: `Kupujesz ${item.name} za ${item.price} zlota.`, timeCostMinutes: 5, changes };
+        changes.push(new WorldChange('gold_changed', player.name, -buyPrice, `Wydano ${buyPrice} złota.`, 'local'));
+        return { success: true, message: `Kupujesz ${item.name} za ${buyPrice} złota.`, timeCostMinutes: 5, changes };
     }
 
     _tryEquipmentAction(normalizedAction, player) {
@@ -2028,7 +2068,7 @@ class World {
             mechanicOverride = this._tryQuestAction(normalized, player);
         } else if (/\b(use|uzyj|zjedz|zjedz)\b/i.test(normalized)) {
             mechanicOverride = this._tryUseItem(normalized, player);
-        } else if (/\b(kup|kupuj|sprzed|handel|targuj|buy|sell)\b/i.test(normalized)) {
+        } else if (/\b(kup|kupuj|kupuję|kupuje|sprzed|sprzedaj|sprzedaję|sprzedaje|handel|targuj|buy|sell)\w*/i.test(normalized)) {
             mechanicOverride = this._tryTradeAction(normalized, player);
         } else if (/\b(atak|walcz|uderz|zabij|strzel|attack|fight)\b/i.test(normalized)) {
             mechanicOverride = this._tryCombatAction(normalized, player);
@@ -4293,7 +4333,8 @@ class World {
                 const locationId = validLocationIds.has(makeId(entry?.locationId, '')) ? makeId(entry.locationId, '') : locations[0].id;
                 const inventory = Array.isArray(entry?.inventory) ? entry.inventory
                     .filter(item => item && ITEM_CATALOG[item.id] && Number.isInteger(item.quantity) && item.quantity > 0)
-                    .map(item => ({ id: item.id, quantity: Math.min(100, item.quantity) })) : [];
+                    .map(item => ({ id: item.id, quantity: Math.min(1000, item.quantity) })) : [];
+                const isMerchant = entry?.isMerchant === true || /merchant|kupiec|trader/i.test(String(entry?.role || ''));
                 return {
                     id,
                     name: String(entry?.name || id).slice(0, 120),
@@ -4307,8 +4348,9 @@ class World {
                     defense: clamp(entry?.defense, 0, 500, 0),
                     goldReward: Math.floor(clamp(entry?.goldReward, 0, 100000, 0)),
                     xpReward: Math.floor(clamp(entry?.xpReward, 0, 100000, 10)),
-                    isMerchant: entry?.isMerchant === true || /merchant|kupiec|trader/i.test(String(entry?.role || '')),
+                    isMerchant,
                     isQuestGiver: entry?.isQuestGiver === true || /quest|zadanie|warden|elder|gospodarz/i.test(String(entry?.role || '')),
+                    gold: Math.floor(clamp(entry?.gold, 0, 1000000, isMerchant ? 500 : 0)),
                     inventory
                 };
             });
@@ -4475,6 +4517,7 @@ class World {
         const merchant = new NPC('npc_market_merchant', 'market_square', 'merchants_guild');
         merchant.name = 'Market Merchant';
         merchant.isMerchant = true;
+        merchant.gold = 500;
         merchant.inventory = [
             { id: 'bread', quantity: 10 },
             { id: 'healing_potion', quantity: 5 },

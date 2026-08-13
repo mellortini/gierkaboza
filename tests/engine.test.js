@@ -145,6 +145,31 @@ function testEquipmentAndItemPersistence() {
     assert.strictEqual(player.getAttackPower(), 8);
 }
 
+function testMerchantGoldWeightAndRoundTrip() {
+    const world = World.createStarterWorld('Merchant Tester', 'town_central');
+    const player = world.player;
+    const merchant = world.getNPC('npc_market_merchant');
+    assert.strictEqual(merchant.gold, 500);
+    world.performPlayerAction('idz do market_square', player);
+
+    const beforeWeight = player.getInventoryWeight();
+    const purchase = world.performPlayerAction('kupuje miecz', player);
+    assert.strictEqual(purchase.success, true);
+    assert.strictEqual(player.getItemQuantity('iron_sword'), 1);
+    assert.strictEqual(merchant.gold, 575);
+    assert.ok(player.getInventoryWeight() > beforeWeight);
+
+    const sale = world.performPlayerAction('sprzedaje chleb', player);
+    assert.strictEqual(sale.success, true);
+    assert.strictEqual(player.getItemQuantity('bread'), 1);
+    assert.strictEqual(merchant.gold, 573);
+
+    const saved = World.fromJSON(JSON.parse(JSON.stringify(world.toJSON())));
+    assert.strictEqual(saved.getNPC('npc_market_merchant').gold, 573);
+    assert.strictEqual(saved.getNPC('npc_market_merchant').inventory.find(item => item.id === 'iron_sword')?.quantity || 0, 0);
+    assert.strictEqual(saved.getNPC('npc_market_merchant').inventory.find(item => item.id === 'bread').quantity, 11);
+}
+
 function testNaturalTravelFormsAndUnknownDestination() {
     const world = World.createStarterWorld('Natural Travel Tester', 'town_central');
     const player = world.player;
@@ -588,6 +613,7 @@ testTimeValidation();
 testPlayerActionsAndRoundTrip();
 testPlayerStatsAndD20Resolution();
 testEquipmentAndItemPersistence();
+testMerchantGoldWeightAndRoundTrip();
 testNaturalTravelFormsAndUnknownDestination();
 testSandboxCreatesAndPersistsFreeformLocations();
 testNpcNameDiscoveryAndPersistence();

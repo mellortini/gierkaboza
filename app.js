@@ -249,6 +249,11 @@ const elements = {
     inventoryWeightLabel: document.getElementById('inventory-weight-label'),
     equipmentSlots: document.getElementById('equipment-slots'),
     inventoryGrid: document.getElementById('inventory-grid'),
+    merchantPanel: document.getElementById('merchant-panel'),
+    merchantName: document.getElementById('merchant-name'),
+    merchantGold: document.getElementById('merchant-gold'),
+    merchantDescription: document.getElementById('merchant-description'),
+    merchantGrid: document.getElementById('merchant-grid'),
     playerHunger: document.getElementById('player-hunger'),
     playerThirst: document.getElementById('player-thirst'),
     playerFatigue: document.getElementById('player-fatigue'),
@@ -1869,6 +1874,38 @@ function getItemCatalogEntry(itemId) {
     return window.RPGEngine?.ITEM_CATALOG?.[itemId] || null;
 }
 
+function getCurrentMerchant() {
+    const player = state.world?.player;
+    if (!player || !state.world?.npcs) return null;
+    return Array.from(state.world.npcs.values()).find(npc =>
+        npc && npc.locationId === player.locationId && npc.isAlive !== false && npc.isMerchant
+    ) || null;
+}
+
+function renderMerchantPanel(player) {
+    const merchant = getCurrentMerchant();
+    if (!elements.merchantPanel || !elements.merchantGrid) return;
+    if (!merchant) {
+        elements.merchantPanel.classList.add('hidden');
+        elements.merchantGrid.replaceChildren();
+        return;
+    }
+    elements.merchantPanel.classList.remove('hidden');
+    if (elements.merchantName) elements.merchantName.textContent = merchant.name || 'Kupiec';
+    if (elements.merchantGold) elements.merchantGold.textContent = `💰 ${Math.max(0, Number(merchant.gold) || 0)}`;
+    if (elements.merchantDescription) elements.merchantDescription.textContent = `Towar kupca. Twoje złoto: ${player?.gold ?? 0} • Udźwig: ${(player?.getInventoryWeight?.() || 0).toFixed(1)}/${(player?.getCarryCapacity?.() || 0).toFixed(1)} kg`;
+    const catalog = window.RPGEngine?.ITEM_CATALOG || {};
+    const stock = (merchant.inventory || []).filter(entry => entry && entry.quantity > 0 && catalog[entry.id]);
+    elements.merchantGrid.innerHTML = stock.length > 0 ? stock.map(entry => {
+        const item = catalog[entry.id];
+        return `<article class="merchant-item">
+            <div class="merchant-item-icon-wrap"><img src="${item.icon || ''}" alt="" class="item-icon" loading="lazy"></div>
+            <div class="merchant-item-copy"><strong>${escapeHtml(item.name)}</strong><small>${entry.quantity} szt. • ${Number(item.weight || 0).toFixed(1)} kg • ${item.price} zł</small></div>
+            <button type="button" class="item-action-button" data-inventory-action="buy" data-item-id="${item.id}" ${player?.gold < item.price || !player?.canCarry?.(item.id, 1) ? 'disabled' : ''}>Kup</button>
+        </article>`;
+    }).join('') : '<div class="inventory-empty">Kupiec nie ma już towaru.</div>';
+}
+
 function renderInventory(player) {
     if (!elements.inventoryGrid || !elements.equipmentSlots) return;
     const catalog = window.RPGEngine?.ITEM_CATALOG || {};
@@ -1886,23 +1923,28 @@ function renderInventory(player) {
         </div>`;
     }).join('');
 
+    const merchant = getCurrentMerchant();
     const inventory = (player?.inventory || []).filter(entry => entry && entry.quantity > 0);
-    if (elements.inventoryWeightLabel) elements.inventoryWeightLabel.textContent = `${inventory.reduce((sum, entry) => sum + entry.quantity, 0)} szt.`;
+    if (elements.inventoryWeightLabel) elements.inventoryWeightLabel.textContent = `${(player?.getInventoryWeight?.() || 0).toFixed(1)}/${(player?.getCarryCapacity?.() || 0).toFixed(1)} kg`;
     elements.inventoryGrid.innerHTML = inventory.length > 0 ? inventory.map(entry => {
         const item = catalog[entry.id] || { id: entry.id, name: entry.id, type: 'unknown' };
         const isEquipped = equippedIds.has(item.id);
         const canUse = item.type === 'food' || item.type === 'consumable';
-        const action = item.slot && !isEquipped
+        const primaryAction = item.slot && !isEquipped
             ? `<button type="button" class="item-action-button" data-inventory-action="equip" data-item-id="${item.id}">Załóż</button>`
             : canUse
                 ? `<button type="button" class="item-action-button" data-inventory-action="use" data-item-id="${item.id}">Użyj</button>`
                 : isEquipped ? '<span class="item-equipped-label">Założony</span>' : '';
+        const sellAction = merchant && !isEquipped
+            ? `<button type="button" class="item-action-button item-action-secondary" data-inventory-action="sell" data-item-id="${item.id}" ${merchant.gold < Math.max(1, Math.floor((item.price || 1) * 0.5)) ? 'disabled' : ''}>Sprzedaj</button>`
+            : '';
         return `<article class="inventory-item ${isEquipped ? 'inventory-item-equipped' : ''}">
             <div class="inventory-item-icon-wrap"><img src="${item.icon || ''}" alt="" class="item-icon" loading="lazy"><span class="inventory-item-quantity">${entry.quantity}</span></div>
-            <div class="inventory-item-copy"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.type || 'przedmiot')}${item.attack ? ` • Atak +${item.attack}` : ''}${item.defense ? ` • Obrona +${item.defense}` : ''}</small></div>
-            ${action}
+            <div class="inventory-item-copy"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.type || 'przedmiot')} • ${Number(item.weight || 0).toFixed(1)} kg${item.attack ? ` • Atak +${item.attack}` : ''}${item.defense ? ` • Obrona +${item.defense}` : ''}</small></div>
+            <div class="item-action-group">${primaryAction}${sellAction}</div>
         </article>`;
     }).join('') : '<div class="inventory-empty">Plecak jest pusty.</div>';
+    renderMerchantPanel(player);
 }
 
 async function executeInventoryAction(kind, itemId) {
@@ -1913,7 +1955,11 @@ async function executeInventoryAction(kind, itemId) {
         ? `zakładam ${keyword}`
         : kind === 'unequip'
             ? `zdejmuję ${keyword}`
-            : `uzyj ${keyword}`;
+            : kind === 'buy'
+                ? `kupuję ${keyword}`
+                : kind === 'sell'
+                    ? `sprzedaję ${keyword}`
+                    : `uzyj ${keyword}`;
     addStoryEntry('player', state.isMultiplayer && state.playerName ? `[${state.playerName}]: ${action}` : action);
     if (state.isMultiplayer) {
         await sendMultiplayerAction(action);
