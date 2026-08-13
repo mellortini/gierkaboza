@@ -122,6 +122,10 @@ Każda nowa postać zaczyna z sześcioma statystykami na poziomie 10 oraz pulą 
 
 Akcje, które wymagają testu — na przykład atak, skradanie, perswazja, otwieranie zamka albo przeszukiwanie — zatrzymują akcję i pokazują panel d20. Kość jest losowana wyłącznie na serwerze przez `crypto.randomInt(1, 21)`. Gracz nie wysyła wyniku, więc nie może go zmienić w narzędziach przeglądarki. Dopiero po wyniku silnik oblicza sukces, obrażenia, kontratak, EXP i czas świata, a narrator dostaje ten rezultat jako kontekst.
 
+### Ekwipunek
+
+Panel „Ekwipunek” pokazuje przedmioty z ilością i pixelartową ikoną. Broń, pancerz, tarcza i amulet mają osobne sloty; przyciski „Załóż” i „Zdejmij” wysyłają zwykłą akcję do serwera, więc zmiana jest wspólna i zapisywana tak samo jak pozostałe działania. Założone wyposażenie wpływa na atak, obronę oraz modyfikatory testów.
+
 ## 📁 Project Structure
 
 ```

@@ -112,6 +112,39 @@ function testPlayerStatsAndD20Resolution() {
     assert.ok(attack.worldChanges.some(change => change.type === 'player_damaged'));
 }
 
+function testEquipmentAndItemPersistence() {
+    const world = World.createStarterWorld('Equipment Tester', 'town_central');
+    const player = world.player;
+    player.addItem('iron_sword');
+    player.addItem('leather_armor');
+    player.addItem('moon_amulet');
+
+    const sword = world.performPlayerAction('zakładam miecz', player);
+    const armor = world.performPlayerAction('zakładam zbroję', player);
+    const amulet = world.performPlayerAction('zakładam amulet', player);
+    assert.strictEqual(sword.success, true);
+    assert.strictEqual(armor.success, true);
+    assert.strictEqual(amulet.success, true);
+    assert.strictEqual(player.equipment.weapon, 'iron_sword');
+    assert.strictEqual(player.equipment.armor, 'leather_armor');
+    assert.strictEqual(player.equipment.accessory, 'moon_amulet');
+    assert.strictEqual(player.getAttackPower(), 13);
+    assert.strictEqual(player.getDefensePower(), 3);
+    assert.strictEqual(player.getAbilityModifier('wisdom'), 0);
+
+    const snapshot = JSON.parse(JSON.stringify(player.toJSON()));
+    const restored = Player.fromJSON(snapshot);
+    assert.strictEqual(restored.equipment.weapon, 'iron_sword');
+    assert.strictEqual(restored.equipment.armor, 'leather_armor');
+    assert.strictEqual(restored.equipment.accessory, 'moon_amulet');
+    assert.strictEqual(restored.getAttackPower(), 13);
+
+    const removed = world.performPlayerAction('zdejmuję miecz', player);
+    assert.strictEqual(removed.success, true);
+    assert.strictEqual(player.equipment.weapon, null);
+    assert.strictEqual(player.getAttackPower(), 8);
+}
+
 function testNaturalTravelFormsAndUnknownDestination() {
     const world = World.createStarterWorld('Natural Travel Tester', 'town_central');
     const player = world.player;
@@ -554,6 +587,7 @@ function testNarrativePatchValidationPendingTurnsAndBudget() {
 testTimeValidation();
 testPlayerActionsAndRoundTrip();
 testPlayerStatsAndD20Resolution();
+testEquipmentAndItemPersistence();
 testNaturalTravelFormsAndUnknownDestination();
 testSandboxCreatesAndPersistsFreeformLocations();
 testNpcNameDiscoveryAndPersistence();

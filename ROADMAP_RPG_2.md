@@ -131,7 +131,9 @@ Najpierw wersja deterministyczna:
 
 Potem inicjatywa, tury, dystans, osłony, zdolności i walka grupowa.
 
-## Etap G — przedmioty i wyposażenie
+## Etap G — przedmioty i wyposażenie — pierwsza wersja wdrożona
+
+Wdrożone: stały katalog przedmiotów z pixelartowymi ikonami, plecak w interfejsie, sloty broni/pancerza/drugiej ręki/akcesorium, zakładanie i zdejmowanie przez akcję serwerową oraz wpływ wyposażenia na atak, obronę i modyfikatory cech. Ikony znajdują się w `assets/items/` i są ładowane jako przezroczyste PNG z pixelowym skalowaniem.
 
 Definicje przedmiotów są stałe, a egzemplarze mają własną trwałość, jakość i właściciela.
 
@@ -139,7 +141,7 @@ Definicje przedmiotów są stałe, a egzemplarze mają własną trwałość, jak
 item_definition → item_instance → inventory_entry → equipment_slot
 ```
 
-Interfejs otrzyma siatkę ekwipunku, sloty, porównanie, ciężar, szybkie użycie, zakładanie i zdejmowanie przedmiotów.
+Do uzupełnienia: trwałość, jakość, ciężar, porównanie przedmiotów, osobne egzemplarze i pełne sloty ubioru.
 
 ## Etap H — sklepy i gospodarka
 

@@ -33,6 +33,8 @@ const IMPORTANCE_TABLE = {
     "item_used": 0.08,
     "item_bought": 0.08,
     "item_sold": 0.06,
+    "item_equipped": 0.08,
+    "item_unequipped": 0.04,
     "player_healed": 0.10,
     "player_damaged": 0.20,
     "combat_happened": 0.35,
@@ -91,10 +93,14 @@ const STRATEGIC_UPDATE_INTERVAL = 10080; // 7 days in minutes
 // Small deterministic item catalogue used by the starter game and the
 // action resolver. Items are data, so saves remain stable as the rules grow.
 const ITEM_CATALOG = Object.freeze({
-    bread: { id: "bread", name: "bread", aliases: ["bread", "chleb"], price: 5, type: "food", hungerRestore: 15 },
-    healing_potion: { id: "healing_potion", name: "healing potion", aliases: ["healing potion", "potion", "mikstura", "lecznicza"], price: 25, type: "consumable", heal: 30 },
-    iron_sword: { id: "iron_sword", name: "iron sword", aliases: ["iron sword", "sword", "miecz"], price: 75, type: "weapon", attack: 5 },
-    leather_armor: { id: "leather_armor", name: "leather armor", aliases: ["leather armor", "armor", "zbroja"], price: 60, type: "armor", defense: 2 }
+    bread: { id: "bread", name: "Chleb", aliases: ["bread", "chleb"], price: 5, type: "food", icon: "/assets/items/bread.png", hungerRestore: 15 },
+    healing_potion: { id: "healing_potion", name: "Mikstura lecznicza", aliases: ["healing potion", "potion", "mikstura", "lecznicza"], price: 25, type: "consumable", icon: "/assets/items/healing-potion.png", heal: 30 },
+    iron_sword: { id: "iron_sword", name: "Żelazny miecz", aliases: ["iron sword", "sword", "miecz"], price: 75, type: "weapon", slot: "weapon", icon: "/assets/items/iron-sword.png", attack: 5 },
+    leather_armor: { id: "leather_armor", name: "Skórzana zbroja", aliases: ["leather armor", "armor", "zbroja", "zbroję", "zbroje"], price: 60, type: "armor", slot: "armor", icon: "/assets/items/leather-armor.png", defense: 2 },
+    wooden_shield: { id: "wooden_shield", name: "Drewniana tarcza", aliases: ["wooden shield", "shield", "tarcza", "tarczę", "tarcze"], price: 45, type: "shield", slot: "offhand", icon: "/assets/items/wooden-shield.png", defense: 1 },
+    torch: { id: "torch", name: "Pochodnia", aliases: ["torch", "pochodnia"], price: 3, type: "tool", icon: "/assets/items/torch.png" },
+    iron_key: { id: "iron_key", name: "Żelazny klucz", aliases: ["iron key", "key", "klucz"], price: 1, type: "quest", icon: "/assets/items/iron-key.png" },
+    moon_amulet: { id: "moon_amulet", name: "Amulet księżyca", aliases: ["moon amulet", "amulet", "księżyca", "ksiezyca"], price: 120, type: "accessory", slot: "accessory", icon: "/assets/items/moon-amulet.png", statBonuses: { wisdom: 1 }, defense: 1 }
 });
 
 const ABILITY_KEYS = Object.freeze([
@@ -114,6 +120,8 @@ const DEFAULT_PLAYER_STATS = Object.freeze({
     wisdom: 10,
     charisma: 10
 });
+
+const EQUIPMENT_SLOTS = Object.freeze(['weapon', 'armor', 'offhand', 'accessory']);
 
 function normalizeAbilityKey(value) {
     const key = String(value || '').trim().toLowerCase();
@@ -1007,6 +1015,12 @@ class Player {
         
         // Inventory (Phase 2+)
         this.inventory = [];
+        this.equipment = {
+            weapon: null,
+            armor: null,
+            offhand: null,
+            accessory: null
+        };
 
         // Minimal D&D-like progression used by deterministic actions.
         this.level = 1;
@@ -1026,7 +1040,7 @@ class Player {
     }
 
     getAbilityModifier(ability) {
-        return abilityModifier(this.getAbilityScore(ability));
+        return abilityModifier(this.getAbilityScore(ability) + this.getEquipmentStatBonus(normalizeAbilityKey(ability)));
     }
 
     getStatSummary() {
@@ -1079,18 +1093,53 @@ class Player {
         return this.getItem(itemId)?.quantity || 0;
     }
 
+    getEquippedItemIds() {
+        return EQUIPMENT_SLOTS
+            .map(slot => this.equipment?.[slot])
+            .filter(itemId => typeof itemId === 'string' && itemId);
+    }
+
+    getEquippedItems() {
+        return this.getEquippedItemIds()
+            .map(itemId => ITEM_CATALOG[itemId])
+            .filter(Boolean);
+    }
+
+    isItemEquipped(itemId) {
+        return this.getEquippedItemIds().includes(itemId);
+    }
+
+    equipItem(itemId) {
+        const item = ITEM_CATALOG[itemId];
+        if (!item?.slot || !EQUIPMENT_SLOTS.includes(item.slot) || this.getItemQuantity(itemId) < 1) return false;
+        this.equipment[item.slot] = itemId;
+        return true;
+    }
+
+    unequipItem(slotOrItemId) {
+        const value = String(slotOrItemId || '').trim();
+        const slot = EQUIPMENT_SLOTS.includes(value)
+            ? value
+            : EQUIPMENT_SLOTS.find(key => this.equipment?.[key] === value);
+        if (!slot || !this.equipment?.[slot]) return false;
+        this.equipment[slot] = null;
+        return true;
+    }
+
+    getEquipmentStatBonus(ability) {
+        return this.getEquippedItems().reduce((total, item) => total + (Number(item.statBonuses?.[ability]) || 0), 0);
+    }
+
     getAttackPower() {
-        const weaponBonus = this.inventory
-            .filter(item => item.quantity > 0)
-            .reduce((total, item) => total + (ITEM_CATALOG[item.id]?.attack || 0), 0);
-        return Math.max(1, this.attack + this.getAbilityModifier('strength') + weaponBonus);
+        const equipmentBonus = this.getEquippedItems()
+            .reduce((total, item) => total + (item.attack || 0), 0);
+        return Math.max(1, this.attack + this.getAbilityModifier('strength') + equipmentBonus);
     }
 
     getDefensePower() {
-        const armorBonus = this.inventory
-            .filter(item => item.quantity > 0)
-            .reduce((total, item) => total + (ITEM_CATALOG[item.id]?.defense || 0), 0);
-        return Math.max(0, this.defense + this.getAbilityModifier('dexterity') + armorBonus);
+        const equipmentBonus = this.getEquippedItems()
+            .reduce((total, item) => total + (item.defense || 0), 0);
+        return Math.max(0, this.defense + this.getAbilityModifier('dexterity') + equipmentBonus);
     }
 
     addQuest(quest) {
@@ -1183,6 +1232,7 @@ class Player {
             unspentStatPoints: this.unspentStatPoints,
             skillPoints: this.skillPoints,
             proficiencyBonus: this.proficiencyBonus,
+            equipment: { ...this.equipment },
             reputation: Object.fromEntries(this.reputation),
             statusEffects: this.statusEffects.map(e => ({
                 name: e.name,
@@ -1247,6 +1297,14 @@ class Player {
                 .filter(item => item && ITEM_CATALOG[item.id] && Number.isInteger(item.quantity) && item.quantity > 0)
                 .map(item => ({ id: item.id, quantity: item.quantity }))
             : [];
+        if (json.equipment && typeof json.equipment === 'object') {
+            for (const slot of EQUIPMENT_SLOTS) {
+                const itemId = json.equipment[slot];
+                if (typeof itemId === 'string' && ITEM_CATALOG[itemId]?.slot === slot && player.getItemQuantity(itemId) > 0) {
+                    player.equipment[slot] = itemId;
+                }
+            }
+        }
         player.quests = Array.isArray(json.quests) ? json.quests : [];
         return player;
     }
@@ -1691,6 +1749,37 @@ class World {
         return { success: true, message: `Kupujesz ${item.name} za ${item.price} zlota.`, timeCostMinutes: 5, changes };
     }
 
+    _tryEquipmentAction(normalizedAction, player) {
+        const wantsUnequip = /\b(zdejmij|zdejmuję|zdejmuje|unequip|odłóż|odloz)\w*/i.test(normalizedAction);
+        const wantsEquip = /\b(załóż|zaloz|zakładam|zakladam|wyposaż|wyposaz|equip|ubierz)\w*/i.test(normalizedAction);
+        if (!wantsEquip && !wantsUnequip) return null;
+
+        const item = this._resolveItemInAction(normalizedAction);
+        if (wantsUnequip) {
+            const target = item?.id || normalizedAction.match(/\b(weapon|armor|offhand|accessory|broń|bron|zbroja|tarcza|amulet)\b/i)?.[1];
+            const slotAliases = { broń: 'weapon', bron: 'weapon', zbroja: 'armor', tarcza: 'offhand', amulet: 'accessory' };
+            const slotOrItemId = slotAliases[target] || target;
+            if (!player.unequipItem(slotOrItemId)) {
+                return { success: false, message: 'Nie masz takiego przedmiotu założonego.', timeCostMinutes: 1, changes: [] };
+            }
+            return {
+                success: true,
+                message: `Zdejmujesz ${item?.name || 'wyposażenie'}.`,
+                timeCostMinutes: 1,
+                changes: [new WorldChange('item_unequipped', item?.id || slotOrItemId, true, 'Przedmiot zdjęty.', 'local')]
+            };
+        }
+
+        if (!item) return { success: false, message: 'Podaj przedmiot, który chcesz założyć.', timeCostMinutes: 1, changes: [] };
+        if (!item.slot) return { success: false, message: `${item.name} nie jest przedmiotem, który można założyć.`, timeCostMinutes: 1, changes: [] };
+        if (player.getItemQuantity(item.id) < 1) return { success: false, message: `Nie masz przedmiotu: ${item.name}.`, timeCostMinutes: 1, changes: [] };
+        const previous = player.equipment?.[item.slot];
+        player.equipItem(item.id);
+        const changes = [new WorldChange('item_equipped', item.id, { slot: item.slot, previous }, `Założono ${item.name}.`, 'local')];
+        if (previous && previous !== item.id) changes.push(new WorldChange('item_unequipped', previous, true, 'Poprzedni przedmiot zastąpiony.', 'local'));
+        return { success: true, message: `Zakładasz ${item.name}.`, timeCostMinutes: 1, changes };
+    }
+
     _tryQuestAction(normalizedAction, player) {
         if (!/(quest|zadanie|misja|przyjmij|accept|nagrod|reward)/i.test(normalizedAction)) return null;
         const questGivers = Array.from(this.npcs.values()).filter(npc =>
@@ -1933,7 +2022,9 @@ class World {
         // Resolve richer mechanics after the legacy travel/dialogue branches so
         // old saves and clients keep working while trade/combat/quests become real.
         let mechanicOverride = null;
-        if (/\b(quest|zadanie|misja|przyjmij|accept|nagrod|reward)\b/i.test(normalized)) {
+        if (/\b(załóż|zaloz|zakładam|zakladam|wyposaż|wyposaz|zdejmij|zdejmuję|zdejmuje|unequip|equip|ubierz|odłóż|odloz)\w*/i.test(normalized)) {
+            mechanicOverride = this._tryEquipmentAction(normalized, player);
+        } else if (/\b(quest|zadanie|misja|przyjmij|accept|nagrod|reward)\b/i.test(normalized)) {
             mechanicOverride = this._tryQuestAction(normalized, player);
         } else if (/\b(use|uzyj|zjedz|zjedz)\b/i.test(normalized)) {
             mechanicOverride = this._tryUseItem(normalized, player);
@@ -4388,7 +4479,10 @@ class World {
             { id: 'bread', quantity: 10 },
             { id: 'healing_potion', quantity: 5 },
             { id: 'iron_sword', quantity: 1 },
-            { id: 'leather_armor', quantity: 1 }
+            { id: 'leather_armor', quantity: 1 },
+            { id: 'wooden_shield', quantity: 2 },
+            { id: 'torch', quantity: 12 },
+            { id: 'moon_amulet', quantity: 1 }
         ];
         world.addNPC(merchant);
 

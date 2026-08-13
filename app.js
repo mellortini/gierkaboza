@@ -245,6 +245,10 @@ const elements = {
     playerStatsPanel: document.getElementById('player-stats-panel'),
     playerStats: document.getElementById('player-stats'),
     statPointsLeft: document.getElementById('stat-points-left'),
+    inventoryPanel: document.getElementById('inventory-panel'),
+    inventoryWeightLabel: document.getElementById('inventory-weight-label'),
+    equipmentSlots: document.getElementById('equipment-slots'),
+    inventoryGrid: document.getElementById('inventory-grid'),
     playerHunger: document.getElementById('player-hunger'),
     playerThirst: document.getElementById('player-thirst'),
     playerFatigue: document.getElementById('player-fatigue'),
@@ -633,6 +637,8 @@ async function init() {
     on(elements.sendActionBtn, 'click', sendAction);
     on(elements.rollD20Btn, 'click', rollD20);
     on(elements.playerStats, 'click', handleStatPanelClick);
+    on(elements.equipmentSlots, 'click', handleInventoryClick);
+    on(elements.inventoryGrid, 'click', handleInventoryClick);
     on(elements.playerAction, 'keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -1831,7 +1837,7 @@ function renderPlayerStats(player) {
     if (elements.statPointsLeft) elements.statPointsLeft.textContent = `Punkty: ${points}`;
     elements.playerStats.innerHTML = Object.entries(STAT_LABELS).map(([key, label]) => {
         const score = Math.max(1, Number(stats[key]) || 10);
-        const modifier = Math.floor((score - 10) / 2);
+        const modifier = player?.getAbilityModifier?.(key) ?? Math.floor((score - 10) / 2);
         const disabled = points <= 0 || score >= 20;
         return `
             <div class="stat-card">
@@ -1857,6 +1863,72 @@ function handleStatPanelClick(event) {
         updateGameHUD();
         addStoryEntry('system', `📊 Rozwijasz statystykę: ${STAT_LABELS[ability]}.`);
     }
+}
+
+function getItemCatalogEntry(itemId) {
+    return window.RPGEngine?.ITEM_CATALOG?.[itemId] || null;
+}
+
+function renderInventory(player) {
+    if (!elements.inventoryGrid || !elements.equipmentSlots) return;
+    const catalog = window.RPGEngine?.ITEM_CATALOG || {};
+    const equipment = player?.equipment || {};
+    const slotLabels = { weapon: 'Broń', armor: 'Pancerz', offhand: 'Druga ręka', accessory: 'Akcesorium' };
+    const slotIcons = { weapon: '⚔️', armor: '🛡️', offhand: '🛡️', accessory: '🔮' };
+    const equippedIds = new Set(Object.values(equipment).filter(Boolean));
+
+    elements.equipmentSlots.innerHTML = Object.keys(slotLabels).map(slot => {
+        const itemId = equipment[slot];
+        const item = itemId ? catalog[itemId] : null;
+        return `<div class="equipment-slot ${item ? 'equipment-slot-filled' : ''}">
+            <div class="equipment-slot-label">${slotIcons[slot]} ${slotLabels[slot]}</div>
+            ${item ? `<img src="${item.icon || ''}" alt="" class="item-icon" loading="lazy"><strong>${escapeHtml(item.name)}</strong><button type="button" class="item-action-button item-action-secondary" data-inventory-action="unequip" data-item-id="${item.id}">Zdejmij</button>` : '<span class="equipment-empty">Puste</span>'}
+        </div>`;
+    }).join('');
+
+    const inventory = (player?.inventory || []).filter(entry => entry && entry.quantity > 0);
+    if (elements.inventoryWeightLabel) elements.inventoryWeightLabel.textContent = `${inventory.reduce((sum, entry) => sum + entry.quantity, 0)} szt.`;
+    elements.inventoryGrid.innerHTML = inventory.length > 0 ? inventory.map(entry => {
+        const item = catalog[entry.id] || { id: entry.id, name: entry.id, type: 'unknown' };
+        const isEquipped = equippedIds.has(item.id);
+        const canUse = item.type === 'food' || item.type === 'consumable';
+        const action = item.slot && !isEquipped
+            ? `<button type="button" class="item-action-button" data-inventory-action="equip" data-item-id="${item.id}">Załóż</button>`
+            : canUse
+                ? `<button type="button" class="item-action-button" data-inventory-action="use" data-item-id="${item.id}">Użyj</button>`
+                : isEquipped ? '<span class="item-equipped-label">Założony</span>' : '';
+        return `<article class="inventory-item ${isEquipped ? 'inventory-item-equipped' : ''}">
+            <div class="inventory-item-icon-wrap"><img src="${item.icon || ''}" alt="" class="item-icon" loading="lazy"><span class="inventory-item-quantity">${entry.quantity}</span></div>
+            <div class="inventory-item-copy"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.type || 'przedmiot')}${item.attack ? ` • Atak +${item.attack}` : ''}${item.defense ? ` • Obrona +${item.defense}` : ''}</small></div>
+            ${action}
+        </article>`;
+    }).join('') : '<div class="inventory-empty">Plecak jest pusty.</div>';
+}
+
+async function executeInventoryAction(kind, itemId) {
+    const item = getItemCatalogEntry(itemId);
+    if (!item || !state.world?.player) return;
+    const keyword = item.aliases?.[0] || item.id;
+    const action = kind === 'equip'
+        ? `zakładam ${keyword}`
+        : kind === 'unequip'
+            ? `zdejmuję ${keyword}`
+            : `uzyj ${keyword}`;
+    addStoryEntry('player', state.isMultiplayer && state.playerName ? `[${state.playerName}]: ${action}` : action);
+    if (state.isMultiplayer) {
+        await sendMultiplayerAction(action);
+        return;
+    }
+    const result = state.world.performPlayerAction(action, state.world.player);
+    if (result?.message) addStoryEntry('system', `Mechanika: ${result.message}`);
+    updateGameHUD();
+}
+
+function handleInventoryClick(event) {
+    const button = event.target.closest?.('[data-inventory-action]');
+    if (!button || button.disabled) return;
+    button.disabled = true;
+    executeInventoryAction(button.dataset.inventoryAction, button.dataset.itemId);
 }
 
 /**
@@ -3451,6 +3523,7 @@ function updateGameHUD() {
     elements.playerFatigue.textContent = `${Math.round(player.fatigue)}%`;
 
     renderPlayerStats(player);
+    renderInventory(player);
     
     // Add warning class if survival stats are critical
     updateSurvivalWarnings(player);

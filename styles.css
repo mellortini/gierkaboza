@@ -2072,6 +2072,214 @@ button {
     cursor: not-allowed;
 }
 
+.inventory-panel {
+    margin: 0 0 16px;
+    padding: 0;
+    background: rgba(4, 13, 24, 0.58);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+}
+
+.inventory-panel summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 13px;
+    color: var(--text-main);
+    cursor: pointer;
+    font-size: 0.86rem;
+    font-weight: 700;
+    list-style-position: inside;
+}
+
+.inventory-panel summary span {
+    color: var(--text-soft);
+    font-size: 0.76rem;
+    font-weight: 600;
+}
+
+.equipment-section,
+.inventory-section-heading {
+    padding: 0 12px;
+}
+
+.equipment-slots-heading,
+.inventory-section-heading {
+    margin: 0 0 8px;
+    color: var(--text-soft);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.equipment-slots {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    padding-bottom: 14px;
+}
+
+.equipment-slot {
+    display: grid;
+    min-height: 108px;
+    align-content: start;
+    justify-items: center;
+    gap: 5px;
+    padding: 8px 6px;
+    background: rgba(255, 255, 255, 0.035);
+    border: 1px dashed rgba(160, 190, 215, 0.22);
+    border-radius: 8px;
+    text-align: center;
+}
+
+.equipment-slot-filled {
+    border-style: solid;
+    border-color: rgba(255, 209, 102, 0.44);
+}
+
+.equipment-slot-label {
+    color: var(--text-soft);
+    font-size: 0.68rem;
+}
+
+.equipment-slot strong {
+    overflow: hidden;
+    max-width: 100%;
+    color: var(--text-main);
+    font-size: 0.72rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.equipment-empty {
+    margin-top: 13px;
+    color: rgba(201, 212, 220, 0.5);
+    font-size: 0.72rem;
+}
+
+.inventory-section-heading {
+    padding-top: 2px;
+}
+
+.inventory-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 8px;
+    padding: 0 12px 12px;
+}
+
+.inventory-item {
+    display: grid;
+    grid-template-columns: 46px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(160, 190, 215, 0.13);
+    border-radius: 8px;
+}
+
+.inventory-item-equipped {
+    border-color: rgba(255, 209, 102, 0.48);
+    background: rgba(255, 209, 102, 0.07);
+}
+
+.inventory-item-icon-wrap {
+    position: relative;
+    display: grid;
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    background: rgba(5, 11, 20, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 7px;
+}
+
+.item-icon {
+    width: 38px;
+    height: 38px;
+    object-fit: contain;
+    image-rendering: pixelated;
+}
+
+.inventory-item-quantity {
+    position: absolute;
+    right: -4px;
+    bottom: -4px;
+    min-width: 17px;
+    padding: 1px 4px;
+    color: #fff;
+    background: #111a2a;
+    border: 1px solid var(--line-bright);
+    border-radius: 7px;
+    font-size: 0.66rem;
+    font-weight: 800;
+    text-align: center;
+}
+
+.inventory-item-copy {
+    display: grid;
+    min-width: 0;
+    gap: 3px;
+}
+
+.inventory-item-copy strong,
+.inventory-item-copy small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.inventory-item-copy strong {
+    color: var(--text-main);
+    font-size: 0.8rem;
+}
+
+.inventory-item-copy small {
+    color: var(--text-soft);
+    font-size: 0.68rem;
+}
+
+.item-action-button {
+    padding: 5px 7px;
+    color: var(--text-main);
+    background: rgba(77, 173, 255, 0.16);
+    border: 1px solid rgba(77, 173, 255, 0.45);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.68rem;
+    font-weight: 700;
+}
+
+.item-action-secondary {
+    padding: 3px 5px;
+    color: #ffd8dc;
+    background: rgba(235, 83, 104, 0.12);
+    border-color: rgba(235, 83, 104, 0.38);
+}
+
+.item-action-button:disabled {
+    opacity: 0.5;
+    cursor: wait;
+}
+
+.item-equipped-label {
+    color: var(--accent-warm);
+    font-size: 0.66rem;
+    font-weight: 700;
+}
+
+.inventory-empty {
+    grid-column: 1 / -1;
+    padding: 12px;
+    color: var(--text-soft);
+    font-size: 0.78rem;
+    font-style: italic;
+    text-align: center;
+}
+
 .game-layout {
     grid-template-columns: minmax(0, 1fr) minmax(280px, 330px);
     gap: 16px;
@@ -2204,6 +2412,10 @@ button {
     }
 
     .player-stats-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .equipment-slots {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
