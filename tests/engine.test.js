@@ -86,6 +86,28 @@ function testNaturalTravelFormsAndUnknownDestination() {
     assert.match(unknownTravel.message, /celu podróży|celu podróży/i);
 }
 
+function testSandboxCreatesAndPersistsFreeformLocations() {
+    const world = World.createSandboxWorld('Sandbox Tester');
+    assert.strictEqual(world.isSandbox, true);
+    assert.strictEqual(world.scenario, null);
+    assert.strictEqual(world.locations.size, 1);
+    assert.strictEqual(world.npcs.size, 0);
+
+    const firstTrip = world.performPlayerAction('ide do karczmy', world.player);
+    assert.strictEqual(firstTrip.success, true);
+    assert.strictEqual(world.player.locationId, 'sandbox_karczmy');
+    assert.strictEqual(world.locations.size, 2);
+
+    const saved = World.fromJSON(JSON.parse(JSON.stringify(world.toJSON())));
+    assert.strictEqual(saved.isSandbox, true);
+    assert.strictEqual(saved.locations.size, 2);
+    assert.strictEqual(saved.player.locationId, 'sandbox_karczmy');
+
+    const returnTrip = saved.performPlayerAction('ide do sandbox_start', saved.player);
+    assert.strictEqual(returnTrip.success, true);
+    assert.strictEqual(saved.player.locationId, 'sandbox_start');
+}
+
 function testNpcNameDiscoveryAndPersistence() {
     const world = World.createFromBlueprint({
         world: { name: 'Name Knowledge', description: 'NPC test world' },
@@ -491,6 +513,7 @@ function testNarrativePatchValidationPendingTurnsAndBudget() {
 testTimeValidation();
 testPlayerActionsAndRoundTrip();
 testNaturalTravelFormsAndUnknownDestination();
+testSandboxCreatesAndPersistsFreeformLocations();
 testNpcNameDiscoveryAndPersistence();
 testStatusEffectDuration();
 testEventQueueCountersAndCancellation();

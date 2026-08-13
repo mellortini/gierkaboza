@@ -123,6 +123,14 @@ Po restarcie serwer odtwarza zapisany pokój, a gracz może wrócić tym samym I
 zapisywana jest także wspólna historia ostatnich tur, historia czatu i stan skondensowanej pamięci
 narratora — nie tylko stan postaci hosta.
 
+### Sandbox / pełna swoboda
+
+Wybierz `Sandbox — pełna swoboda` i źródło `Sandbox — świat tworzony podczas gry`. Ten tryb nie
+ładuje scenariusza, gotowej mapy, NPC ani zadań. Lokacja powstaje dopiero po podróży gracza, np.
+`idę do karczmy`, `udaję się do lasu` albo `lecę na księżyc`. Odkryte miejsca są zapisywane i można
+do nich wracać. Dla nowej kampanii użyj nowego ID pokoju — istniejący pokój zachowuje swój poprzedni
+świat.
+
 ### Socket.io Events
 - `joinRoom` - Join/create a game room
 - `playerAction` - Send player action to server

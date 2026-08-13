@@ -602,6 +602,9 @@ io.on('connection', (socket) => {
                     socket.emit('joinError', { message: 'Nie udało się uruchomić wybranego scenariusza.' });
                     return;
                 }
+            } else if (worldOption === 'sandbox') {
+                room.world = World.createSandboxWorld(playerName);
+                console.log('Sandbox world created without a predefined map');
             } else if (worldBlueprint && worldOption !== 'current' && worldOption !== 'saved') {
                 try {
                     room.world = World.createFromBlueprint(worldBlueprint, playerName);
@@ -629,8 +632,9 @@ io.on('connection', (socket) => {
                     room.world = World.createStarterWorld(playerName, 'town_central');
                 }
             } else {
-                // Create new world
-                room.world = World.createStarterWorld(playerName, 'town_central');
+                // No scenario/blueprint means true freeform sandbox, not the old starter map.
+                room.world = World.createSandboxWorld(playerName);
+                console.log('Sandbox world created as the default no-scenario mode');
             }
         }
         if (!room.lobby) room.lobby = createLobbyState({}, room.world);
@@ -932,7 +936,9 @@ io.on('connection', (socket) => {
         actionContext += availableExits.length > 0
             ? `Bezpośrednio dostępne przejścia: ${availableExits.join(', ')}. `
             : 'Brak zdefiniowanych bezpośrednich przejść z tej lokacji. ';
-        actionContext += 'Mechaniczny stan świata jest nadrzędny: narrator nie może przenieść postaci do innej lokacji, jeśli mechanika nie zgłosiła udanej podróży. Nie zastępuj nieznanego lub niedostępnego celu inną lokacją; opisz brak możliwości i poproś o poprawny cel. ';
+        actionContext += world.isSandbox
+            ? 'Tryb SANDBOX: świat nie ma zamkniętej mapy. Jeśli gracz opisuje podróż do nowego, sensownego miejsca, mechanika utworzy tę lokację. Nie zastępuj celu innym miejscem i nie ograniczaj gracza do listy istniejących lokacji. '
+            : 'Mechaniczny stan świata jest nadrzędny: narrator nie może przenieść postaci do innej lokacji, jeśli mechanika nie zgłosiła udanej podróży. Nie zastępuj nieznanego lub niedostępnego celu inną lokacją; opisz brak możliwości i poproś o poprawny cel. ';
         
         const narrativeEntityIds = [currentPlayer.locationId];
         for (const npc of world.npcs?.values?.() || []) {
@@ -1043,7 +1049,9 @@ io.on('connection', (socket) => {
 - Imię NPC jest wiedzą osobistą gracza. Dopóki NPC nie przedstawi się po pytaniu o imię, używaj wyłącznie opisu lub roli, nigdy jego prawdziwego imienia.
 - Jeśli gracz pyta NPC o imię, odpowiedź musi jasno zawierać imię tylko wtedy, gdy NPC rzeczywiście decyduje się je podać.
 - Nie zmieniaj lokacji, pozycji ani dostępnych przejść w samym opisie. Traktuj komunikat „stan świata nie został zmieniony” dosłownie.
-- Jeśli gracz podał cel podróży, którego nie ma na liście lokacji lub nie ma go w bezpośrednich przejściach, nie kieruj go do młyna ani żadnego innego miejsca zastępczego.
+${world.isSandbox
+    ? '- TRYB SANDBOX: gracz może wybrać dowolny kierunek i miejsce; jeśli podróż została zaakceptowana mechanicznie, opisz odkrywanie nowej lokacji.'
+    : '- Jeśli gracz podał cel podróży, którego nie ma na liście lokacji lub nie ma go w bezpośrednich przejściach, nie kieruj go do młyna ani żadnego innego miejsca zastępczego.'}
 - NIE używaj szablonowych zakończeń typu "Czy ta decyzja..."
 - NIE pisz o przyszłych konsekwencjach - opisuj TYLKO teraz`;
         

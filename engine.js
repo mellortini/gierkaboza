@@ -1226,6 +1226,7 @@ class World {
         };
         this.scenario = null;
         this.scenarioState = newScenarioState(null);
+        this.isSandbox = false;
     }
 
     // ========================================================================
@@ -1694,17 +1695,23 @@ class World {
         let message = "Akcja została przekazana narratorowi.";
         let timeCostMinutes = 10;
 
-        const targetLocation = this._findLocationInAction(normalized);
+        let targetLocation = this._findLocationInAction(normalized);
         // Rozpoznawaj zarówno rozkazy, jak i naturalne deklaracje gracza:
         // „idź do…”, „idziemy do…”, „ruszamy do…”, „chodźmy do…”.
         // Dzięki temu takie zdanie nie zostanie błędnie przekazane narratorowi
         // jako akcja, która może samowolnie zmienić miejsce sceny.
         const travelIntent = /\b(idźmy|idzmy|idziemy|idę|ide|idź|idz|udajmy|udajmy się|udajemy|udajemy się|udaj|ruszmy|ruszmy się|ruszamy|ruszamy się|rusz|chodźmy|chodzmy|chodzimy|chodź|chodz|podążajmy|podazajmy|podążamy|podazamy|podąż|podaz|przenieśmy|przeniesmy|przenieś|przenies|jedźmy|jedzmy|jedziemy|jedź|jedz|wędrujmy|wedrujmy|wędrujemy|wedrujemy|wędruj|wedruj|podróżujmy|podrozujmy|podróżujemy|podrozujemy|podróżuj|podrozuj)\b/i.test(normalized);
 
-        if (travelIntent && targetLocation) {
+        const extendedTravelIntent = /\b(kieruję się|kieruje sie|zmierzam|płynę|plyne|płyniemy|plyniemy|lecę|lece|lecimy|teleportuję się|teleportuje sie|udaję się|udaje sie|chcę iść|chce isc|wsiadam do|wracam|wracamy|wróć|wroc|powrót|powrot)\b/i.test(normalized);
+        const wantsTravel = travelIntent || extendedTravelIntent;
+        if (this.isSandbox && wantsTravel && !targetLocation) {
+            targetLocation = this._createSandboxLocation(this._extractSandboxDestination(normalized), player.locationId);
+        }
+
+        if (wantsTravel && targetLocation) {
             const currentLocation = this.getLocation(player.locationId);
             const hasTravelGraph = Array.isArray(currentLocation?.connections) && currentLocation.connections.length > 0;
-            const isConnected = !hasTravelGraph || currentLocation.connections.includes(targetLocation.id);
+            const isConnected = this.isSandbox || !hasTravelGraph || currentLocation.connections.includes(targetLocation.id);
 
             if (!isConnected) {
                 success = false;
@@ -1728,7 +1735,7 @@ class World {
                 ));
                 this._completeExploreQuests(player, targetLocation.id, changes);
             }
-        } else if (travelIntent) {
+        } else if (wantsTravel) {
             success = false;
             message = "Nie rozpoznaję celu podróży. Wskaż nazwę istniejącej lokacji.";
             timeCostMinutes = 1;
@@ -1788,6 +1795,47 @@ class World {
             this.logWorldChange(change);
         }
         return result;
+    }
+
+    _extractSandboxDestination(normalizedAction) {
+        const match = String(normalizedAction || '').match(/\b(?:do|w kierunku|ku|na|przez|z powrotem do)\s+(.+?)(?:[,.!?;]|$)/i);
+        if (!match) return '';
+        return String(match[1] || '')
+            .replace(/\s+(?:i|a|żeby|zeby|bo|ale)\s+.*$/i, '')
+            .replace(/[.!?;,:]+$/g, '')
+            .trim()
+            .slice(0, 120);
+    }
+
+    _createSandboxLocation(destination, fromLocationId) {
+        const cleaned = String(destination || '').replace(/\s+/g, ' ').trim();
+        if (cleaned.length < 2) return null;
+        const normalizedName = cleaned.toLocaleLowerCase('pl-PL');
+        const existing = Array.from(this.locations.values()).find(location =>
+            String(location.name || '').toLocaleLowerCase('pl-PL') === normalizedName
+        );
+        if (existing) return existing;
+
+        const displayName = cleaned.charAt(0).toLocaleUpperCase('pl-PL') + cleaned.slice(1);
+        const slug = normalizedName.normalize('NFKD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]+/gi, '_')
+            .replace(/^_|_$/g, '')
+            .slice(0, 72) || 'miejsce';
+        let id = `sandbox_${slug}`;
+        let suffix = 2;
+        while (this.locations.has(id)) id = `sandbox_${slug}_${suffix++}`;
+
+        const location = new Location(id, displayName);
+        location.description = 'Miejsce odkryte podczas swobodnej podróży. Jego szczegóły powstają wraz z grą.';
+        location.dangerLevel = 20;
+        const origin = this.getLocation(fromLocationId);
+        if (origin) {
+            if (!origin.connections.includes(id)) origin.connections.push(id);
+            location.connections = [origin.id];
+        }
+        this.addLocation(location);
+        return location;
     }
 
     _findLocationInAction(normalizedAction) {
@@ -3162,6 +3210,7 @@ class World {
             worldLog: this.worldLog,
             config: this.config,
             seed: this.seed,
+            isSandbox: this.isSandbox === true,
             worldMetadata: this.worldMetadata,
             scenario: this.scenario,
             scenarioState: this.scenarioState,
@@ -3205,6 +3254,7 @@ class World {
             ? savedTime
             : 0;
         world.seed = json.seed;
+        world.isSandbox = json.isSandbox === true;
         if (json.worldMetadata && typeof json.worldMetadata === 'object') {
             world.worldMetadata = {
                 ...world.worldMetadata,
@@ -4089,6 +4139,32 @@ class World {
         player.addItem('bread', 2);
         player.addItem('healing_potion', 1);
         for (const faction of world.factions.values()) player.setReputation(faction.id, 0);
+        world.setPlayer(player);
+        return world;
+    }
+
+    /**
+     * Create a true open-world sandbox. Locations are discovered from player
+     * travel commands instead of being authored in a blueprint.
+     */
+    static createSandboxWorld(playerName) {
+        const world = new World();
+        world.isSandbox = true;
+        world.worldMetadata = {
+            name: 'Sandbox — pełna swoboda',
+            description: 'Świat bez gotowej mapy, scenariusza i narzuconych lokacji. Miejsca powstają podczas gry.',
+            plan: null,
+            scenario: null
+        };
+
+        const start = new Location('sandbox_start', 'Punkt wyjścia');
+        start.description = 'Neutralny punkt rozpoczęcia podróży. Poza nim świat nie ma jeszcze ustalonej mapy.';
+        start.dangerLevel = 10;
+        world.addLocation(start);
+
+        const player = new Player(playerName, start.id);
+        player.addItem('bread', 2);
+        player.addItem('healing_potion', 1);
         world.setPlayer(player);
         return world;
     }

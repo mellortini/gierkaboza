@@ -235,7 +235,9 @@ const elements = {
     lobbyHelp: document.getElementById('lobby-help'),
     lobbyError: document.getElementById('lobby-error'),
     multiplayerScenario: document.getElementById('multiplayer-scenario'),
-    multiplayerScenarioHelp: document.getElementById('multiplayer-scenario-help')
+    multiplayerScenarioHelp: document.getElementById('multiplayer-scenario-help'),
+    worldSelect: document.getElementById('world-select'),
+    worldSelectHelp: document.getElementById('world-select-help')
     ,multiplayerWorkspace: document.getElementById('multiplayer-workspace')
     ,saveLibraryPanel: document.getElementById('save-library-panel')
 };
@@ -316,7 +318,46 @@ function updateMultiplayerScenarioHelp() {
     const description = option?.dataset.description;
     help.textContent = description
         ? `Host uruchomi tę kampanię w pokoju: ${description}`
-        : 'Bez scenariusza serwer użyje wybranego źródła świata. Host może też wybrać gotową kampanię z listy.';
+        : 'Sandbox: brak gotowej mapy, lokacji, NPC i głównego wątku. Świat będzie odkrywany podczas gry.';
+    updateMultiplayerWorldSource();
+}
+
+function updateMultiplayerWorldSource() {
+    const scenarioSelected = Boolean(elements.multiplayerScenario?.value);
+    const worldSelect = elements.worldSelect;
+    const help = elements.worldSelectHelp;
+    if (!worldSelect) return;
+
+    const sandboxOption = worldSelect.querySelector('option[value="sandbox"]');
+    const scenarioOption = worldSelect.querySelector('option[value="new"]');
+    const hasCustomBlueprint = Boolean(worldData.blueprint);
+    if (sandboxOption) sandboxOption.disabled = scenarioSelected;
+    if (scenarioOption) {
+        scenarioOption.disabled = !scenarioSelected && !hasCustomBlueprint;
+        scenarioOption.textContent = scenarioSelected
+            ? '✨ Świat z wybranego scenariusza'
+            : '✨ Własny plan świata';
+    }
+
+    if (!scenarioSelected && worldSelect.value === 'new') {
+        worldSelect.value = 'sandbox';
+    } else if (scenarioSelected && worldSelect.value === 'sandbox') {
+        worldSelect.value = 'new';
+    }
+
+    if (help) {
+        if (worldSelect.value === 'sandbox') {
+            help.textContent = 'Sandbox nie ma ustalonej mapy. Każda sensowna podróż może odkryć nowe miejsce.';
+        } else if (worldSelect.value === 'current') {
+            help.textContent = 'Do pokoju trafi aktualny świat z tej przeglądarki.';
+        } else if (worldSelect.value === 'saved') {
+            help.textContent = 'Do pokoju trafi świat z ostatniego lokalnego zapisu.';
+        } else {
+            help.textContent = scenarioSelected
+                ? 'Ta opcja uruchomi mapę i założenia wybranego scenariusza.'
+                : 'Ta opcja użyje własnego planu świata wygenerowanego wcześniej.';
+        }
+    }
 }
 
 // Pobieranie listy modeli z OpenRouter
@@ -456,9 +497,11 @@ async function init() {
     on(elements.modelSelect, 'change', saveModel);
     on(elements.refreshWorldModels, 'click', () => fetchModels(true));
     on(elements.multiplayerScenario, 'change', updateMultiplayerScenarioHelp);
+    on(elements.worldSelect, 'change', updateMultiplayerWorldSource);
     on(elements.readyScenario, 'change', updateReadyScenarioHelp);
     on(elements.loadReadyScenarioBtn, 'click', loadReadyScenario);
     loadMultiplayerScenarios();
+    updateMultiplayerWorldSource();
 
     // Event listeners - Budowanie świata
     const tabBtns = document.querySelectorAll('.tab-btn');
@@ -764,11 +807,13 @@ async function joinRoom(serverUrl, roomId, options = {}) {
     
     // Get world selection
     const worldSelect = document.getElementById('world-select');
-    const worldOption = worldSelect ? worldSelect.value : 'new';
+    const worldOption = worldSelect ? worldSelect.value : 'sandbox';
     const scenarioSelect = elements.multiplayerScenario;
     const scenarioId = worldOption === 'new' ? (scenarioSelect?.value || '') : '';
+    const sandboxMode = worldOption === 'sandbox' || (worldOption === 'new' && !scenarioId && !worldData.blueprint);
+    const effectiveWorldOption = sandboxMode ? 'sandbox' : worldOption;
 
-    if (worldOption === 'new' && worldData.generated && !worldData.blueprint) {
+    if (effectiveWorldOption === 'new' && worldData.generated && !worldData.blueprint) {
         statusEl.textContent = 'Ten plan świata nie jest jeszcze grywalny. Wygeneruj go ponownie.';
         statusEl.className = 'multiplayer-status error';
         return;
@@ -827,8 +872,8 @@ async function joinRoom(serverUrl, roomId, options = {}) {
             playerName: playerName,
             characterData: characterDataWithApi,
             worldData: incomingWorldData,
-            worldBlueprint: worldOption === 'new' ? worldData.blueprint : null,
-            worldOption: worldOption,
+            worldBlueprint: effectiveWorldOption === 'new' ? worldData.blueprint : null,
+            worldOption: effectiveWorldOption,
             scenarioId,
             createRoom: options.createRoom === true,
             playerId: state.playerId || null
@@ -1942,7 +1987,17 @@ function buildNarratorPrompt() {
         ? mechanicalWorld.getLocation(mechanicalPlayer.locationId)
         : null;
     const worldMetadata = mechanicalWorld?.worldMetadata || {};
-    worldData.plan = worldMetadata.plan || worldData.plan || null;
+    if (mechanicalWorld?.isSandbox) worldData.plan = null;
+    else worldData.plan = worldMetadata.plan || worldData.plan || null;
+    const sandboxPrompt = mechanicalWorld?.isSandbox
+        ? `
+## TRYB SANDBOX — PEŁNA SWOBODA:
+- Nie istnieje z góry ustalona mapa, scenariusz, akt ani lista obowiązkowych lokacji.
+- Gracz może próbować udać się w dowolne miejsce; mechanika utworzy je po sensownie opisanej podróży.
+- Nie kieruj gracza do zastępczej lokacji i nie odmawiaj tylko dlatego, że miejsce nie było wcześniej wymienione.
+- Twórz NPC, wydarzenia, budynki i konflikty dopiero wtedy, gdy wynikają z działań graczy.
+- Decyzje graczy są ważniejsze niż gotowy schemat fabularny.
+` : '';
 
     let prompt = `Jesteś Mistrzem Gry (Narratorem) w grze RPG. Twoim zadaniem jest prowadzenie immersyjnej, szczegółowej przygody.
 
@@ -1958,6 +2013,8 @@ function buildNarratorPrompt() {
 
 ## PLAN ŚWIATA (TRZYMAJ SIĘ TEGO):
 ${buildSafeNarratorPlan(mechanicalWorld)}
+
+${sandboxPrompt}
 
 ## KANONICZNY STAN MECHANICZNY (NADRZĘDNY WOBEC PROZY):
 **Nazwa świata:** ${worldMetadata.name || worldData.name || settingDescriptions[characterData.setting] || characterData.setting}
@@ -2050,6 +2107,12 @@ ${s.sexual >= 8 ? `
 }
 
 function buildSafeNarratorPlan(world) {
+    if (world?.isSandbox) {
+        return JSON.stringify({
+            mode: 'sandbox',
+            rule: 'Brak z góry ustalonego planu, mapy, scenariusza, aktów i listy lokacji. Świat odkrywa się podczas gry.'
+        });
+    }
     const fallback = worldData.plan || 'Brak planu - stwórz własny świat';
     let parsed = null;
     try {
@@ -2311,7 +2374,11 @@ function createGameWorld(playerName) {
     if (!world && requiresBlueprint) {
         throw new Error('Nie udało się utworzyć grywalnego świata z blueprintu.');
     }
-    if (!world) world = World.createStarterWorld(playerName, 'town_central');
+    if (!world) {
+        world = characterData.adventureType === 'open'
+            ? World.createSandboxWorld(playerName)
+            : World.createStarterWorld(playerName, 'town_central');
+    }
     if (worldData.generated && worldData.plan) {
         world.worldMetadata = {
             name: worldData.name || null,
