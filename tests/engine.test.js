@@ -213,6 +213,16 @@ function testSandboxCreatesAndPersistsFreeformLocations() {
     const natural = saved.performPlayerAction('na rynek', saved.player);
     assert.strictEqual(natural.success, true);
     assert.strictEqual(saved.getLocation(saved.player.locationId).name, 'Rynek');
+
+    const conversation = saved.performPlayerAction('rozmawiam z handlarzem', saved.player);
+    assert.strictEqual(conversation.success, true);
+    const merchant = Array.from(saved.npcs.values()).find(npc => npc.isMerchant);
+    assert.ok(merchant);
+    assert.strictEqual(merchant.locationId, saved.player.locationId);
+
+    const purchase = saved.performPlayerAction('kupuje pochodnie', saved.player);
+    assert.strictEqual(purchase.success, true);
+    assert.strictEqual(saved.player.getItemQuantity('torch'), 1);
 }
 
 function testNpcNameDiscoveryAndPersistence() {

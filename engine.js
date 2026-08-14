@@ -40,6 +40,7 @@ const IMPORTANCE_TABLE = {
     "player_downed": 0.65,
     "combat_happened": 0.35,
     "item_looted": 0.12,
+    "npc_discovered": 0.18,
     "d20_rolled": 0.08,
     "d20_check_resolved": 0.18,
     "xp_gained": 0.10,
@@ -100,7 +101,7 @@ const ITEM_CATALOG = Object.freeze({
     iron_sword: { id: "iron_sword", name: "Żelazny miecz", aliases: ["iron sword", "sword", "miecz"], price: 75, weight: 3.2, type: "weapon", slot: "weapon", icon: "/assets/items/iron-sword.png", attack: 5, damageDice: "1d8", description: "Solidna broń z wykutym jelcem." },
     leather_armor: { id: "leather_armor", name: "Skórzana zbroja", aliases: ["leather armor", "armor", "zbroja", "zbroję", "zbroje"], price: 60, weight: 5.5, type: "armor", slot: "armor", icon: "/assets/items/leather-armor.png", defense: 2, description: "Lekka ochrona na drogę." },
     wooden_shield: { id: "wooden_shield", name: "Drewniana tarcza", aliases: ["wooden shield", "shield", "tarcza", "tarczę", "tarcze"], price: 45, weight: 2.6, type: "shield", slot: "offhand", icon: "/assets/items/wooden-shield.png", defense: 1, description: "Tarcza z desek, dobra na pierwszy cios." },
-    torch: { id: "torch", name: "Pochodnia", aliases: ["torch", "pochodnia"], price: 3, weight: 0.5, type: "tool", icon: "/assets/items/torch.png", description: "Rozprasza ciemność przez kilka godzin." },
+    torch: { id: "torch", name: "Pochodnia", aliases: ["torch", "pochodnia", "pochodnie"], price: 3, weight: 0.5, type: "tool", icon: "/assets/items/torch.png", description: "Rozprasza ciemność przez kilka godzin." },
     iron_key: { id: "iron_key", name: "Żelazny klucz", aliases: ["iron key", "key", "klucz"], price: 1, weight: 0.1, type: "quest", icon: "/assets/items/iron-key.png", description: "Pasuje do zamka, którego jeszcze nie znasz." },
     moon_amulet: { id: "moon_amulet", name: "Amulet księżyca", aliases: ["moon amulet", "amulet", "księżyca", "ksiezyca"], price: 120, weight: 0.2, type: "accessory", slot: "accessory", icon: "/assets/items/moon-amulet.png", statBonuses: { wisdom: 1 }, defense: 1, description: "Chłodny kamień reagujący na szepty." }
 });
@@ -1724,6 +1725,31 @@ class World {
         ) || null;
     }
 
+    _ensureSandboxNpcFromAction(normalizedAction, player, changes = []) {
+        if (!this.isSandbox || !player || !/(handlarz|kupiec|sprzedawca|sklepikarz|merchant|trader|towar\w*)/i.test(normalizedAction)) return null;
+        const existing = this._findMerchant(player);
+        if (existing) return existing;
+
+        let id = `sandbox_merchant_${player.locationId}`;
+        let suffix = 2;
+        while (this.npcs.has(id)) id = `sandbox_merchant_${player.locationId}_${suffix++}`;
+        const merchant = new NPC(id, player.locationId, null);
+        merchant.name = 'Nieznany handlarz';
+        merchant.role = 'handlarz';
+        merchant.description = 'Wędrowny handlarz, który pojawił się tu dzięki działaniom drużyny.';
+        merchant.isMerchant = true;
+        merchant.gold = 500;
+        merchant.inventory = [
+            { id: 'bread', quantity: 10 },
+            { id: 'healing_potion', quantity: 4 },
+            { id: 'torch', quantity: 8 },
+            { id: 'iron_sword', quantity: 1 }
+        ];
+        this.addNPC(merchant);
+        changes.push(new WorldChange('npc_discovered', merchant.id, true, 'W lokacji pojawia się handlarz.', 'local'));
+        return merchant;
+    }
+
     _findQuestGiver(player) {
         return Array.from(this.npcs.values()).find(npc =>
             npc.locationId === player.locationId && npc.isAlive !== false && npc.isQuestGiver
@@ -2117,6 +2143,7 @@ class World {
             ? normalized.replace(/\bd\s+o(?=[a-ząćęłńóśźż])/gi, 'do ')
             : normalized;
         const changes = [];
+        this._ensureSandboxNpcFromAction(normalizedForParsing, player, changes);
         let success = true;
         let message = "Akcja została przekazana narratorowi.";
         let timeCostMinutes = 10;
