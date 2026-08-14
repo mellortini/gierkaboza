@@ -1128,6 +1128,11 @@ button {
     color: #e74c3c;
 }
 
+.hud-health .hud-value.downed {
+    color: #ff6b7a;
+    animation: pulse 1s infinite;
+}
+
 .hud-stamina .hud-value {
     color: #f39c12;
 }

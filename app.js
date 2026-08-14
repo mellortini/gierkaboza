@@ -1683,8 +1683,19 @@ function setupMultiplayerListeners() {
 
     // Action result from server
     state.socket.on('actionResult', (data) => {
-        if (data.playerId === state.playerId && data.mechanics?.message) {
+        const worldChanges = Array.isArray(data.mechanics?.worldChanges) ? data.mechanics.worldChanges : [];
+        const combatChange = worldChanges.find(change => change.type === 'combat_happened');
+        const downedChange = worldChanges.find(change => change.type === 'player_downed');
+        if (combatChange && data.mechanics?.message) {
+            const extra = combatChange.description && combatChange.description !== data.mechanics.message
+                ? `\n${combatChange.description}`
+                : '';
+            addStoryEntry('system', `⚔️ ${data.playerName || 'Gracz'}: ${data.mechanics.message}${extra}`);
+        } else if (data.playerId === state.playerId && data.mechanics?.message) {
             addStoryEntry('system', `Mechanika: ${data.mechanics.message}`);
+        }
+        if (downedChange) {
+            addStoryEntry('system', `💀 ${data.playerName || 'Gracz'} został powalony. Użyj leczenia albo poproś drugiego gracza o pomoc.`);
         }
         // Add story response
         addStoryEntry('narrator', data.response);
@@ -3540,7 +3551,10 @@ function updateGameHUD() {
     elements.playerLocation.textContent = location ? location.name : player.locationId;
     
     // Health
-    elements.playerHp.textContent = `${Math.round(player.hp)}/${player.maxHp}`;
+    elements.playerHp.textContent = player.isDowned
+        ? `0/${player.maxHp} • POWALONY`
+        : `${Math.round(player.hp)}/${player.maxHp}`;
+    elements.playerHp.classList.toggle('downed', player.isDowned === true);
     
     // Stamina
     elements.playerStamina.textContent = `${Math.round(player.stamina)}/${player.maxStamina}`;

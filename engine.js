@@ -37,7 +37,9 @@ const IMPORTANCE_TABLE = {
     "item_unequipped": 0.04,
     "player_healed": 0.10,
     "player_damaged": 0.20,
+    "player_downed": 0.65,
     "combat_happened": 0.35,
+    "item_looted": 0.12,
     "d20_rolled": 0.08,
     "d20_check_resolved": 0.18,
     "xp_gained": 0.10,
@@ -95,7 +97,7 @@ const STRATEGIC_UPDATE_INTERVAL = 10080; // 7 days in minutes
 const ITEM_CATALOG = Object.freeze({
     bread: { id: "bread", name: "Chleb", aliases: ["bread", "chleb"], price: 5, weight: 0.4, type: "food", icon: "/assets/items/bread.png", hungerRestore: 15, description: "Prosty, sycący bochenek." },
     healing_potion: { id: "healing_potion", name: "Mikstura lecznicza", aliases: ["healing potion", "potion", "mikstura", "lecznicza"], price: 25, weight: 0.3, type: "consumable", icon: "/assets/items/healing-potion.png", heal: 30, description: "Przywraca do 30 HP." },
-    iron_sword: { id: "iron_sword", name: "Żelazny miecz", aliases: ["iron sword", "sword", "miecz"], price: 75, weight: 3.2, type: "weapon", slot: "weapon", icon: "/assets/items/iron-sword.png", attack: 5, description: "Solidna broń z wykutym jelcem." },
+    iron_sword: { id: "iron_sword", name: "Żelazny miecz", aliases: ["iron sword", "sword", "miecz"], price: 75, weight: 3.2, type: "weapon", slot: "weapon", icon: "/assets/items/iron-sword.png", attack: 5, damageDice: "1d8", description: "Solidna broń z wykutym jelcem." },
     leather_armor: { id: "leather_armor", name: "Skórzana zbroja", aliases: ["leather armor", "armor", "zbroja", "zbroję", "zbroje"], price: 60, weight: 5.5, type: "armor", slot: "armor", icon: "/assets/items/leather-armor.png", defense: 2, description: "Lekka ochrona na drogę." },
     wooden_shield: { id: "wooden_shield", name: "Drewniana tarcza", aliases: ["wooden shield", "shield", "tarcza", "tarczę", "tarcze"], price: 45, weight: 2.6, type: "shield", slot: "offhand", icon: "/assets/items/wooden-shield.png", defense: 1, description: "Tarcza z desek, dobra na pierwszy cios." },
     torch: { id: "torch", name: "Pochodnia", aliases: ["torch", "pochodnia"], price: 3, weight: 0.5, type: "tool", icon: "/assets/items/torch.png", description: "Rozprasza ciemność przez kilka godzin." },
@@ -131,6 +133,29 @@ function normalizeAbilityKey(value) {
 function abilityModifier(score) {
     const safeScore = Number.isFinite(score) ? Math.floor(score) : 10;
     return Math.floor((safeScore - 10) / 2);
+}
+
+// Damage dice are intentionally kept small and validated on the server. The
+// client never sends a dice expression, so a save or a narrator response
+// cannot smuggle arbitrary work or damage into the combat resolver.
+function normalizeDiceNotation(value, fallback = '1d4') {
+    const match = String(value || '').trim().toLowerCase().match(/^(\d{1,2})d(\d{1,3})$/);
+    if (!match) return fallback;
+    const count = Math.max(1, Math.min(4, Number(match[1])));
+    const sides = Math.max(2, Math.min(20, Number(match[2])));
+    return `${count}d${sides}`;
+}
+
+function parseDiceNotation(value, fallback = '1d4') {
+    const normalized = normalizeDiceNotation(value, fallback);
+    const [count, sides] = normalized.split('d').map(Number);
+    return { notation: normalized, count, sides };
+}
+
+function rollDice(value, fallback = '1d4') {
+    const { notation, count, sides } = parseDiceNotation(value, fallback);
+    const rolls = Array.from({ length: count }, () => Math.floor(Math.random() * sides) + 1);
+    return { notation, rolls, total: rolls.reduce((sum, roll) => sum + roll, 0) };
 }
 
 // Scenario blueprints are authored content, not simulation state. Keep them
@@ -903,6 +928,8 @@ class NPC {
         this.maxHp = 50;
         this.attack = 5;
         this.defense = 0;
+        this.armorClass = 10;
+        this.damageDice = '1d6';
         this.goldReward = 0;
         this.xpReward = 10;
         this.isAlive = true;
@@ -910,6 +937,7 @@ class NPC {
         this.isQuestGiver = false;
         this.gold = 0;
         this.inventory = [];
+        this.loot = [];
     }
 
     addStatusEffect(effect) {
@@ -943,13 +971,16 @@ class NPC {
             maxHp: this.maxHp,
             attack: this.attack,
             defense: this.defense,
+            armorClass: this.armorClass,
+            damageDice: this.damageDice,
             goldReward: this.goldReward,
             xpReward: this.xpReward,
             isAlive: this.isAlive,
             isMerchant: this.isMerchant,
             isQuestGiver: this.isQuestGiver,
             gold: this.gold,
-            inventory: this.inventory
+            inventory: this.inventory,
+            loot: this.loot
         };
     }
 
@@ -970,6 +1001,10 @@ class NPC {
         npc.maxHp = Number.isFinite(json.maxHp) ? json.maxHp : npc.maxHp;
         npc.attack = Number.isFinite(json.attack) ? json.attack : npc.attack;
         npc.defense = Number.isFinite(json.defense) ? json.defense : npc.defense;
+        npc.armorClass = Number.isFinite(json.armorClass)
+            ? Math.max(1, Math.min(40, Math.floor(json.armorClass)))
+            : Math.max(1, Math.min(40, 10 + Math.floor(npc.defense)));
+        npc.damageDice = normalizeDiceNotation(json.damageDice, npc.damageDice);
         npc.goldReward = Number.isFinite(json.goldReward) ? json.goldReward : npc.goldReward;
         npc.xpReward = Number.isFinite(json.xpReward) ? json.xpReward : npc.xpReward;
         npc.isAlive = json.isAlive !== false;
@@ -978,6 +1013,11 @@ class NPC {
         npc.gold = Number.isFinite(json.gold) ? Math.max(0, Math.floor(json.gold)) : (npc.isMerchant ? 500 : 0);
         npc.inventory = Array.isArray(json.inventory)
             ? json.inventory
+                .filter(item => item && ITEM_CATALOG[item.id] && Number.isInteger(item.quantity) && item.quantity > 0)
+                .map(item => ({ id: item.id, quantity: Math.min(1000, item.quantity) }))
+            : [];
+        npc.loot = Array.isArray(json.loot)
+            ? json.loot
                 .filter(item => item && ITEM_CATALOG[item.id] && Number.isInteger(item.quantity) && item.quantity > 0)
                 .map(item => ({ id: item.id, quantity: Math.min(1000, item.quantity) }))
             : [];
@@ -997,6 +1037,7 @@ class Player {
         this.gold = 100;
         this.hp = 100;
         this.maxHp = 100;
+        this.isDowned = false;
         this.stamina = 100;
         this.maxStamina = 100;
         this.mana = 50;
@@ -1161,6 +1202,22 @@ class Player {
         return Math.max(1, this.attack + this.getAbilityModifier('strength') + equipmentBonus);
     }
 
+    getArmorClass() {
+        return Math.max(1, 10 + this.getDefensePower());
+    }
+
+    getDamageProfile() {
+        const weapon = this.equipment?.weapon ? ITEM_CATALOG[this.equipment.weapon] : null;
+        const weaponBonus = Number(weapon?.attack) || 0;
+        const baseBonus = Math.max(0, this.attack - 8);
+        return {
+            dice: normalizeDiceNotation(weapon?.damageDice, '1d4'),
+            bonus: this.getAbilityModifier('strength') + baseBonus + weaponBonus,
+            weaponId: weapon?.id || null,
+            weaponName: weapon?.name || 'pięść'
+        };
+    }
+
     getDefensePower() {
         const equipmentBonus = this.getEquippedItems()
             .reduce((total, item) => total + (item.defense || 0), 0);
@@ -1242,6 +1299,7 @@ class Player {
             gold: this.gold,
             hp: this.hp,
             maxHp: this.maxHp,
+            isDowned: this.isDowned,
             stamina: this.stamina,
             maxStamina: this.maxStamina,
             mana: this.mana,
@@ -1277,6 +1335,7 @@ class Player {
         player.gold = Number.isFinite(json.gold) ? json.gold : player.gold;
         player.hp = Number.isFinite(json.hp) ? json.hp : player.hp;
         player.maxHp = Number.isFinite(json.maxHp) ? json.maxHp : player.maxHp;
+        player.isDowned = json.isDowned === true || player.hp <= 0;
         player.stamina = Number.isFinite(json.stamina) ? json.stamina : player.stamina;
         player.maxStamina = Number.isFinite(json.maxStamina) ? json.maxStamina : player.maxStamina;
         player.mana = Number.isFinite(json.mana) ? json.mana : player.mana;
@@ -1721,7 +1780,7 @@ class World {
     }
 
     _tryUseItem(normalizedAction, player) {
-        if (!/(use|uzyj|zjedz|zjedz)/i.test(normalizedAction)) return null;
+        if (!/(use|uzyj|użyj|zjedz|zjedź)/i.test(normalizedAction)) return null;
         const item = this._resolveItemInAction(normalizedAction);
         if (!item) return { success: false, message: 'Nie rozpoznaje przedmiotu do uzycia.', timeCostMinutes: 1, changes: [] };
         if (player.getItemQuantity(item.id) < 1) {
@@ -1732,6 +1791,7 @@ class World {
         if (item.heal) {
             const before = player.hp;
             player.hp = Math.min(player.maxHp, player.hp + item.heal);
+            if (player.hp > 0) player.isDowned = false;
             changes.push(new WorldChange('player_healed', player.name, player.hp - before, `Healed ${player.hp - before} HP`, 'local'));
         }
         if (item.hungerRestore) {
@@ -1857,28 +1917,87 @@ class World {
         };
     }
 
+    _getNpcArmorClass(npc) {
+        if (Number.isFinite(npc?.armorClass)) return Math.max(1, Math.floor(npc.armorClass));
+        return Math.max(1, 10 + Math.floor(Number(npc?.defense) || 0));
+    }
+
+    _rollPlayerDamage(player, critical = false) {
+        const profile = player.getDamageProfile?.() || {
+            dice: '1d4',
+            bonus: 0,
+            weaponName: 'pięść'
+        };
+        const parsed = parseDiceNotation(profile.dice, '1d4');
+        const rolled = rollDice(`${critical ? parsed.count * 2 : parsed.count}d${parsed.sides}`, '1d4');
+        return {
+            ...rolled,
+            bonus: Math.floor(Number(profile.bonus) || 0),
+            total: Math.max(1, rolled.total + Math.floor(Number(profile.bonus) || 0)),
+            weaponName: profile.weaponName,
+            critical
+        };
+    }
+
+    _rollNpcDamage(npc, player) {
+        const rolled = rollDice(npc?.damageDice, '1d6');
+        const attackBonus = Math.max(0, Math.floor(Number(npc?.attack) || 0) - 5);
+        const defense = Math.max(0, Math.floor(player?.getDefensePower?.() || 0));
+        return {
+            ...rolled,
+            bonus: attackBonus,
+            mitigation: defense,
+            total: Math.max(1, rolled.total + attackBonus - defense)
+        };
+    }
+
+    _applyNpcLoot(player, target, changes) {
+        const remaining = [];
+        for (const entry of Array.isArray(target?.loot) ? target.loot : []) {
+            const item = ITEM_CATALOG[entry.id];
+            const quantity = Math.max(0, Math.floor(Number(entry.quantity) || 0));
+            if (!item || quantity < 1) continue;
+            const canTake = player.canCarry?.(item.id, quantity) ? quantity : (player.canCarry?.(item.id, 1) ? 1 : 0);
+            if (canTake > 0) {
+                player.addItem(item.id, canTake);
+                changes.push(new WorldChange('item_looted', item.id, canTake, `Zdobyto: ${item.name} x${canTake}.`, 'local'));
+            }
+            if (canTake < quantity) remaining.push({ id: item.id, quantity: quantity - canTake });
+        }
+        target.loot = remaining;
+        return changes;
+    }
+
     _tryCombatAction(normalizedAction, player) {
+        if (player.isDowned) return { success: false, message: 'Jesteś powalony. Ktoś musi ci pomóc albo musisz zostać uleczony.', timeCostMinutes: 1, changes: [] };
         if (player.stamina < 5) return { success: false, message: 'Brakuje ci staminy na atak.', timeCostMinutes: 1, changes: [] };
         const target = this._findNpcInAction(normalizedAction, player, true);
         if (!target) return { success: false, message: 'Nie ma tu celu walki.', timeCostMinutes: 1, changes: [] };
         player.stamina -= 5;
         const changes = [];
-        const damage = Math.max(1, player.getAttackPower() - target.defense);
+        const damageRoll = this._rollPlayerDamage(player);
+        const damage = Math.max(1, damageRoll.total - Math.floor(Number(target.defense) || 0));
         target.hp = Math.max(0, target.hp - damage);
-        changes.push(new WorldChange('combat_happened', target.id, damage, `Dealt ${damage} damage to ${target.name}`, 'local'));
+        changes.push(new WorldChange('combat_happened', target.id, damage, `Trafiasz ${target.name} za ${damage} obrażeń (${damageRoll.notation}${damageRoll.bonus ? ` ${damageRoll.bonus >= 0 ? '+' : ''}${damageRoll.bonus}` : ''}).`, 'local'));
         if (target.hp <= 0) {
             target.isAlive = false;
             player.gold += target.goldReward;
             const levelsGained = player.gainXp(target.xpReward);
+            this._applyNpcLoot(player, target, changes);
             changes.push(new WorldChange('npc_killed', target.id, true, `${target.name} was defeated`, 'local'));
             if (target.goldReward > 0) changes.push(new WorldChange('gold_changed', player.name, target.goldReward, 'Looted gold', 'local'));
             if (target.xpReward > 0) changes.push(new WorldChange('xp_gained', player.name, target.xpReward, 'Gained experience', 'local'));
             this._completeKillQuests(player, target, changes);
             return { success: true, message: `Pokonujesz przeciwnika: ${target.name}.`, timeCostMinutes: 2, changes };
         }
-        const retaliation = Math.max(1, target.attack - player.getDefensePower());
+        const retaliationRoll = this._rollNpcDamage(target, player);
+        const retaliation = retaliationRoll.total;
         player.hp = Math.max(0, player.hp - retaliation);
-        changes.push(new WorldChange('player_damaged', player.name, -retaliation, `${target.name} hits back`, 'local'));
+        changes.push(new WorldChange('player_damaged', player.name, -retaliation, `${target.name} odpowiada ciosem za ${retaliation} HP (${retaliationRoll.notation}).`, 'local'));
+        if (player.hp <= 0) {
+            player.isDowned = true;
+            changes.push(new WorldChange('player_downed', player.name, true, 'Postać zostaje powalona.', 'local'));
+        }
         return { success: true, message: `Ranisz ${target.name}, ale przeciwnik odpowiada ciosem za ${retaliation} HP.`, timeCostMinutes: 2, changes };
     }
 
@@ -1890,6 +2009,9 @@ class World {
     resolveD20Action(action, player, check, rollValue) {
         if (!player || !check || !Number.isInteger(rollValue) || rollValue < 1 || rollValue > 20) {
             return new ActionResult(false, 'Nieprawidłowy test kości.', 1);
+        }
+        if (player.isDowned) {
+            return new ActionResult(false, 'Jesteś powalony. Najpierw musisz zostać uleczony.', 1);
         }
         const roll = rollValue;
         const modifier = Number.isFinite(check.modifier) ? Math.floor(check.modifier) : 0;
@@ -1916,13 +2038,15 @@ class World {
             }
             player.stamina -= 5;
             if (success) {
-                const damage = Math.max(1, player.getAttackPower() - Math.floor(Number(target.defense) || 0));
+                const damageRoll = this._rollPlayerDamage(player, criticalSuccess);
+                const damage = Math.max(1, damageRoll.total - Math.floor(Number(target.defense) || 0));
                 target.hp = Math.max(0, target.hp - damage);
-                changes.push(new WorldChange('combat_happened', target.id, damage, `Trafiasz ${target.name} za ${damage} obrażeń.`, 'local'));
+                changes.push(new WorldChange('combat_happened', target.id, damage, `Trafiasz ${target.name} za ${damage} obrażeń (${damageRoll.notation}${damageRoll.bonus ? ` ${damageRoll.bonus >= 0 ? '+' : ''}${damageRoll.bonus}` : ''}${criticalSuccess ? ', krytyczne trafienie' : ''}).`, 'local'));
                 if (target.hp <= 0) {
                     target.isAlive = false;
                     player.gold += target.goldReward;
                     player.gainXp(target.xpReward);
+                    this._applyNpcLoot(player, target, changes);
                     changes.push(new WorldChange('npc_killed', target.id, true, `${target.name} zostaje pokonany.`, 'local'));
                     if (target.goldReward > 0) changes.push(new WorldChange('gold_changed', player.name, target.goldReward, 'Zdobyto złoto.', 'local'));
                     if (target.xpReward > 0) changes.push(new WorldChange('xp_gained', player.name, target.xpReward, 'Zdobyto doświadczenie.', 'local'));
@@ -1937,10 +2061,17 @@ class World {
                 for (const change of result.worldChanges) this.logWorldChange(change);
                 return result;
             }
-            const retaliation = Math.max(1, (Number(target.attack) || 0) - player.getDefensePower());
+            const retaliationRoll = this._rollNpcDamage(target, player);
+            const retaliation = retaliationRoll.total;
             player.hp = Math.max(0, player.hp - retaliation);
-            changes.push(new WorldChange('player_damaged', player.name, -retaliation, `${target.name} unika i kontratakuje za ${retaliation} HP.`, 'local'));
-            const result = new ActionResult(false, `Nie trafiasz ${target.name}; przeciwnik robi unik i kontratakuje.`, 2, changes);
+            changes.push(new WorldChange('player_damaged', player.name, -retaliation, `${target.name} unika i kontratakuje za ${retaliation} HP (${retaliationRoll.notation}).`, 'local'));
+            if (player.hp <= 0) {
+                player.isDowned = true;
+                changes.push(new WorldChange('player_downed', player.name, true, 'Postać zostaje powalona.', 'local'));
+            }
+            const result = new ActionResult(false, player.isDowned
+                ? `Nie trafiasz ${target.name}; kontratak powala twoją postać.`
+                : `Nie trafiasz ${target.name}; przeciwnik robi unik i kontratakuje.`, 2, changes);
             this.advanceWorldTimeForPlayer(player, result.timeCostMinutes);
             for (const change of result.worldChanges) this.logWorldChange(change);
             return result;
@@ -2066,7 +2197,7 @@ class World {
             mechanicOverride = this._tryEquipmentAction(normalized, player);
         } else if (/\b(quest|zadanie|misja|przyjmij|accept|nagrod|reward)\b/i.test(normalized)) {
             mechanicOverride = this._tryQuestAction(normalized, player);
-        } else if (/\b(use|uzyj|zjedz|zjedz)\b/i.test(normalized)) {
+        } else if (/\b(use|uzyj|użyj|zjedz|zjedź)\b/i.test(normalized)) {
             mechanicOverride = this._tryUseItem(normalized, player);
         } else if (/\b(kup|kupuj|kupuję|kupuje|sprzed|sprzedaj|sprzedaję|sprzedaje|handel|targuj|buy|sell)\w*/i.test(normalized)) {
             mechanicOverride = this._tryTradeAction(normalized, player);
@@ -4346,12 +4477,17 @@ class World {
                     maxHp: clamp(entry?.maxHp ?? entry?.hp, 1, 10000, 50),
                     attack: clamp(entry?.attack, 0, 500, 5),
                     defense: clamp(entry?.defense, 0, 500, 0),
+                    armorClass: Math.floor(clamp(entry?.armorClass, 1, 40, 10 + clamp(entry?.defense, 0, 500, 0))),
+                    damageDice: normalizeDiceNotation(entry?.damageDice, '1d6'),
                     goldReward: Math.floor(clamp(entry?.goldReward, 0, 100000, 0)),
                     xpReward: Math.floor(clamp(entry?.xpReward, 0, 100000, 10)),
                     isMerchant,
                     isQuestGiver: entry?.isQuestGiver === true || /quest|zadanie|warden|elder|gospodarz/i.test(String(entry?.role || '')),
                     gold: Math.floor(clamp(entry?.gold, 0, 1000000, isMerchant ? 500 : 0)),
-                    inventory
+                    inventory,
+                    loot: Array.isArray(entry?.loot) ? entry.loot
+                        .filter(item => item && ITEM_CATALOG[item.id] && Number.isInteger(item.quantity) && item.quantity > 0)
+                        .map(item => ({ id: item.id, quantity: Math.min(1000, item.quantity) })) : []
                 };
             });
 
@@ -4540,8 +4676,11 @@ class World {
         bandit.maxHp = 45;
         bandit.attack = 7;
         bandit.defense = 1;
+        bandit.armorClass = 11;
+        bandit.damageDice = '1d6';
         bandit.goldReward = 30;
         bandit.xpReward = 25;
+        bandit.loot = [{ id: 'bread', quantity: 1 }];
         world.addNPC(bandit);
 
         // Create player

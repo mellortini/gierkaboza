@@ -288,17 +288,75 @@ function testTradeCombatAndQuestLoop() {
     assert.strictEqual(player.hp, 80);
     assert.strictEqual(player.getItemQuantity('healing_potion'), 1);
 
+    player.addItem('iron_sword');
+    assert.strictEqual(world.performPlayerAction('zakładam miecz', player).success, true);
+
     world.performPlayerAction('idz do town_central', player);
     world.performPlayerAction('idz do city_gate_north', player);
     world.performPlayerAction('idz do forest_entrance', player);
     let combat;
-    for (let i = 0; i < 7; i += 1) {
+    for (let i = 0; i < 10 && world.getNPC('npc_forest_bandit').isAlive; i += 1) {
         combat = world.performPlayerAction('atak npc_forest_bandit', player);
     }
     assert.strictEqual(combat.success, true);
     assert.strictEqual(world.getNPC('npc_forest_bandit').isAlive, false);
     assert.strictEqual(player.getQuest('forest_threat').status, 'completed');
     assert.strictEqual(player.gold, 155);
+}
+
+function testCombatDiceDownedAndLoot() {
+    const world = World.createStarterWorld('Combat Tester', 'town_central');
+    world.config.regenRates.hp = 0;
+    world.config.regenRates.stamina = 0;
+    const player = world.player;
+    const target = world.getNPC('npc_forest_bandit');
+    player.addItem('iron_sword');
+    player.equipItem('iron_sword');
+    player.locationId = 'forest_entrance';
+    target.hp = 1000;
+    target.maxHp = 1000;
+    target.defense = 0;
+    target.armorClass = 11;
+    target.damageDice = '1d6';
+
+    const critical = world.resolveD20Action('atak npc_forest_bandit', player, {
+        kind: 'attack', label: 'Atak', targetId: target.id, targetName: target.name,
+        difficulty: target.armorClass, modifier: 2
+    }, 20);
+    assert.strictEqual(critical.success, true);
+    assert.ok(critical.worldChanges.some(change => /2d8/.test(change.description)));
+    assert.ok(target.hp < 1000);
+
+    target.attack = 500;
+    player.hp = 1;
+    player.isDowned = false;
+    const knockedDown = world.resolveD20Action('atak npc_forest_bandit', player, {
+        kind: 'attack', label: 'Atak', targetId: target.id, targetName: target.name,
+        difficulty: target.armorClass, modifier: 2
+    }, 1);
+    assert.strictEqual(knockedDown.success, false);
+    assert.strictEqual(player.hp, 0);
+    assert.strictEqual(player.isDowned, true);
+    assert.ok(knockedDown.worldChanges.some(change => change.type === 'player_downed'));
+
+    player.addItem('healing_potion');
+    assert.strictEqual(world.performPlayerAction('uzyj healing_potion', player).success, true);
+    assert.strictEqual(player.isDowned, false);
+
+    target.attack = 0;
+    target.hp = 1;
+    target.loot = [{ id: 'iron_key', quantity: 1 }];
+    const finishing = world.resolveD20Action('atak npc_forest_bandit', player, {
+        kind: 'attack', label: 'Atak', targetId: target.id, targetName: target.name,
+        difficulty: target.armorClass, modifier: 2
+    }, 20);
+    assert.strictEqual(finishing.success, true);
+    assert.strictEqual(target.isAlive, false);
+    assert.strictEqual(player.getItemQuantity('iron_key'), 1);
+
+    const restored = World.fromJSON(JSON.parse(JSON.stringify(world.toJSON())));
+    assert.strictEqual(restored.getNPC('npc_forest_bandit').damageDice, '1d6');
+    assert.strictEqual(restored.player.isDowned, false);
 }
 
 function testStructuredBlueprintWorld() {
@@ -614,6 +672,7 @@ testPlayerActionsAndRoundTrip();
 testPlayerStatsAndD20Resolution();
 testEquipmentAndItemPersistence();
 testMerchantGoldWeightAndRoundTrip();
+testCombatDiceDownedAndLoot();
 testNaturalTravelFormsAndUnknownDestination();
 testSandboxCreatesAndPersistsFreeformLocations();
 testNpcNameDiscoveryAndPersistence();

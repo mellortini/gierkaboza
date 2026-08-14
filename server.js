@@ -730,7 +730,9 @@ function buildD20Check(world, player, rawAction) {
     if (combatIntent && typeof world._findNpcInAction === 'function') {
         const target = world._findNpcInAction(normalized, player, true);
         if (!target) return null;
-        const targetDefense = Math.max(8, Math.min(25, 10 + (Number(target.defense) || 0)));
+        const targetDefense = Math.max(8, Math.min(25, Number.isFinite(target.armorClass)
+            ? Math.floor(target.armorClass)
+            : 10 + (Number(target.defense) || 0)));
         const modifier = player.getAbilityModifier?.('strength') || 0;
         const proficiency = Number.isFinite(player.proficiencyBonus) ? player.proficiencyBonus : 2;
         return {

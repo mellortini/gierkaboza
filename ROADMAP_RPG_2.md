@@ -117,19 +117,11 @@ Scenariusz składa się z:
 
 Narrator ma obowiązek respektować bieżące przejścia, stan lokacji i rezultat mechaniki. Jeżeli gracz ignoruje główny wątek, świat rozwija się w tle zamiast teleportować gracza do kolejnego punktu fabuły.
 
-## Etap F — walka
+## Etap F — walka — pierwsza wersja wdrożona
 
-Najpierw wersja deterministyczna:
+Wdrożone: atak nadal wymaga serwerowego rzutu d20, a po trafieniu silnik losuje kość obrażeń broni (miecz 1d8, pięść 1d4), dodaje premię z cechy/poziomu/wyposażenia i uwzględnia obronę celu. NPC mają własną klasę pancerza, kość obrażeń i mogą wykonać kontratak. Naturalne 20 podwaja kości obrażeń, naturalne 1 oznacza pudło. Przy HP 0 postać zostaje powalona; leczenie ją podnosi. Pokonany NPC może zostawić złoto, EXP oraz przedmioty, a stan walki jest zapisywany w snapshotach multiplayer.
 
-- atak przeciw obronie;
-- obrażenia z kości broni;
-- pancerz i redukcja;
-- stamina;
-- statusy;
-- nieprzytomność i leczenie;
-- EXP i łupy.
-
-Potem inicjatywa, tury, dystans, osłony, zdolności i walka grupowa.
+Do uzupełnienia: statusy bojowe, inicjatywa, tury, dystans, osłony, zdolności, walka grupowa i osobny system interakcji z pomocą dla powalonego gracza.
 
 ## Etap G — przedmioty i wyposażenie — pierwsza wersja wdrożona
 
