@@ -2110,22 +2110,29 @@ class World {
         }
 
         const normalized = text.toLocaleLowerCase('pl-PL');
+        // Sandbox accepts common speech-like travel forms. In particular,
+        // people often type "ide d osklepu" instead of "ide do sklepu";
+        // repair only this harmless separator typo before parsing the route.
+        const normalizedForParsing = this.isSandbox
+            ? normalized.replace(/\bd\s+o(?=[a-ząćęłńóśźż])/gi, 'do ')
+            : normalized;
         const changes = [];
         let success = true;
         let message = "Akcja została przekazana narratorowi.";
         let timeCostMinutes = 10;
 
-        let targetLocation = this._findLocationInAction(normalized);
+        let targetLocation = this._findLocationInAction(normalizedForParsing);
         // Rozpoznawaj zarówno rozkazy, jak i naturalne deklaracje gracza:
         // „idź do…”, „idziemy do…”, „ruszamy do…”, „chodźmy do…”.
         // Dzięki temu takie zdanie nie zostanie błędnie przekazane narratorowi
         // jako akcja, która może samowolnie zmienić miejsce sceny.
-        const travelIntent = /\b(idźmy|idzmy|idziemy|idę|ide|idź|idz|udajmy|udajmy się|udajemy|udajemy się|udaj|ruszmy|ruszmy się|ruszamy|ruszamy się|rusz|chodźmy|chodzmy|chodzimy|chodź|chodz|podążajmy|podazajmy|podążamy|podazamy|podąż|podaz|przenieśmy|przeniesmy|przenieś|przenies|jedźmy|jedzmy|jedziemy|jedź|jedz|wędrujmy|wedrujmy|wędrujemy|wedrujemy|wędruj|wedruj|podróżujmy|podrozujmy|podróżujemy|podrozujemy|podróżuj|podrozuj)\b/i.test(normalized);
+        const travelIntent = /\b(idźmy|idzmy|idziemy|idę|ide|idź|idz|udajmy|udajmy się|udajemy|udajemy się|udaj|ruszmy|ruszmy się|ruszamy|ruszamy się|rusz|chodźmy|chodzmy|chodzimy|chodź|chodz|podążajmy|podazajmy|podążamy|podazamy|podąż|podaz|przenieśmy|przeniesmy|przenieś|przenies|jedźmy|jedzmy|jedziemy|jedź|jedz|wędrujmy|wedrujmy|wędrujemy|wedrujemy|wędruj|wedruj|podróżujmy|podrozujmy|podróżujemy|podrozujemy|podróżuj|podrozuj)\b/i.test(normalizedForParsing);
 
-        const extendedTravelIntent = /\b(kieruję się|kieruje sie|zmierzam|płynę|plyne|płyniemy|plyniemy|lecę|lece|lecimy|teleportuję się|teleportuje sie|udaję się|udaje sie|chcę iść|chce isc|wsiadam do|wracam|wracamy|wróć|wroc|powrót|powrot)\b/i.test(normalized);
-        const wantsTravel = travelIntent || extendedTravelIntent;
+        const extendedTravelIntent = /\b(kieruję się|kieruje sie|zmierzam|płynę|plyne|płyniemy|plyniemy|lecę|lece|lecimy|teleportuję się|teleportuje sie|udaję się|udaje sie|chcę iść|chce isc|wsiadam do|wracam|wracamy|wróć|wroc|powrót|powrot)\b/i.test(normalizedForParsing);
+        const implicitSandboxTravel = this.isSandbox && /^(?:do|na|w|we|ku|przez|w stronę|w strone)\s+\S+/i.test(normalizedForParsing);
+        const wantsTravel = travelIntent || extendedTravelIntent || implicitSandboxTravel;
         if (this.isSandbox && wantsTravel && !targetLocation) {
-            targetLocation = this._createSandboxLocation(this._extractSandboxDestination(normalized), player.locationId);
+            targetLocation = this._createSandboxLocation(this._extractSandboxDestination(normalizedForParsing), player.locationId);
         }
 
         if (wantsTravel && targetLocation) {
@@ -2220,7 +2227,7 @@ class World {
     }
 
     _extractSandboxDestination(normalizedAction) {
-        const match = String(normalizedAction || '').match(/\b(?:do|w kierunku|ku|na|przez|z powrotem do)\s+(.+?)(?:[,.!?;]|$)/i);
+        const match = String(normalizedAction || '').match(/\b(?:do|w kierunku|w stronę|w strone|ku|na|przez|z powrotem do)\s+(.+?)(?:[,.!?;]|$)/i);
         if (!match) return '';
         return String(match[1] || '')
             .replace(/\s+(?:i|a|żeby|zeby|bo|ale)\s+.*$/i, '')

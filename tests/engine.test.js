@@ -205,6 +205,14 @@ function testSandboxCreatesAndPersistsFreeformLocations() {
     const returnTrip = saved.performPlayerAction('ide do sandbox_start', saved.player);
     assert.strictEqual(returnTrip.success, true);
     assert.strictEqual(saved.player.locationId, 'sandbox_start');
+
+    const typo = saved.performPlayerAction('ide d osklepu', saved.player);
+    assert.strictEqual(typo.success, true);
+    assert.strictEqual(saved.getLocation(saved.player.locationId).name, 'Sklepu');
+
+    const natural = saved.performPlayerAction('na rynek', saved.player);
+    assert.strictEqual(natural.success, true);
+    assert.strictEqual(saved.getLocation(saved.player.locationId).name, 'Rynek');
 }
 
 function testNpcNameDiscoveryAndPersistence() {
