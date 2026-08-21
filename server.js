@@ -2537,6 +2537,7 @@ Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
         systemMessage.content += '\n\nSECURITY: The response is broadcast to every player in the room. Never reveal, imply, or invent actor-private facts, facts hidden from the public, or GM/director secrets. Use only public memory facts present in this prompt.';
         systemMessage.content += ' The scenario director brief is internal guidance only: never reveal its secrets directly or as narrator knowledge; reveal them only through player-discoverable events.';
         systemMessage.content += ' The mechanics section in the user prompt is authoritative. Never invent a successful travel or relocate a character when the mechanics say that the world state did not change.';
+        systemMessage.content += ' Game time in the mechanics section is authoritative. Never advance the time or declare a new time of day from the player\'s prose alone; describe the actual time supplied by mechanics.';
         systemMessage.content += ' NPC names are personal knowledge: do not reveal an NPC\'s canonical name until the player explicitly asks for it and the NPC gives it in dialogue. Use a role or physical description before that.';
         systemMessage.content += ' If the player action clearly resolves one listed scenario choice, append exactly one marker at the very end in this exact format: [[SCENARIO_CHOICE:{"choiceId":"...","optionId":"..."}]]. Otherwise append no marker. Never explain or reveal the marker.';
 

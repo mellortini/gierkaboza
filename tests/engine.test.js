@@ -71,6 +71,30 @@ function testPlayerActionsAndRoundTrip() {
     assert.ok(restored.locations.size >= 3);
 }
 
+function testTimeAwareWaitActions() {
+    const world = World.createSandboxWorld('Time Tester');
+    const player = world.player;
+
+    const morning = world.performPlayerAction('czekam do rana', player);
+    assert.strictEqual(morning.success, true);
+    assert.strictEqual(world.currentTimeMinutes, 360);
+    assert.match(morning.message, /rana/);
+    assert.ok(morning.worldChanges.some(change => change.type === 'time_advanced'));
+
+    const marketOpening = world.performPlayerAction('jest godzina 8', player);
+    assert.strictEqual(marketOpening.success, true);
+    assert.strictEqual(world.currentTimeMinutes, 480);
+
+    const twoHours = world.performPlayerAction('czekam 2 godziny', player);
+    assert.strictEqual(twoHours.success, true);
+    assert.strictEqual(twoHours.timeCostMinutes, 120);
+    assert.strictEqual(world.currentTimeMinutes, 600);
+
+    const shortWait = world.performPlayerAction('czekam', player);
+    assert.strictEqual(shortWait.timeCostMinutes, 10);
+    assert.strictEqual(world.currentTimeMinutes, 610);
+}
+
 function testPlayerStatsAndD20Resolution() {
     const world = World.createStarterWorld('D20 Tester', 'town_central');
     const player = world.player;
@@ -687,6 +711,7 @@ function testNarrativePatchValidationPendingTurnsAndBudget() {
 
 testTimeValidation();
 testPlayerActionsAndRoundTrip();
+testTimeAwareWaitActions();
 testPlayerStatsAndD20Resolution();
 testEquipmentAndItemPersistence();
 testMerchantGoldWeightAndRoundTrip();

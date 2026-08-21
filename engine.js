@@ -2120,6 +2120,66 @@ class World {
         }
     }
 
+    _parseTimeIntent(normalizedAction) {
+        const text = String(normalizedAction || '').trim().toLocaleLowerCase('pl-PL');
+        if (!text) return null;
+
+        const waitVerb = /\b(czekam|czekamy|czekaj|czekajmy|poczekam|poczekaj|poczekamy|przeczekam|przeczekamy|odczekam|odczekamy)\b/i.test(text);
+        const timePhrase = /\b(rano|ranek|rana|świt|swit|południe|poludnie|popołudnie|popoludnie|wieczór|wieczor|noc|północ|polnoc|godzina|godziny|godzinę|godz|minut|minute|minuty)\b/i.test(text);
+        const timeStatement = /\b(jest|mamy|będzie|bedzie|nastał|nastal|nastała|nastala)\b/i.test(text) && timePhrase;
+        if (!waitVerb && !timeStatement) return null;
+
+        const durationMatch = text.match(/\b(\d{1,4})\s*(godzin(?:a|y|ę)?|h|minut(?:a|y|ę)?|min)\b/i);
+        if (durationMatch) {
+            const amount = Number(durationMatch[1]);
+            const unit = durationMatch[2].toLocaleLowerCase('pl-PL');
+            if (Number.isInteger(amount) && amount > 0 && amount <= 1000) {
+                const minutes = /godzin|\bh\b/i.test(unit) ? amount * 60 : amount;
+                return {
+                    minutes,
+                    label: `${amount} ${/godzin|\bh\b/i.test(unit) ? 'godz.' : 'min.'}`
+                };
+            }
+        }
+
+        const numericMatch = text.match(/\b(?:godzina|godziny|godzinę|godz|o)\s*(\d{1,2})(?:\s*[:.]\s*(\d{2}))?\b/i)
+            || text.match(/\b(?:do|jest|będzie|bedzie)\s+(\d{1,2})(?:\s*[:.]\s*(\d{2}))?\b/i);
+        if (numericMatch) {
+            const hour = Number(numericMatch[1]);
+            const minute = numericMatch[2] === undefined ? 0 : Number(numericMatch[2]);
+            if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+                const dayMinutes = 24 * 60;
+                const currentDayMinute = ((this.currentTimeMinutes % dayMinutes) + dayMinutes) % dayMinutes;
+                const targetMinute = (hour * 60) + minute;
+                let minutes = targetMinute - currentDayMinute;
+                if (minutes < 0) minutes += dayMinutes;
+                return {
+                    minutes,
+                    label: `godziny ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+                };
+            }
+        }
+
+        const periods = [
+            { pattern: /\b(?:ranek|rano|rana|świt|swit)\b/i, hour: 6, label: 'rana' },
+            { pattern: /\b(?:południe|poludnie|popołudnie|popoludnie)\b/i, hour: 12, label: 'południa' },
+            { pattern: /\b(?:wieczór|wieczor)\b/i, hour: 18, label: 'wieczoru' },
+            { pattern: /\b(?:noc)\b/i, hour: 22, label: 'nocy' },
+            { pattern: /\b(?:północ|polnoc)\b/i, hour: 0, label: 'północy' }
+        ];
+        const period = periods.find(candidate => candidate.pattern.test(text));
+        if (period) {
+            const dayMinutes = 24 * 60;
+            const currentDayMinute = ((this.currentTimeMinutes % dayMinutes) + dayMinutes) % dayMinutes;
+            let minutes = (period.hour * 60) - currentDayMinute;
+            if (minutes < 0) minutes += dayMinutes;
+            return { minutes, label: period.label };
+        }
+
+        if (waitVerb) return { minutes: 10, label: '10 minut' };
+        return null;
+    }
+
     /**
      * Resolve the small set of actions that the engine can currently prove.
      * The narrator may embellish the result, but it cannot invent a state
@@ -2147,6 +2207,7 @@ class World {
         let success = true;
         let message = "Akcja została przekazana narratorowi.";
         let timeCostMinutes = 10;
+        const timeIntent = this._parseTimeIntent(normalized);
 
         let targetLocation = this._findLocationInAction(normalizedForParsing);
         // Rozpoznawaj zarówno rozkazy, jak i naturalne deklaracje gracza:
@@ -2158,11 +2219,23 @@ class World {
         const extendedTravelIntent = /\b(kieruję się|kieruje sie|zmierzam|płynę|plyne|płyniemy|plyniemy|lecę|lece|lecimy|teleportuję się|teleportuje sie|udaję się|udaje sie|chcę iść|chce isc|wsiadam do|wracam|wracamy|wróć|wroc|powrót|powrot)\b/i.test(normalizedForParsing);
         const implicitSandboxTravel = this.isSandbox && /^(?:do|na|w|we|ku|przez|w stronę|w strone)\s+\S+/i.test(normalizedForParsing);
         const wantsTravel = travelIntent || extendedTravelIntent || implicitSandboxTravel;
-        if (this.isSandbox && wantsTravel && !targetLocation) {
+        if (this.isSandbox && wantsTravel && !targetLocation && !timeIntent) {
             targetLocation = this._createSandboxLocation(this._extractSandboxDestination(normalizedForParsing), player.locationId);
         }
 
-        if (wantsTravel && targetLocation) {
+        if (timeIntent) {
+            timeCostMinutes = Math.max(1, timeIntent.minutes);
+            message = timeIntent.minutes > 0
+                ? `Czekasz do ${timeIntent.label}. Mija ${timeCostMinutes} min.`
+                : `Jest już ${timeIntent.label}; mija 1 min.`;
+            changes.push(new WorldChange(
+                'time_advanced',
+                player.name,
+                timeCostMinutes,
+                message,
+                'local'
+            ));
+        } else if (wantsTravel && targetLocation) {
             const currentLocation = this.getLocation(player.locationId);
             const hasTravelGraph = Array.isArray(currentLocation?.connections) && currentLocation.connections.length > 0;
             const isConnected = this.isSandbox || !hasTravelGraph || currentLocation.connections.includes(targetLocation.id);
