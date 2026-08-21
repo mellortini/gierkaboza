@@ -38,6 +38,7 @@ const state = {
     combatState: null,
     pendingCombatRoll: null,
     combatLastRoll: null,
+    combatLastAnimationId: null,
     combatError: '',
     testMode: false,
     testBackup: null,
@@ -2039,6 +2040,13 @@ function rollCombatD20() {
     renderCombatPanel(state.combatState);
 }
 
+function getCombatBackgroundKey(combat, target = null) {
+    const text = `${combat?.locationId || ''} ${target?.name || ''}`.toLocaleLowerCase('pl-PL');
+    if (/jask|cave|podziem|kopal|grota|krypt/.test(text)) return 'crystal-cave';
+    if (/popió|popiol|ruin|spalon|zglisz|wioska|ash/.test(text)) return 'ash-ruins';
+    return 'forest-meadow';
+}
+
 function renderCombatPanel(combat = getActiveCombatState()) {
     if (!elements.combatPanel) return;
     if (!combat || !['active', 'completed'].includes(combat.status)) {
@@ -2055,17 +2063,36 @@ function renderCombatPanel(combat = getActiveCombatState()) {
     const target = participants.find(participant => participant.type === 'npc')
         || { name: 'Przeciwnik', hp: 0, maxHp: 1, spriteKey: 'bandit' };
     const allies = participants.filter(participant => participant.type !== 'npc');
+    const lastEvent = combat.lastEvent || null;
+    const isNewCombatEvent = Boolean(lastEvent?.id && lastEvent.id !== state.combatLastAnimationId);
+    const findParticipant = (idOrName) => participants.find(participant =>
+        String(participant.id) === String(idOrName || '') ||
+        String(participant.name || '').toLocaleLowerCase('pl-PL') === String(idOrName || '').toLocaleLowerCase('pl-PL'));
+    const eventVictim = findParticipant(lastEvent?.targetId) || findParticipant(lastEvent?.targetName);
+    const eventAttacker = findParticipant(lastEvent?.actorId);
     const participantCard = (participant) => {
         const hp = Math.max(0, Number(participant.hp) || 0);
         const maxHp = Math.max(1, Number(participant.maxHp) || 1);
         const ratio = Math.max(0, Math.min(100, Math.round((hp / maxHp) * 100)));
         const isActive = String(participant.id) === String(combat.activeActorId || '');
         const sprite = String(participant.spriteKey || (participant.type === 'npc' ? 'bandit' : 'adventurer')).replace(/[^a-z0-9_-]/gi, '') || 'adventurer';
+        const isVictim = eventVictim && String(eventVictim.id) === String(participant.id);
+        const isAttacker = eventAttacker && String(eventAttacker.id) === String(participant.id);
+        const animationClass = isNewCombatEvent && isVictim && lastEvent.success
+            ? 'combat-hit'
+            : isNewCombatEvent && isVictim
+                ? 'combat-miss'
+                : isNewCombatEvent && isAttacker && lastEvent.success
+                    ? 'combat-attacker'
+                    : '';
+        const damagePopup = isNewCombatEvent && isVictim && lastEvent.success && lastEvent.damage > 0
+            ? `<span class="combat-damage-popup">-${lastEvent.damage}</span>`
+            : '';
         const resources = participant.type === 'npc'
             ? ''
             : `<small>STA ${Math.max(0, Number(participant.stamina) || 0)}/${Math.max(1, Number(participant.maxStamina) || 1)} · MANA ${Math.max(0, Number(participant.mana) || 0)}/${Math.max(1, Number(participant.maxMana) || 1)}</small>`;
-        return `<article class="combat-fighter ${participant.type === 'npc' ? 'combat-fighter-enemy' : 'combat-fighter-ally'} ${isActive ? 'combat-active-turn' : ''} ${participant.downed ? 'combat-fighter-downed' : ''}">
-            <div class="combat-fighter-sprite"><img src="/assets/characters/${sprite}.png" alt="" loading="lazy"><span class="combat-fighter-shadow"></span></div>
+        return `<article class="combat-fighter ${participant.type === 'npc' ? 'combat-fighter-enemy' : 'combat-fighter-ally'} ${isActive ? 'combat-active-turn' : ''} ${participant.downed ? 'combat-fighter-downed' : ''} ${animationClass}">
+            <div class="combat-fighter-sprite"><img src="/assets/characters/${sprite}.png" alt="" loading="lazy"><span class="combat-fighter-shadow"></span>${damagePopup}</div>
             <div class="combat-fighter-name"><strong>${escapeHtml(participant.name || 'Postać')}</strong>${isActive && combat.status === 'active' ? '<em>● TURA</em>' : ''}</div>
             <div class="combat-hp-label"><span>HP</span><b>${hp}/${maxHp}</b></div>
             <div class="combat-hp-track"><span style="width:${ratio}%"></span></div>
@@ -2073,9 +2100,11 @@ function renderCombatPanel(combat = getActiveCombatState()) {
         </article>`;
     };
     if (elements.combatStage) {
+        elements.combatStage.dataset.background = getCombatBackgroundKey(combat, target);
         elements.combatStage.innerHTML = `<div class="combat-side combat-party-side">${allies.length ? allies.map(participantCard).join('') : participantCard({ name: 'Drużyna', type: 'player', spriteKey: 'adventurer', hp: 0, maxHp: 1, downed: true })}</div>
             <div class="combat-versus" aria-hidden="true"><span>VS</span><i>⚔</i></div>
             <div class="combat-side combat-enemy-side">${participantCard(target)}</div>`;
+        if (isNewCombatEvent) state.combatLastAnimationId = lastEvent.id;
     }
 
     if (elements.combatParticipants) {

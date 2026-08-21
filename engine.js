@@ -2523,7 +2523,19 @@ class World {
     _appendCombatLog(entry) {
         if (!this.combatState) return;
         this.combatState.log = Array.isArray(this.combatState.log) ? this.combatState.log : [];
-        this.combatState.log.push({ ...entry, round: this.combatState.round });
+        const eventId = `${this.combatState.id || 'combat'}:${Date.now()}:${this.combatState.log.length}`;
+        const loggedEntry = { ...entry, round: this.combatState.round, eventId };
+        this.combatState.log.push(loggedEntry);
+        this.combatState.lastEvent = {
+            id: eventId,
+            actorId: loggedEntry.actorId || null,
+            targetId: loggedEntry.targetId || null,
+            targetName: loggedEntry.targetName || null,
+            action: loggedEntry.action || 'attack',
+            success: loggedEntry.success === true,
+            damage: Math.max(0, Math.floor(Number(loggedEntry.damage) || 0)),
+            criticalSuccess: loggedEntry.criticalSuccess === true
+        };
         if (this.combatState.log.length > 40) this.combatState.log = this.combatState.log.slice(-40);
     }
 
@@ -2650,6 +2662,7 @@ class World {
             difficulty: playerRoll.difficulty || combatCheck.difficulty,
             success: result.success === true,
             damage: result.worldChanges?.find(change => change.type === 'combat_happened')?.delta || 0,
+            criticalSuccess: playerRoll.criticalSuccess === true,
             resource: combatCheck.resource,
             resourceCost,
             targetId: target.id,

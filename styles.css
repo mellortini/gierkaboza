@@ -2079,6 +2079,24 @@ button {
     border-radius: 10px;
 }
 
+.combat-stage[data-background="forest-meadow"] {
+    background-image: linear-gradient(180deg, rgba(5, 18, 31, 0.2), rgba(4, 15, 24, 0.3)), url('/assets/combat/forest-meadow.png');
+}
+
+.combat-stage[data-background="crystal-cave"] {
+    background-image: linear-gradient(180deg, rgba(8, 13, 35, 0.15), rgba(7, 11, 24, 0.3)), url('/assets/combat/crystal-cave.png');
+}
+
+.combat-stage[data-background="ash-ruins"] {
+    background-image: linear-gradient(180deg, rgba(35, 12, 16, 0.18), rgba(15, 10, 16, 0.35)), url('/assets/combat/ash-ruins.png');
+}
+
+.combat-stage[data-background] {
+    background-position: center;
+    background-size: cover;
+    image-rendering: pixelated;
+}
+
 .combat-side {
     display: flex;
     align-items: center;
@@ -2106,7 +2124,7 @@ button {
 .combat-fighter-enemy { background: linear-gradient(180deg, transparent 0 53%, rgba(174, 67, 78, 0.2)); }
 .combat-fighter.combat-active-turn { border-color: rgba(255, 211, 105, 0.85); box-shadow: 0 0 0 2px rgba(255, 211, 105, 0.12); }
 .combat-fighter-downed { filter: grayscale(0.9); opacity: 0.58; }
-.combat-fighter-enemy .combat-fighter-sprite { transform: scaleX(-1); }
+.combat-fighter-enemy .combat-fighter-sprite { transform: none; }
 
 .combat-fighter-sprite {
     position: relative;
@@ -2124,6 +2142,61 @@ button {
     object-fit: contain;
     image-rendering: pixelated;
     filter: drop-shadow(3px 4px 0 rgba(4, 9, 18, 0.45));
+}
+
+.combat-fighter-sprite img,
+.combat-fighter-sprite,
+.combat-fighter-shadow {
+    backface-visibility: hidden;
+}
+
+.combat-fighter.combat-hit .combat-fighter-sprite {
+    animation: combat-hit-shake 0.42s steps(4, end);
+}
+
+.combat-fighter.combat-miss .combat-fighter-sprite {
+    animation: combat-miss-dodge 0.34s ease-out;
+}
+
+.combat-fighter.combat-attacker .combat-fighter-sprite {
+    animation: combat-attack-lunge 0.26s ease-out;
+}
+
+.combat-damage-popup {
+    position: absolute;
+    z-index: 4;
+    top: 20px;
+    left: 50%;
+    color: #fff1b0;
+    font-size: 1.35rem;
+    font-weight: 1000;
+    text-shadow: 2px 2px 0 #3d1826;
+    pointer-events: none;
+    animation: combat-damage-float 0.68s ease-out forwards;
+}
+
+@keyframes combat-hit-shake {
+    0%, 100% { transform: translateX(0) rotate(0); }
+    25% { transform: translateX(-5px) rotate(-3deg); }
+    50% { transform: translateX(5px) rotate(3deg); }
+    75% { transform: translateX(-3px) rotate(-2deg); }
+}
+
+@keyframes combat-miss-dodge {
+    0% { transform: translateX(0); }
+    45% { transform: translateX(8px); }
+    100% { transform: translateX(0); }
+}
+
+@keyframes combat-attack-lunge {
+    0% { transform: translateX(0); }
+    55% { transform: translateX(6px); }
+    100% { transform: translateX(0); }
+}
+
+@keyframes combat-damage-float {
+    from { opacity: 1; transform: translate(-50%, 0) scale(1); }
+    to { opacity: 0; transform: translate(-50%, -34px) scale(1.12); }
 }
 
 .combat-fighter-shadow {
