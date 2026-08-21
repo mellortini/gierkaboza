@@ -174,6 +174,7 @@ function testEquipmentAndItemPersistence() {
 function testExpandedEquipmentCatalog() {
     const groups = {
         swords: ['chipped_short_sword', 'crude_iron_sword', 'militia_sword', 'bronze_falchion', 'steel_longsword', 'silver_rapier', 'blacksteel_bastard_sword', 'frost_rune_sword', 'sun_gilded_greatsword', 'starforged_blade'],
+        bows: ['cracked_twig_bow', 'simple_hunting_bow', 'militia_shortbow', 'yew_longbow', 'recurved_ranger_bow', 'silverleaf_bow', 'blackwood_warbow', 'stormstring_bow', 'sun_gilded_greatbow', 'starforged_celestial_bow'],
         armor: ['patched_jerkin', 'cracked_hide_vest', 'leather_cuirass', 'studded_leather', 'chainmail_shirt', 'polished_scale_armor', 'dark_ranger_coat', 'arcane_battle_robe', 'royal_plate_armor', 'dragonforged_plate'],
         gloves: ['cloth_handwraps', 'worn_leather_gloves', 'hunter_fingerless_gloves', 'reinforced_hide_bracers', 'iron_knuckle_gloves', 'duelist_gauntlets', 'ranger_leafgloves', 'arcane_rune_gloves', 'royal_silver_gauntlets', 'dragonclaw_gauntlets'],
         legs: ['burlap_trousers', 'worn_travel_pants', 'leather_leggings', 'studded_hunter_leggings', 'chainmail_chausses', 'steel_plated_greaves', 'forest_ranger_leggings', 'arcane_blue_trousers', 'royal_silver_leg_armor', 'dragon_scale_greaves'],
@@ -199,7 +200,7 @@ function testExpandedEquipmentCatalog() {
     const world = World.createStarterWorld('Expanded Equipment Tester', 'town_central');
     const player = world.player;
     const merchant = world.getNPC('npc_market_merchant');
-    assert.strictEqual(merchant.inventory.filter(entry => ITEM_CATALOG[entry.id]?.slot).length, 74);
+    assert.strictEqual(merchant.inventory.filter(entry => ITEM_CATALOG[entry.id]?.slot).length, 84);
 
     for (const itemId of ['crooked_branch_staff', 'arcane_battle_robe', 'starry_wizard_hat', 'arcane_rune_gloves', 'arcane_blue_trousers', 'arcane_blue_boots']) {
         player.addItem(itemId);
