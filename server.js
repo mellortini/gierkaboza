@@ -1485,10 +1485,13 @@ io.on('connection', (socket) => {
             ? boundedText(storedInterpretedAction, 220)
             : action;
         let actionInterpretation = null;
+        const deterministicTimeIntent = typeof world._parseTimeIntent === 'function'
+            ? world._parseTimeIntent(action)
+            : null;
 
         // Parser remains the fast path. In Sandbox, ask a structured AI
         // classifier only for natural/ambiguous wording and never for a pending roll.
-        if (!trustedRoll && shouldUseSandboxActionInterpreter(world, action) && playerApiKey) {
+        if (!trustedRoll && !deterministicTimeIntent && shouldUseSandboxActionInterpreter(world, action) && playerApiKey) {
             actionInterpretation = await interpretSandboxActionWithAI({
                 world,
                 player: currentPlayer,
