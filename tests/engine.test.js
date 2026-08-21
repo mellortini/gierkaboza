@@ -469,8 +469,14 @@ function testSeparateCombatModeRoundTrip() {
     assert.strictEqual(started.combatState.status, 'active');
     assert.strictEqual(started.combatState.activeActorId, 'player:separate');
 
+    // A stale snapshot or a time-driven NPC update must not break the active
+    // encounter between two turns.
+    player.locationId = 'town_central';
+    target.locationId = 'city_gate_north';
     const check = world.getCombatAttackCheck(player, target.id);
     assert.strictEqual(check.combatMode, true);
+    assert.strictEqual(player.locationId, 'forest_entrance');
+    assert.strictEqual(target.locationId, 'forest_entrance');
     const result = world.resolveCombatAction('atak bandyta', player, check, 20, 'player:separate');
     assert.strictEqual(result.success, true);
     assert.ok(target.hp < 1000);

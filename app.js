@@ -2042,7 +2042,11 @@ function renderCombatPanel(combat = getActiveCombatState()) {
     const isMyTurn = combat.status === 'active' && String(combat.activeActorId || '') === localActor;
     if (elements.combatAttackBtn) {
         elements.combatAttackBtn.disabled = !isMyTurn || Boolean(state.pendingCombatRoll);
-        elements.combatAttackBtn.textContent = isMyTurn ? '⚔️ Atak' : '⏳ Tura gracza';
+        elements.combatAttackBtn.textContent = combat.status === 'completed'
+            ? '✅ Walka zakończona'
+            : isMyTurn
+                ? '⚔️ Atak'
+                : '⏳ Tura gracza';
     }
     if (elements.combatRollBtn) {
         const hasMyRoll = state.pendingCombatRoll && String(state.pendingCombatRoll.playerId) === localActor;

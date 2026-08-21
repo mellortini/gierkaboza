@@ -2236,7 +2236,13 @@ class World {
     getCombatAttackCheck(player, targetId = this.combatState?.targetId) {
         if (!player || this.combatState?.status !== 'active') return null;
         const target = this.npcs.get(String(targetId || ''));
-        if (!target || target.isAlive === false || target.locationId !== player.locationId) return null;
+        if (!target || target.isAlive === false) return null;
+        // A combat encounter owns the scene until it ends. Time-dependent NPC
+        // movement or a stale multiplayer character snapshot must not make a
+        // living combatant disappear between two legal turns.
+        const combatLocationId = this.combatState.locationId || player.locationId;
+        if (target.locationId !== combatLocationId) target.locationId = combatLocationId;
+        if (player.locationId !== combatLocationId) player.locationId = combatLocationId;
         const modifier = (player.getAbilityModifier?.('strength') || 0)
             + (Number.isFinite(player.proficiencyBonus) ? player.proficiencyBonus : 2);
         const difficulty = this._getNpcArmorClass(target);
@@ -2469,7 +2475,14 @@ class World {
 
         if (check.kind === 'attack') {
             const target = this.npcs.get(check.targetId);
-            if (!target || target.locationId !== player.locationId || target.isAlive === false) {
+            const combatLocationId = check.combatMode && this.combatState?.status === 'active'
+                ? this.combatState.locationId
+                : player.locationId;
+            if (check.combatMode && combatLocationId) {
+                if (player.locationId !== combatLocationId) player.locationId = combatLocationId;
+                if (target && target.locationId !== combatLocationId) target.locationId = combatLocationId;
+            }
+            if (!target || target.locationId !== combatLocationId || target.isAlive === false) {
                 return new ActionResult(false, 'Cel walki nie jest już dostępny.', 1, changes);
             }
             if (player.stamina < 5) {
