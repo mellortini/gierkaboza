@@ -470,7 +470,7 @@
             <div id="game-memory-status" class="game-memory-status" aria-live="polite">Pamięć kampanii: przygotowana</div>
 
             <section id="d20-panel" class="d20-panel hidden" aria-live="polite">
-                <div class="d20-visual" aria-hidden="true">d20</div>
+                <div id="d20-visual" class="d20-visual" aria-hidden="true">d20</div>
                 <div class="d20-copy">
                     <strong id="d20-title">Test kości oczekuje</strong>
                     <span id="d20-description">Narrator przygotuje test, gdy akcja będzie wymagać rzutu.</span>
@@ -487,11 +487,18 @@
                     </div>
                     <span id="combat-round" class="combat-round">Runda 1</span>
                 </div>
+                <div id="combat-stage" class="combat-stage"></div>
+                <div id="combat-dice-result" class="combat-dice-result waiting" aria-live="polite">
+                    <span class="combat-dice-icon">🎲</span>
+                    <div><strong>Wynik rzutu d20 pojawi się tutaj</strong><small>Wybierz ruch na dole, a potem rzuć kością.</small></div>
+                </div>
                 <div id="combat-participants" class="combat-participants"></div>
                 <div id="combat-log" class="combat-log"></div>
                 <p id="combat-summary" class="combat-summary"></p>
+                <div class="combat-move-header"><span>UMIEJĘTNOŚCI</span><small>Wybierz ruch, aby przygotować rzut</small></div>
+                <div id="combat-move-grid" class="combat-move-grid"></div>
                 <div class="combat-actions">
-                    <button id="combat-attack" class="btn-primary" type="button">⚔️ Atak</button>
+                    <button id="combat-attack" class="btn-primary hidden" type="button">⚔️ Atak</button>
                     <button id="combat-roll-d20" class="btn-secondary hidden" type="button">🎲 Rzuć d20</button>
                 </div>
             </section>

@@ -37,6 +37,7 @@ const state = {
     pendingRoll: null,
     combatState: null,
     pendingCombatRoll: null,
+    combatLastRoll: null,
     combatError: '',
     testMode: false,
     testBackup: null,
@@ -221,6 +222,7 @@ const elements = {
     saveMultiplayerBtn: document.getElementById('save-multiplayer'),
     gameMemoryStatus: document.getElementById('game-memory-status'),
     d20Panel: document.getElementById('d20-panel'),
+    d20Visual: document.getElementById('d20-visual'),
     d20Title: document.getElementById('d20-title'),
     d20Description: document.getElementById('d20-description'),
     d20Result: document.getElementById('d20-result'),
@@ -228,7 +230,10 @@ const elements = {
     combatPanel: document.getElementById('combat-panel'),
     combatTitle: document.getElementById('combat-title'),
     combatRound: document.getElementById('combat-round'),
+    combatStage: document.getElementById('combat-stage'),
     combatParticipants: document.getElementById('combat-participants'),
+    combatDiceResult: document.getElementById('combat-dice-result'),
+    combatMoveGrid: document.getElementById('combat-move-grid'),
     combatLog: document.getElementById('combat-log'),
     combatSummary: document.getElementById('combat-summary'),
     combatAttackBtn: document.getElementById('combat-attack'),
@@ -662,6 +667,10 @@ async function init() {
     on(elements.rollD20Btn, 'click', rollD20);
     on(elements.combatAttackBtn, 'click', requestCombatAttack);
     on(elements.combatRollBtn, 'click', rollCombatD20);
+    on(elements.combatMoveGrid, 'click', (event) => {
+        const button = event.target.closest?.('[data-combat-move]');
+        if (button) requestCombatMove(button.dataset.combatMove);
+    });
     on(elements.mechanicsTestPanel, 'click', handleMechanicsTestClick);
     on(elements.mechanicsTestExitBtn, 'click', restoreMechanicsTest);
     on(elements.playerStats, 'click', handleStatPanelClick);
@@ -1599,6 +1608,7 @@ function startMultiplayerGame(roomData) {
     state.multiplayerGameStarted = true;
     state.pendingRoll = null;
     state.pendingCombatRoll = null;
+    state.combatLastRoll = null;
     state.combatError = '';
     if (elements.d20Panel) elements.d20Panel.classList.add('hidden');
     state.lobby.active = false;
@@ -1632,6 +1642,7 @@ function startMultiplayerGame(roomData) {
             ? World.fromJSON(roomData.worldState)
             : World.createStarterWorld(characterData.name, 'town_central');
         state.combatState = roomData?.combatState || state.world.combatState || null;
+        state.combatLastRoll = state.combatState?.lastRoll || null;
     } catch (error) {
         console.error('Error restoring multiplayer world:', error);
         state.world = World.createStarterWorld(characterData.name, 'town_central');
@@ -1853,6 +1864,7 @@ function formatSignedNumber(value) {
 function handleRollRequested(data) {
     if (!data?.rollId) return;
     state.pendingRoll = data;
+    if (elements.d20Visual) elements.d20Visual.textContent = 'd20';
     if (elements.d20Panel) elements.d20Panel.classList.remove('hidden');
     if (elements.d20Title) {
         elements.d20Title.textContent = `${data.label || 'Test kości'} — trudność ${data.difficulty ?? '?'}`;
@@ -1890,6 +1902,7 @@ function handleRollResolved(data) {
         ? 'sukces'
         : 'porażka';
     if (elements.d20Panel) elements.d20Panel.classList.remove('hidden');
+    if (elements.d20Visual) elements.d20Visual.textContent = String(data.value);
     if (elements.d20Title) elements.d20Title.textContent = `${data.label || 'Test kości'} — wynik: ${data.value}`;
     if (elements.d20Description) elements.d20Description.textContent = `${data.playerName || 'Gracz'} wyrzucił ${data.value} ${formatSignedNumber(data.modifier)} = ${total} przeciwko ${data.difficulty}.`;
     if (elements.d20Result) elements.d20Result.textContent = `Test: ${successText}${data.targetName ? ` • Cel: ${data.targetName}` : ''}`;
@@ -1915,6 +1928,7 @@ function handleCombatSnapshot(data) {
         }
     }
     state.combatState = data?.combatState || state.world?.combatState || null;
+    state.combatLastRoll = data?.lastRoll || state.combatState?.lastRoll || null;
     state.combatError = '';
     updateGameHUD();
     renderCombatPanel(state.combatState);
@@ -1938,12 +1952,26 @@ function handleCombatRollResolved(data) {
         }
     }
     state.combatState = data?.combatState || state.world?.combatState || null;
+    state.combatLastRoll = data?.lastRoll || {
+        roll: data.value,
+        modifier: data.modifier,
+        total: data.total,
+        difficulty: data.difficulty,
+        success: data.success,
+        criticalSuccess: data.criticalSuccess,
+        criticalFailure: data.criticalFailure,
+        moveId: data.moveId,
+        moveName: data.moveName,
+        resource: data.resource,
+        resourceCost: data.resourceCost,
+        damage: data.damage
+    };
     state.combatError = '';
     updateGameHUD();
     renderCombatPanel(state.combatState);
 }
 
-function requestCombatAttack() {
+function requestCombatMove(moveId = 'basic_strike') {
     const combat = getActiveCombatState();
     if (!combat || combat.status !== 'active') return;
     const expectedActor = String(combat.activeActorId || '');
@@ -1956,18 +1984,28 @@ function requestCombatAttack() {
     if (state.pendingCombatRoll) return;
 
     if (state.isMultiplayer && state.socket && !state.testMode) {
-        state.socket.emit('combatAction', { kind: 'attack' });
+        state.socket.emit('combatAction', { kind: 'move', moveId });
         return;
     }
-    const check = state.world?.getCombatAttackCheck?.(state.world.player, combat.targetId);
+    const check = state.world?.getCombatMoveCheck?.(state.world.player, moveId, combat.targetId)
+        || (moveId === 'basic_strike' ? state.world?.getCombatAttackCheck?.(state.world.player, combat.targetId) : null);
     if (!check) {
-        state.combatError = 'Cel walki nie jest już dostępny.';
+        state.combatError = 'Ta umiejętność nie jest dostępna albo cel walki zniknął.';
+        renderCombatPanel(combat);
+        return;
+    }
+    if (check.resource && Number(state.world?.player?.[check.resource]) < Number(check.resourceCost || 0)) {
+        state.combatError = `Brakuje ci ${check.resource === 'mana' ? 'many' : 'staminy'} na tę umiejętność.`;
         renderCombatPanel(combat);
         return;
     }
     state.pendingCombatRoll = { ...check, rollId: `local-combat:${Date.now()}`, playerId: 'local' };
     state.combatError = '';
     renderCombatPanel(combat);
+}
+
+function requestCombatAttack() {
+    requestCombatMove('basic_strike');
 }
 
 function rollCombatD20() {
@@ -1986,14 +2024,17 @@ function rollCombatD20() {
 
     const value = Math.floor(Math.random() * 20) + 1;
     const result = state.world?.resolveCombatAction?.(
-        `atak ${pending.targetName || ''}`,
+        `${pending.moveName || 'atak'} ${pending.targetName || ''}`,
         state.world.player,
         pending,
         value,
         'local'
     );
     state.pendingCombatRoll = null;
-    if (result?.combatState) state.combatState = result.combatState;
+    if (result?.combatState) {
+        state.combatState = result.combatState;
+        state.combatLastRoll = result.combatState.lastRoll || state.combatLastRoll;
+    }
     updateGameHUD();
     renderCombatPanel(state.combatState);
 }
@@ -2005,15 +2046,40 @@ function renderCombatPanel(combat = getActiveCombatState()) {
         return;
     }
     elements.combatPanel.classList.remove('hidden');
-    const target = (combat.participants || []).find(participant => participant.type === 'npc')
-        || { name: 'Przeciwnik', hp: 0, maxHp: 1 };
-    if (elements.combatTitle) elements.combatTitle.textContent = `⚔️ ${target.name}`;
+    if (elements.combatTitle) elements.combatTitle.textContent = `⚔️ ${(combat.participants || []).find(participant => participant.type === 'npc')?.name || 'Przeciwnik'}`;
     if (elements.combatRound) elements.combatRound.textContent = combat.status === 'active'
         ? `Runda ${combat.round || 1}`
         : 'Walka zakończona';
 
+    const participants = Array.isArray(combat.participants) ? combat.participants : [];
+    const target = participants.find(participant => participant.type === 'npc')
+        || { name: 'Przeciwnik', hp: 0, maxHp: 1, spriteKey: 'bandit' };
+    const allies = participants.filter(participant => participant.type !== 'npc');
+    const participantCard = (participant) => {
+        const hp = Math.max(0, Number(participant.hp) || 0);
+        const maxHp = Math.max(1, Number(participant.maxHp) || 1);
+        const ratio = Math.max(0, Math.min(100, Math.round((hp / maxHp) * 100)));
+        const isActive = String(participant.id) === String(combat.activeActorId || '');
+        const sprite = String(participant.spriteKey || (participant.type === 'npc' ? 'bandit' : 'adventurer')).replace(/[^a-z0-9_-]/gi, '') || 'adventurer';
+        const resources = participant.type === 'npc'
+            ? ''
+            : `<small>STA ${Math.max(0, Number(participant.stamina) || 0)}/${Math.max(1, Number(participant.maxStamina) || 1)} · MANA ${Math.max(0, Number(participant.mana) || 0)}/${Math.max(1, Number(participant.maxMana) || 1)}</small>`;
+        return `<article class="combat-fighter ${participant.type === 'npc' ? 'combat-fighter-enemy' : 'combat-fighter-ally'} ${isActive ? 'combat-active-turn' : ''} ${participant.downed ? 'combat-fighter-downed' : ''}">
+            <div class="combat-fighter-sprite"><img src="/assets/characters/${sprite}.png" alt="" loading="lazy"><span class="combat-fighter-shadow"></span></div>
+            <div class="combat-fighter-name"><strong>${escapeHtml(participant.name || 'Postać')}</strong>${isActive && combat.status === 'active' ? '<em>● TURA</em>' : ''}</div>
+            <div class="combat-hp-label"><span>HP</span><b>${hp}/${maxHp}</b></div>
+            <div class="combat-hp-track"><span style="width:${ratio}%"></span></div>
+            ${resources}
+        </article>`;
+    };
+    if (elements.combatStage) {
+        elements.combatStage.innerHTML = `<div class="combat-side combat-party-side">${allies.length ? allies.map(participantCard).join('') : participantCard({ name: 'Drużyna', type: 'player', spriteKey: 'adventurer', hp: 0, maxHp: 1, downed: true })}</div>
+            <div class="combat-versus" aria-hidden="true"><span>VS</span><i>⚔</i></div>
+            <div class="combat-side combat-enemy-side">${participantCard(target)}</div>`;
+    }
+
     if (elements.combatParticipants) {
-        elements.combatParticipants.innerHTML = (combat.participants || []).map(participant => {
+        elements.combatParticipants.innerHTML = participants.map(participant => {
             const hp = Math.max(0, Number(participant.hp) || 0);
             const maxHp = Math.max(1, Number(participant.maxHp) || 1);
             const ratio = Math.max(0, Math.min(100, Math.round((hp / maxHp) * 100)));
@@ -2024,6 +2090,22 @@ function renderCombatPanel(combat = getActiveCombatState()) {
                 <small>${participant.downed ? 'Powalony' : isActive ? 'Następna tura' : participant.type === 'npc' ? 'Przeciwnik' : 'Drużyna'}${Number.isFinite(Number(participant.initiative)) ? ` • inicjatywa ${participant.initiative}` : ''}</small>
             </div>`;
         }).join('');
+    }
+
+    const roll = state.combatLastRoll || combat.lastRoll;
+    if (elements.combatDiceResult) {
+        if (roll && Number.isFinite(Number(roll.roll))) {
+            const rollValue = Number(roll.roll);
+            const modifier = Number(roll.modifier) || 0;
+            const total = Number.isFinite(Number(roll.total)) ? Number(roll.total) : rollValue + modifier;
+            const resultClass = roll.criticalSuccess ? 'critical' : roll.success ? 'success' : 'failure';
+            const resultLabel = roll.criticalSuccess ? 'KRYTYK!' : roll.criticalFailure ? 'KRYTYCZNA PORAŻKA' : roll.success ? 'TRAFIENIE' : 'PUDŁO';
+            elements.combatDiceResult.className = `combat-dice-result ${resultClass}`;
+            elements.combatDiceResult.innerHTML = `<span class="combat-dice-icon">🎲</span><div><strong>Wynik rzutu: <b>${rollValue}</b></strong><small>${formatSignedNumber(modifier)} = <b>${total}</b> przeciwko ${roll.difficulty ?? '?'} · ${escapeHtml(roll.moveName || 'akcja')}</small></div><em>${resultLabel}${Number(roll.damage) > 0 ? ` · ${roll.damage} DMG` : ''}</em>`;
+        } else {
+            elements.combatDiceResult.className = 'combat-dice-result waiting';
+            elements.combatDiceResult.innerHTML = '<span class="combat-dice-icon">🎲</span><div><strong>Wynik rzutu d20 pojawi się tutaj</strong><small>Wybierz ruch na dole, a potem rzuć kością.</small></div>';
+        }
     }
 
     if (elements.combatLog) {
@@ -2040,20 +2122,28 @@ function renderCombatPanel(combat = getActiveCombatState()) {
 
     const localActor = state.isMultiplayer && !state.testMode ? String(state.playerId || '') : 'local';
     const isMyTurn = combat.status === 'active' && String(combat.activeActorId || '') === localActor;
+    const moves = state.world?.getCombatMoves?.(state.world.player) || [];
+    if (elements.combatMoveGrid) {
+        elements.combatMoveGrid.innerHTML = moves.length
+            ? moves.map(move => {
+                const disabled = combat.status !== 'active' || !isMyTurn || Boolean(state.pendingCombatRoll) || !move.canUse;
+                const resourceClass = move.resource === 'mana' ? 'move-resource-mana' : 'move-resource-stamina';
+                return `<button type="button" class="combat-move-card ${resourceClass}" data-combat-move="${escapeHtml(move.id)}" ${disabled ? 'disabled' : ''} title="${escapeHtml(move.description || '')}">
+                    <span class="combat-move-icon">${move.icon || '⚔️'}</span><span class="combat-move-copy"><strong>${escapeHtml(move.name)}</strong><small>${escapeHtml(move.description || '')}</small></span>
+                    <span class="combat-move-stats"><b>${escapeHtml(move.damageLabel || move.damageDice || '—')}</b><em>${move.cost} ${move.resourceLabel || move.resource.toUpperCase()}</em></span>
+                </button>`;
+            }).join('')
+            : '<p class="combat-log-empty">Ta postać nie zna jeszcze żadnej umiejętności.</p>';
+    }
     if (elements.combatAttackBtn) {
-        elements.combatAttackBtn.disabled = !isMyTurn || Boolean(state.pendingCombatRoll);
-        elements.combatAttackBtn.textContent = combat.status === 'completed'
-            ? '✅ Walka zakończona'
-            : isMyTurn
-                ? '⚔️ Atak'
-                : '⏳ Tura gracza';
+        elements.combatAttackBtn.classList.add('hidden');
     }
     if (elements.combatRollBtn) {
         const hasMyRoll = state.pendingCombatRoll && String(state.pendingCombatRoll.playerId) === localActor;
         elements.combatRollBtn.classList.toggle('hidden', !hasMyRoll);
         elements.combatRollBtn.disabled = !hasMyRoll;
         if (hasMyRoll && elements.combatRollBtn.textContent.includes('Losowanie') === false) {
-            elements.combatRollBtn.textContent = `🎲 Rzuć d20 (${state.pendingCombatRoll.difficulty})`;
+            elements.combatRollBtn.textContent = `🎲 Rzuć d20 · ${state.pendingCombatRoll.moveName || 'akcja'} (${state.pendingCombatRoll.difficulty})`;
         }
     }
 }
@@ -3458,6 +3548,7 @@ async function startGame() {
     state.pendingRoll = null;
     state.combatState = null;
     state.pendingCombatRoll = null;
+    state.combatLastRoll = null;
     state.combatError = '';
     state.testMode = false;
     state.testBackup = null;
@@ -3910,6 +4001,7 @@ function enterMechanicsTest() {
         state.testBackup = {
             world: state.world.toJSON(),
             combatState: state.combatState ? JSON.parse(JSON.stringify(state.combatState)) : null,
+            combatLastRoll: state.combatLastRoll ? { ...state.combatLastRoll } : null,
             pendingCombatRoll: state.pendingCombatRoll ? { ...state.pendingCombatRoll } : null,
             combatError: state.combatError,
             merchantFilter: state.merchantFilter
@@ -3917,6 +4009,7 @@ function enterMechanicsTest() {
     }
     state.testMode = true;
     state.pendingCombatRoll = null;
+    state.combatLastRoll = null;
     state.combatError = '';
     if (elements.mechanicsTestExitBtn) elements.mechanicsTestExitBtn.classList.remove('hidden');
     return true;
@@ -3941,6 +4034,7 @@ function runMechanicsTest(testName) {
             description: 'Izolowany test kupowania, sprzedawania i wyposażania przedmiotów.'
         };
         state.combatState = null;
+        state.combatLastRoll = null;
         state.merchantFilter = 'all';
         setMechanicsTestStatus('Sklep aktywny: kup przedmiot, sprzedaj go albo załóż z ekwipunku.');
     } else if (testName === 'combat') {
@@ -3960,8 +4054,9 @@ function runMechanicsTest(testName) {
             partyMembers: [{ id: 'local', name: player.name, player }]
         });
         state.combatState = started.combatState || null;
+        state.combatLastRoll = started.combatState?.lastRoll || null;
         setMechanicsTestStatus(started.success
-            ? 'Walka aktywna: wybierz „Atak”, a potem rzuć d20. Wynik nie trafia do czatu.'
+            ? 'Walka aktywna: wybierz umiejętność na dole, a potem rzuć d20. Wynik nie trafia do czatu.'
             : started.message || 'Nie udało się uruchomić testu walki.');
     } else if (testName === 'd20') {
         const value = Math.floor(Math.random() * 20) + 1;
@@ -3991,6 +4086,7 @@ function restoreMechanicsTest(event) {
     try {
         state.world = World.fromJSON(backup.world);
         state.combatState = backup.combatState || state.world.combatState || null;
+        state.combatLastRoll = backup.combatLastRoll || state.combatState?.lastRoll || null;
         state.pendingCombatRoll = backup.pendingCombatRoll || null;
         state.combatError = backup.combatError || '';
         state.merchantFilter = backup.merchantFilter || 'all';
@@ -4156,6 +4252,7 @@ function startLocalCombatFromAction(action) {
     }
     state.combatState = started.combatState;
     state.pendingCombatRoll = null;
+    state.combatLastRoll = started.combatState?.lastRoll || null;
     state.combatError = '';
     updateGameHUD();
 }

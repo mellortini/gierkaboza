@@ -497,6 +497,34 @@ function testSeparateCombatModeRoundTrip() {
     assert.ok(restored.combatState.participants.some(participant => participant.type === 'npc'));
 }
 
+function testCombatMovesAndVisibleLastRoll() {
+    const world = World.createStarterWorld('Move Tester', 'forest_entrance');
+    world.config.regenRates.mana = 0;
+    world.config.regenRates.stamina = 0;
+    const player = world.player;
+    const target = world.getNPC('npc_forest_bandit');
+    target.hp = 1000;
+    target.maxHp = 1000;
+    target.armorClass = 11;
+    target.attack = 0;
+    const manaBefore = player.mana;
+    const started = world.startCombat(player, target.id, { actorId: 'local', partyMembers: [{ id: 'local', name: player.name, player }] });
+    assert.strictEqual(started.success, true);
+    const check = world.getCombatMoveCheck(player, 'arcane_bolt', target.id);
+    assert.strictEqual(check.moveId, 'arcane_bolt');
+    assert.strictEqual(check.resource, 'mana');
+    assert.strictEqual(check.resourceCost, 8);
+    const result = world.resolveCombatAction('Pocisk arkanów', player, check, 20, 'local');
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(player.mana, manaBefore - 8);
+    assert.strictEqual(result.combatState.lastRoll.roll, 20);
+    assert.strictEqual(result.combatState.lastRoll.moveId, 'arcane_bolt');
+    assert.ok(result.combatState.lastRoll.damage > 0);
+    const restored = World.fromJSON(JSON.parse(JSON.stringify(world.toJSON())));
+    assert.ok(restored.player.knownAbilities.includes('arcane_bolt'));
+    assert.strictEqual(restored.combatState.lastRoll.moveName, 'Pocisk arkanów');
+}
+
 function testStructuredBlueprintWorld() {
     const blueprint = {
         version: 1,
@@ -814,6 +842,7 @@ testExpandedEquipmentCatalog();
 testMerchantGoldWeightAndRoundTrip();
 testCombatDiceDownedAndLoot();
 testSeparateCombatModeRoundTrip();
+testCombatMovesAndVisibleLastRoll();
 testNaturalTravelFormsAndUnknownDestination();
 testSandboxCreatesAndPersistsFreeformLocations();
 testNpcNameDiscoveryAndPersistence();

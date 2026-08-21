@@ -195,6 +195,148 @@ const ITEM_CATALOG = Object.freeze({
     dragon_horned_helm: { id: "dragon_horned_helm", name: "Smoczy hełm rogaty", aliases: ["dragon horned helm", "smoczy hełm", "rogaty hełm"], price: 1500, weight: 3.8, type: "head", slot: "head", icon: "/assets/items/dragon-horned-helm.png", defense: 7, statBonuses: { strength: 2, charisma: 1 }, classTags: ["warrior"], description: "Rogi są prawdziwe, a spojrzenie spod przyłbicy pamięta ogień." }
 });
 
+// Combat actions are data, not narrator instructions.  The client can show
+// the same cards in every session while the server/engine remains the source
+// of truth for resource costs, d20 checks and damage.
+const COMBAT_MOVE_CATALOG = Object.freeze({
+    basic_strike: {
+        id: 'basic_strike',
+        name: 'Zwykły cios',
+        icon: '⚔️',
+        kind: 'attack',
+        resource: 'stamina',
+        resourceLabel: 'STA',
+        cost: 5,
+        damageDice: '1d4',
+        ability: 'strength',
+        damageBonus: 0,
+        unlockLevel: 1,
+        description: 'Pewny atak bronią lub pięścią.'
+    },
+    quick_jab: {
+        id: 'quick_jab',
+        name: 'Szybki cios',
+        icon: '🗡️',
+        kind: 'attack',
+        resource: 'stamina',
+        resourceLabel: 'STA',
+        cost: 7,
+        damageDice: '2d4',
+        ability: 'dexterity',
+        damageBonus: -1,
+        unlockLevel: 1,
+        description: 'Dwa szybkie uderzenia, mniej siły, więcej precyzji.'
+    },
+    heavy_slash: {
+        id: 'heavy_slash',
+        name: 'Ciężkie cięcie',
+        icon: '🪓',
+        kind: 'attack',
+        resource: 'stamina',
+        resourceLabel: 'STA',
+        cost: 12,
+        damageDice: '1d8',
+        ability: 'strength',
+        damageBonus: 2,
+        unlockLevel: 1,
+        description: 'Mocny zamach, który zostawia mało miejsca na błąd.'
+    },
+    ranger_shot: {
+        id: 'ranger_shot',
+        name: 'Celny strzał',
+        icon: '🏹',
+        kind: 'attack',
+        resource: 'stamina',
+        resourceLabel: 'STA',
+        cost: 8,
+        damageDice: '1d8',
+        ability: 'dexterity',
+        damageBonus: 1,
+        unlockLevel: 1,
+        description: 'Strzał wymierzony w słaby punkt przeciwnika.'
+    },
+    arcane_bolt: {
+        id: 'arcane_bolt',
+        name: 'Pocisk arkanów',
+        icon: '✨',
+        kind: 'attack',
+        resource: 'mana',
+        resourceLabel: 'MANA',
+        cost: 8,
+        damageDice: '1d10',
+        ability: 'intelligence',
+        damageBonus: 0,
+        unlockLevel: 1,
+        description: 'Prosty pocisk energii, który nie wymaga broni.'
+    },
+    shadow_stab: {
+        id: 'shadow_stab',
+        name: 'Cios z cienia',
+        icon: '🌑',
+        kind: 'attack',
+        resource: 'stamina',
+        resourceLabel: 'STA',
+        cost: 10,
+        damageDice: '1d8',
+        ability: 'dexterity',
+        damageBonus: 3,
+        unlockLevel: 2,
+        description: 'Precyzyjne uderzenie wykorzystujące nieuwagę celu.'
+    },
+    frost_lance: {
+        id: 'frost_lance',
+        name: 'Lodowa włócznia',
+        icon: '❄️',
+        kind: 'attack',
+        resource: 'mana',
+        resourceLabel: 'MANA',
+        cost: 14,
+        damageDice: '1d12',
+        ability: 'intelligence',
+        damageBonus: 2,
+        unlockLevel: 3,
+        description: 'Skupia zimno w jednym, przeszywającym pocisku.'
+    },
+    whirlwind: {
+        id: 'whirlwind',
+        name: 'Wir ostrza',
+        icon: '🌀',
+        kind: 'attack',
+        resource: 'stamina',
+        resourceLabel: 'STA',
+        cost: 18,
+        damageDice: '2d6',
+        ability: 'strength',
+        damageBonus: 3,
+        unlockLevel: 5,
+        description: 'Szeroki zamach przeznaczony do przełamywania obrony.'
+    }
+});
+
+const DEFAULT_COMBAT_MOVES = Object.freeze(['basic_strike', 'quick_jab', 'heavy_slash', 'arcane_bolt']);
+
+function inferCombatSpriteKey(entity, type = 'npc') {
+    const text = `${entity?.spriteKey || ''} ${entity?.combatSpriteKey || ''} ${entity?.role || ''} ${entity?.name || ''}`
+        .toLocaleLowerCase('pl-PL');
+    const rules = [
+        ['troll', 'troll'],
+        ['ogr|ogre', 'ogre'],
+        ['goblin', 'goblin'],
+        ['ork|orc', 'orc'],
+        ['szkielet', 'skeleton'],
+        ['bandyt|rozbój|rozboj|rabuś|rabus', 'bandit'],
+        ['amazon|wojownicz', 'amazon'],
+        ['barbar', 'barbarian'],
+        ['łotr|lotr|złodziej|zlodziej', 'rogue'],
+        ['mag|czarodziej|czarodziejk', 'mage'],
+        ['łucznik|lucznik|tropiciel', 'ranger']
+    ];
+    for (const [pattern, sprite] of rules) {
+        if (new RegExp(pattern, 'i').test(text)) return sprite;
+    }
+    return type === 'player' ? 'adventurer' : 'bandit';
+}
+
 const ABILITY_KEYS = Object.freeze([
     'strength',
     'dexterity',
@@ -1185,6 +1327,11 @@ class Player {
         this.skillPoints = 0;
         this.proficiencyBonus = 2;
         this.quests = [];
+
+        // Learned combat moves are persisted with the character.  The starter
+        // set is intentionally broad for the prototype; later shops/trainers
+        // can call learnCombatMove() without changing the combat resolver.
+        this.knownAbilities = [...DEFAULT_COMBAT_MOVES];
     }
 
     getAbilityScore(ability) {
@@ -1323,6 +1470,26 @@ class Player {
         };
     }
 
+    knowsCombatMove(moveId) {
+        const id = String(moveId || '').trim();
+        const move = COMBAT_MOVE_CATALOG[id];
+        return Boolean(move && this.knownAbilities.includes(id) && this.level >= (move.unlockLevel || 1));
+    }
+
+    learnCombatMove(moveId) {
+        const id = String(moveId || '').trim();
+        if (!COMBAT_MOVE_CATALOG[id] || this.knownAbilities.includes(id)) return false;
+        this.knownAbilities.push(id);
+        return true;
+    }
+
+    getKnownCombatMoves() {
+        return this.knownAbilities
+            .filter(id => this.knowsCombatMove(id))
+            .map(id => COMBAT_MOVE_CATALOG[id])
+            .filter(Boolean);
+    }
+
     getDefensePower() {
         const equipmentBonus = this.getEquippedItems()
             .reduce((total, item) => total + (item.defense || 0), 0);
@@ -1352,6 +1519,9 @@ class Player {
             this.unspentStatPoints += 2;
             this.skillPoints += 1;
             this.proficiencyBonus = 2 + Math.floor((this.level - 1) / 4);
+            for (const move of Object.values(COMBAT_MOVE_CATALOG)) {
+                if ((move.unlockLevel || 1) === this.level) this.learnCombatMove(move.id);
+            }
             levelsGained += 1;
         }
         return levelsGained;
@@ -1420,6 +1590,7 @@ class Player {
             unspentStatPoints: this.unspentStatPoints,
             skillPoints: this.skillPoints,
             proficiencyBonus: this.proficiencyBonus,
+            knownAbilities: [...this.knownAbilities],
             equipment: { ...this.equipment },
             reputation: Object.fromEntries(this.reputation),
             statusEffects: this.statusEffects.map(e => ({
@@ -1466,6 +1637,10 @@ class Player {
         player.proficiencyBonus = Number.isFinite(json.proficiencyBonus)
             ? Math.max(2, Math.floor(json.proficiencyBonus))
             : 2 + Math.floor((player.level - 1) / 4);
+        player.knownAbilities = Array.isArray(json.knownAbilities)
+            ? json.knownAbilities.filter(id => COMBAT_MOVE_CATALOG[id])
+            : [...DEFAULT_COMBAT_MOVES];
+        if (player.knownAbilities.length === 0) player.knownAbilities = ['basic_strike'];
         // FIX: Handle both Map (array of entries) and plain object
         if (Array.isArray(json.reputation)) {
             player.reputation = new Map(json.reputation);
@@ -1541,6 +1716,7 @@ class World {
         // Combat is a separate mechanical subsystem. It is serialized with
         // the world, but it never creates a narrator turn by itself.
         this.combatState = null;
+        this._combatEntities = new Map();
         
         // Configuration
         this.config = {
@@ -2080,6 +2256,24 @@ class World {
         };
     }
 
+    _rollCombatMoveDamage(player, check, critical = false) {
+        const move = COMBAT_MOVE_CATALOG[check?.moveId] || COMBAT_MOVE_CATALOG.basic_strike;
+        const profile = move.id === 'basic_strike' ? player.getDamageProfile?.() : null;
+        const dice = normalizeDiceNotation(profile?.dice || move.damageDice, '1d4');
+        const rolled = rollDice(`${critical ? dice.count * 2 : dice.count}d${dice.sides}`, '1d4');
+        const abilityBonus = player.getAbilityModifier?.(move.ability) || 0;
+        const equipmentBonus = profile && move.id === 'basic_strike' ? (profile.bonus || 0) - (player.getAbilityModifier?.('strength') || 0) : 0;
+        const bonus = Math.floor(Number(move.damageBonus) || 0) + abilityBonus + equipmentBonus;
+        return {
+            ...rolled,
+            bonus,
+            total: Math.max(1, rolled.total + bonus),
+            moveId: move.id,
+            moveName: move.name,
+            critical
+        };
+    }
+
     _rollNpcDamage(npc, player) {
         const rolled = rollDice(npc?.damageDice, '1d6');
         const attackBonus = Math.max(0, Math.floor(Number(npc?.attack) || 0) - 5);
@@ -2150,7 +2344,7 @@ class World {
         return this.combatState ? JSON.parse(JSON.stringify(this.combatState)) : null;
     }
 
-    _combatParticipantSnapshot(id, type, name, playerOrNpc, initiative = 0) {
+    _combatParticipantSnapshot(id, type, name, playerOrNpc, initiative = 0, spriteKey = null) {
         const entity = playerOrNpc || {};
         const isPlayer = type === 'player';
         return {
@@ -2162,6 +2356,11 @@ class World {
             armorClass: isPlayer
                 ? Math.max(1, Math.floor(entity.getArmorClass?.() || 10))
                 : this._getNpcArmorClass(entity),
+            spriteKey: spriteKey || inferCombatSpriteKey(entity, type),
+            stamina: isPlayer ? Math.max(0, Math.floor(Number(entity.stamina) || 0)) : null,
+            maxStamina: isPlayer ? Math.max(1, Math.floor(Number(entity.maxStamina) || 1)) : null,
+            mana: isPlayer ? Math.max(0, Math.floor(Number(entity.mana) || 0)) : null,
+            maxMana: isPlayer ? Math.max(1, Math.floor(Number(entity.maxMana) || 1)) : null,
             initiative: Math.floor(Number(initiative) || 0),
             downed: isPlayer ? entity.isDowned === true : entity.isAlive === false
         };
@@ -2189,13 +2388,15 @@ class World {
             .map(entry => ({
                 id: String(entry.id || entry.playerId || entry.player.name),
                 player: entry.player,
-                name: entry.name || entry.player.name
+                name: entry.name || entry.player.name,
+                spriteKey: entry.spriteKey || inferCombatSpriteKey(entry.player, 'player')
             }));
         if (!party.some(entry => entry.player === player)) {
             party.unshift({
                 id: String(options.actorId || player.name || 'player'),
                 player,
-                name: player.name
+                name: player.name,
+                spriteKey: inferCombatSpriteKey(player, 'player')
             });
         }
 
@@ -2204,7 +2405,7 @@ class World {
             return {
                 entry,
                 initiative,
-                snapshot: this._combatParticipantSnapshot(entry.id, 'player', entry.name, entry.player, initiative)
+                snapshot: this._combatParticipantSnapshot(entry.id, 'player', entry.name, entry.player, initiative, entry.spriteKey)
             };
         });
         const npcInitiative = rollDice('1d20').total;
@@ -2222,13 +2423,17 @@ class World {
             targetId: target.id,
             participants: [
                 ...partyParticipants.map(item => item.snapshot),
-                this._combatParticipantSnapshot(target.id, 'npc', target.name, target, npcInitiative)
+                this._combatParticipantSnapshot(target.id, 'npc', target.name, target, npcInitiative, target.spriteKey)
             ],
             log: [],
             startedAtGameTime: this.currentTimeMinutes,
             endedAtGameTime: null,
             summary: null
         };
+        this._combatEntities = new Map([
+            ...partyParticipants.map(item => [String(item.entry.id), { type: 'player', value: item.entry.player }]),
+            [String(target.id), { type: 'npc', value: target }]
+        ]);
         return {
             success: true,
             message: `Walka rozpoczęła się: ${target.name}.`,
@@ -2236,25 +2441,42 @@ class World {
         };
     }
 
-    getCombatAttackCheck(player, targetId = this.combatState?.targetId) {
+    getCombatMoves(player = this.player) {
+        const value = player || {};
+        return (value.getKnownCombatMoves?.() || [COMBAT_MOVE_CATALOG.basic_strike])
+            .map(move => ({
+                ...move,
+                resourceAvailable: Math.max(0, Number(value[move.resource]) || 0),
+                canUse: Math.max(0, Number(value[move.resource]) || 0) >= move.cost,
+                damageLabel: `${move.damageDice}${move.damageBonus ? ` ${move.damageBonus >= 0 ? '+' : ''}${move.damageBonus}` : ''}`
+            }));
+    }
+
+    getCombatMoveCheck(player, moveId = 'basic_strike', targetId = this.combatState?.targetId) {
         if (!player || this.combatState?.status !== 'active') return null;
+        const move = COMBAT_MOVE_CATALOG[String(moveId || '').trim()];
         const target = this.npcs.get(String(targetId || ''));
-        if (!target || target.isAlive === false) return null;
-        // A combat encounter owns the scene until it ends. Time-dependent NPC
-        // movement or a stale multiplayer character snapshot must not make a
-        // living combatant disappear between two legal turns.
+        if (!move || move.kind !== 'attack' || !player.knowsCombatMove?.(move.id) || !target || target.isAlive === false) return null;
         const combatLocationId = this.combatState.locationId || player.locationId;
         if (target.locationId !== combatLocationId) target.locationId = combatLocationId;
         if (player.locationId !== combatLocationId) player.locationId = combatLocationId;
-        const modifier = (player.getAbilityModifier?.('strength') || 0)
+        const modifier = (player.getAbilityModifier?.(move.ability) || 0)
             + (Number.isFinite(player.proficiencyBonus) ? player.proficiencyBonus : 2);
         const difficulty = this._getNpcArmorClass(target);
         return {
             kind: 'attack',
             combatMode: true,
-            ability: 'strength',
+            moveId: move.id,
+            moveName: move.name,
+            moveIcon: move.icon,
+            ability: move.ability,
             skill: 'attack',
-            label: `Atak: ${target.name}`,
+            resource: move.resource,
+            resourceLabel: move.resourceLabel,
+            resourceCost: move.cost,
+            damageDice: move.damageDice,
+            damageBonus: move.damageBonus,
+            label: `${move.icon} ${move.name}: ${target.name}`,
             targetId: target.id,
             targetName: target.name,
             difficulty,
@@ -2263,12 +2485,21 @@ class World {
         };
     }
 
+    getCombatAttackCheck(player, targetId = this.combatState?.targetId) {
+        return this.getCombatMoveCheck(player, 'basic_strike', targetId);
+    }
+
     _syncCombatParticipants(player, target, actorId = this.combatState?.activeActorId) {
         if (!this.combatState) return;
         const entities = new Map([
             [String(this.combatState.targetId), { type: 'npc', name: target?.name, value: target }],
             [String(actorId || player?.name || 'player'), { type: 'player', name: player?.name, value: player }]
         ]);
+        for (const [id, entity] of this._combatEntities || []) {
+            if (!entities.has(id) && entity?.value) {
+                entities.set(id, { ...entity, name: entity.value.name });
+            }
+        }
         for (const participant of this.combatState.participants || []) {
             const entity = entities.get(String(participant.id));
             if (!entity?.value) continue;
@@ -2280,6 +2511,12 @@ class World {
             participant.armorClass = entity.type === 'player'
                 ? Math.max(1, Math.floor(value.getArmorClass?.() || participant.armorClass || 10))
                 : this._getNpcArmorClass(value);
+            if (entity.type === 'player') {
+                participant.stamina = Math.max(0, Math.floor(Number(value.stamina) || 0));
+                participant.maxStamina = Math.max(1, Math.floor(Number(value.maxStamina) || participant.maxStamina || 1));
+                participant.mana = Math.max(0, Math.floor(Number(value.mana) || 0));
+                participant.maxMana = Math.max(1, Math.floor(Number(value.maxMana) || participant.maxMana || 1));
+            }
         }
     }
 
@@ -2387,20 +2624,34 @@ class World {
             return result;
         }
         if (player.isDowned) return new ActionResult(false, 'Postać jest powalona.', 1);
-        if (player.stamina < 5) return new ActionResult(false, 'Brakuje ci staminy na atak.', 1);
-        const combatCheck = { ...(check || this.getCombatAttackCheck(player, target.id)), combatMode: true, kind: 'attack', targetId: target.id };
+        const combatCheck = {
+            ...(check || this.getCombatAttackCheck(player, target.id)),
+            combatMode: true,
+            kind: 'attack',
+            targetId: target.id,
+            moveId: check?.moveId || 'basic_strike'
+        };
+        const resource = combatCheck.resource === 'mana' ? 'mana' : 'stamina';
+        const resourceCost = Math.max(0, Math.floor(Number(combatCheck.resourceCost ?? (resource === 'mana' ? 8 : 5))));
+        if (Number(player[resource]) < resourceCost) {
+            return new ActionResult(false, `Brakuje ci ${resource === 'mana' ? 'many' : 'staminy'} na tę umiejętność.`, 1);
+        }
         const result = this.resolveD20Action(action, player, combatCheck, rollValue);
         const npcChanges = [];
         const playerRoll = result.worldChanges?.find(change => change.type === 'd20_rolled')?.delta || {};
         this._appendCombatLog({
             actorId: actorId || expectedActorId || player.name,
             actorName: player.name,
-            action: 'attack',
+            action: combatCheck.moveId || 'basic_strike',
+            moveId: combatCheck.moveId || 'basic_strike',
+            moveName: combatCheck.moveName || 'Zwykły cios',
             roll: playerRoll.roll || rollValue,
             total: playerRoll.total || null,
             difficulty: playerRoll.difficulty || combatCheck.difficulty,
             success: result.success === true,
             damage: result.worldChanges?.find(change => change.type === 'combat_happened')?.delta || 0,
+            resource: combatCheck.resource,
+            resourceCost,
             targetId: target.id,
             targetName: target.name,
             text: result.message
@@ -2430,6 +2681,24 @@ class World {
         if (combatSummary) this.recordCombatSummary(combatSummary);
         result.combatState = this.getCombatState();
         result.combatSummary = combatSummary;
+        if (this.combatState) {
+            const resolvedRoll = {
+                roll: playerRoll.roll || rollValue,
+                modifier: playerRoll.modifier ?? combatCheck.modifier,
+                total: playerRoll.total ?? (rollValue + combatCheck.modifier),
+                difficulty: playerRoll.difficulty || combatCheck.difficulty,
+                success: result.success === true,
+                criticalSuccess: playerRoll.criticalSuccess === true,
+                criticalFailure: playerRoll.criticalFailure === true,
+                moveId: combatCheck.moveId || 'basic_strike',
+                moveName: combatCheck.moveName || 'Zwykły cios',
+                resource: combatCheck.resource,
+                resourceCost,
+                damage: result.worldChanges?.find(change => change.type === 'combat_happened')?.delta || 0
+            };
+            this.combatState.lastRoll = resolvedRoll;
+            result.combatState = this.getCombatState();
+        }
         for (const change of npcChanges) this.logWorldChange(change);
         return result;
     }
@@ -2488,12 +2757,16 @@ class World {
             if (!target || target.locationId !== combatLocationId || target.isAlive === false) {
                 return new ActionResult(false, 'Cel walki nie jest już dostępny.', 1, changes);
             }
-            if (player.stamina < 5) {
-                return new ActionResult(false, 'Brakuje ci staminy na atak.', 1, changes);
+            const resource = check.resource === 'mana' ? 'mana' : 'stamina';
+            const resourceCost = Math.max(0, Math.floor(Number(check.resourceCost ?? (resource === 'mana' ? 8 : 5))));
+            if (Number(player[resource]) < resourceCost) {
+                return new ActionResult(false, `Brakuje ci ${resource === 'mana' ? 'many' : 'staminy'} na tę umiejętność.`, 1, changes);
             }
-            player.stamina -= 5;
+            player[resource] = Math.max(0, Number(player[resource]) - resourceCost);
             if (success) {
-                const damageRoll = this._rollPlayerDamage(player, criticalSuccess);
+                const damageRoll = check.moveId
+                    ? this._rollCombatMoveDamage(player, check, criticalSuccess)
+                    : this._rollPlayerDamage(player, criticalSuccess);
                 const damage = Math.max(1, damageRoll.total - Math.floor(Number(target.defense) || 0));
                 target.hp = Math.max(0, target.hp - damage);
                 changes.push(new WorldChange('combat_happened', target.id, damage, `Trafiasz ${target.name} za ${damage} obrażeń (${damageRoll.notation}${damageRoll.bonus ? ` ${damageRoll.bonus >= 0 ? '+' : ''}${damageRoll.bonus}` : ''}${criticalSuccess ? ', krytyczne trafienie' : ''}).`, 'local'));
@@ -4335,6 +4608,7 @@ class World {
                 world.combatState = combat;
             }
         }
+        world._combatEntities = new Map();
         
         return world;
     }
@@ -5738,6 +6012,8 @@ if (typeof module !== 'undefined' && module.exports) {
         EVENT_LIMITS,
         STRATEGIC_UPDATE_INTERVAL,
         ITEM_CATALOG,
+        COMBAT_MOVE_CATALOG,
+        DEFAULT_COMBAT_MOVES,
         EQUIPMENT_SLOTS
     };
 }
@@ -5763,6 +6039,8 @@ if (typeof window !== 'undefined') {
         EVENT_LIMITS,
         STRATEGIC_UPDATE_INTERVAL,
         ITEM_CATALOG,
+        COMBAT_MOVE_CATALOG,
+        DEFAULT_COMBAT_MOVES,
         EQUIPMENT_SLOTS
     };
 }

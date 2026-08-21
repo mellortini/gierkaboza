@@ -498,6 +498,21 @@ function publicCharacterData(characterData) {
     return publicSafeValue(characterData && typeof characterData === 'object' ? characterData : {}) || {};
 }
 
+function combatSpriteForCharacter(characterData, name = '') {
+    const text = `${characterData?.spriteKey || ''} ${characterData?.class || ''} ${characterData?.role || ''} ${characterData?.description || ''} ${name}`
+        .toLocaleLowerCase('pl-PL');
+    if (/troll/.test(text)) return 'troll';
+    if (/ogr|ogre/.test(text)) return 'ogre';
+    if (/goblin/.test(text)) return 'goblin';
+    if (/ork|orc/.test(text)) return 'orc';
+    if (/amazon/.test(text)) return 'amazon';
+    if (/barbar/.test(text)) return 'barbarian';
+    if (/łotr|lotr|złodziej|zlodziej/.test(text)) return 'rogue';
+    if (/mag|czarodziej|czarodziejk/.test(text)) return 'mage';
+    if (/łucznik|lucznik|tropiciel/.test(text)) return 'ranger';
+    return 'adventurer';
+}
+
 function createLobbyState(persisted = {}, world = null) {
     const hasPersistedLobby = persisted && typeof persisted === 'object' && persisted.status;
     const status = persisted.status === 'started' || (!hasPersistedLobby && world) ? 'started' : 'lobby';
@@ -1473,7 +1488,12 @@ io.on('connection', (socket) => {
         world.player = currentPlayer;
         const partyMembers = Array.from(room.players.values())
             .filter(roomPlayer => roomPlayer?.player)
-            .map(roomPlayer => ({ id: roomPlayer.id, name: roomPlayer.name, player: roomPlayer.player }));
+            .map(roomPlayer => ({
+                id: roomPlayer.id,
+                name: roomPlayer.name,
+                player: roomPlayer.player,
+                spriteKey: combatSpriteForCharacter(roomPlayer.characterData, roomPlayer.name)
+            }));
         const started = world.startCombat(currentPlayer, target.id, {
             actorId: playerData.id,
             partyMembers
@@ -1529,17 +1549,25 @@ io.on('connection', (socket) => {
             return;
         }
         const kind = String(data?.kind || '').trim().toLowerCase();
-        if (kind !== 'attack') {
-            socket.emit('combatError', { message: 'Na tym etapie dostępny jest tylko atak.' });
+        if (!['attack', 'move'].includes(kind)) {
+            socket.emit('combatError', { message: 'Wybierz jedną z dostępnych umiejętności.' });
             return;
         }
         if (Array.from(room.pendingCombatRolls.values()).some(pending => pending.playerId === playerData.id)) {
             socket.emit('combatError', { message: 'Najpierw rzuć oczekującą kością.' });
             return;
         }
-        const check = world.getCombatAttackCheck(playerData.player, world.combatState.targetId);
+        const moveId = kind === 'move' ? String(data?.moveId || '').trim() : 'basic_strike';
+        const check = world.getCombatMoveCheck
+            ? world.getCombatMoveCheck(playerData.player, moveId, world.combatState.targetId)
+            : world.getCombatAttackCheck(playerData.player, world.combatState.targetId);
         if (!check) {
-            socket.emit('combatError', { message: 'Cel walki nie jest już dostępny.' });
+            socket.emit('combatError', { message: 'Ta umiejętność nie jest poznana albo cel walki nie jest już dostępny.' });
+            return;
+        }
+        const resource = check.resource === 'mana' ? 'mana' : 'stamina';
+        if (Number(playerData.player[resource]) < Number(check.resourceCost || 0)) {
+            socket.emit('combatError', { message: `Brakuje ci ${resource === 'mana' ? 'many' : 'staminy'} na tę umiejętność.` });
             return;
         }
         const rollId = `${room.id}:combat:${playerData.id}:${Date.now()}:${crypto.randomBytes(3).toString('hex')}`;
@@ -1548,7 +1576,8 @@ io.on('connection', (socket) => {
             socketId: socket.id,
             playerId: playerData.id,
             playerName: playerData.name,
-            action: `atak ${check.targetName}`,
+            action: `${check.moveName || 'Atak'} ${check.targetName}`,
+            moveId: check.moveId || 'basic_strike',
             check,
             createdAt: Date.now()
         });
@@ -1559,6 +1588,14 @@ io.on('connection', (socket) => {
             label: check.label,
             difficulty: check.difficulty,
             modifier: check.modifier,
+            moveId: check.moveId,
+            moveName: check.moveName,
+            moveIcon: check.moveIcon,
+            resource: check.resource,
+            resourceLabel: check.resourceLabel,
+            resourceCost: check.resourceCost,
+            damageDice: check.damageDice,
+            damageBonus: check.damageBonus,
             reason: check.reason,
             targetName: check.targetName
         });
@@ -1580,6 +1617,7 @@ io.on('connection', (socket) => {
             playerData.id
         );
         const d20 = result.worldChanges?.find(change => change.type === 'd20_rolled')?.delta || {};
+        const damage = result.worldChanges?.find(change => change.type === 'combat_happened')?.delta || 0;
         const rollPayload = {
             rollId: pending.rollId,
             playerId: playerData.id,
@@ -1590,6 +1628,14 @@ io.on('connection', (socket) => {
             total: value + pending.check.modifier,
             success: result.success === true,
             label: pending.check.label,
+            moveId: pending.check.moveId || 'basic_strike',
+            moveName: pending.check.moveName || 'Zwykły cios',
+            moveIcon: pending.check.moveIcon || '⚔️',
+            resource: pending.check.resource || 'stamina',
+            resourceCost: pending.check.resourceCost || 0,
+            damageDice: pending.check.damageDice || '1d4',
+            damageBonus: pending.check.damageBonus || 0,
+            damage,
             targetName: pending.check.targetName || null,
             criticalSuccess: d20.criticalSuccess === true,
             criticalFailure: d20.criticalFailure === true
