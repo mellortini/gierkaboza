@@ -38,6 +38,9 @@ const state = {
     combatState: null,
     pendingCombatRoll: null,
     combatError: '',
+    testMode: false,
+    testBackup: null,
+    testStatus: '',
     pendingRoomData: null,
     lobbyFallbackTimer: null,
     merchantFilter: 'all',
@@ -280,6 +283,9 @@ const elements = {
     campaignExits: document.getElementById('campaign-exits'),
     campaignLocations: document.getElementById('campaign-locations'),
     campaignActs: document.getElementById('campaign-acts'),
+    mechanicsTestPanel: document.getElementById('mechanics-test-panel'),
+    mechanicsTestStatus: document.getElementById('mechanics-test-status'),
+    mechanicsTestExitBtn: document.getElementById('mechanics-test-exit'),
     multiplayerLobby: document.getElementById('multiplayer-lobby'),
     lobbyScenarioName: document.getElementById('lobby-scenario-name'),
     lobbyScenarioDescription: document.getElementById('lobby-scenario-description'),
@@ -656,6 +662,8 @@ async function init() {
     on(elements.rollD20Btn, 'click', rollD20);
     on(elements.combatAttackBtn, 'click', requestCombatAttack);
     on(elements.combatRollBtn, 'click', rollCombatD20);
+    on(elements.mechanicsTestPanel, 'click', handleMechanicsTestClick);
+    on(elements.mechanicsTestExitBtn, 'click', restoreMechanicsTest);
     on(elements.playerStats, 'click', handleStatPanelClick);
     on(elements.equipmentSlots, 'click', handleInventoryClick);
     on(elements.inventoryGrid, 'click', handleInventoryClick);
@@ -1939,7 +1947,7 @@ function requestCombatAttack() {
     const combat = getActiveCombatState();
     if (!combat || combat.status !== 'active') return;
     const expectedActor = String(combat.activeActorId || '');
-    const localActor = state.isMultiplayer ? String(state.playerId || '') : 'local';
+    const localActor = state.isMultiplayer && !state.testMode ? String(state.playerId || '') : 'local';
     if (expectedActor && expectedActor !== localActor) {
         state.combatError = 'Poczekaj na swoją turę.';
         renderCombatPanel(combat);
@@ -1947,7 +1955,7 @@ function requestCombatAttack() {
     }
     if (state.pendingCombatRoll) return;
 
-    if (state.isMultiplayer && state.socket) {
+    if (state.isMultiplayer && state.socket && !state.testMode) {
         state.socket.emit('combatAction', { kind: 'attack' });
         return;
     }
@@ -1965,9 +1973,9 @@ function requestCombatAttack() {
 function rollCombatD20() {
     const pending = state.pendingCombatRoll;
     if (!pending) return;
-    const localActor = state.isMultiplayer ? String(state.playerId || '') : 'local';
+    const localActor = state.isMultiplayer && !state.testMode ? String(state.playerId || '') : 'local';
     if (String(pending.playerId) !== localActor) return;
-    if (state.isMultiplayer && state.socket) {
+    if (state.isMultiplayer && state.socket && !state.testMode) {
         if (elements.combatRollBtn) {
             elements.combatRollBtn.disabled = true;
             elements.combatRollBtn.textContent = '🎲 Losowanie...';
@@ -2030,7 +2038,7 @@ function renderCombatPanel(combat = getActiveCombatState()) {
         elements.combatSummary.classList.toggle('combat-error', Boolean(state.combatError));
     }
 
-    const localActor = state.isMultiplayer ? String(state.playerId || '') : 'local';
+    const localActor = state.isMultiplayer && !state.testMode ? String(state.playerId || '') : 'local';
     const isMyTurn = combat.status === 'active' && String(combat.activeActorId || '') === localActor;
     if (elements.combatAttackBtn) {
         elements.combatAttackBtn.disabled = !isMyTurn || Boolean(state.pendingCombatRoll);
@@ -2289,14 +2297,14 @@ async function executeInventoryAction(kind, itemId) {
                     : `uzyj ${keyword}`;
     // Zakupy i sprzedaż są obsługiwane przez panel sklepu, nie przez czat.
     // Dzięki temu narrator nie dostaje sztucznej tury do skomentowania.
-    if (isMerchantAction && state.isMultiplayer) {
+    if (isMerchantAction && state.isMultiplayer && !state.testMode) {
         await sendMultiplayerMerchantAction(kind, item.id);
         return;
     }
     if (!isMerchantAction) {
         addStoryEntry('player', state.isMultiplayer && state.playerName ? `[${state.playerName}]: ${action}` : action);
     }
-    if (state.isMultiplayer) {
+    if (state.isMultiplayer && !state.testMode) {
         await sendMultiplayerAction(action);
         return;
     }
@@ -3447,6 +3455,10 @@ async function startGame() {
     state.combatState = null;
     state.pendingCombatRoll = null;
     state.combatError = '';
+    state.testMode = false;
+    state.testBackup = null;
+    state.testStatus = '';
+    renderMechanicsTestStatus();
     if (elements.d20Panel) elements.d20Panel.classList.add('hidden');
     cancelNarrativeConsolidation();
     // Zbierz dane postaci
@@ -3880,6 +3892,114 @@ function renderCampaignSidebar() {
     }
 }
 
+function setMechanicsTestStatus(message) {
+    state.testStatus = String(message || '');
+    if (elements.mechanicsTestStatus) elements.mechanicsTestStatus.textContent = state.testStatus;
+}
+
+function enterMechanicsTest() {
+    if (!state.world?.toJSON) {
+        setMechanicsTestStatus('Najpierw uruchom kampanię.');
+        return false;
+    }
+    if (!state.testMode) {
+        state.testBackup = {
+            world: state.world.toJSON(),
+            combatState: state.combatState ? JSON.parse(JSON.stringify(state.combatState)) : null,
+            pendingCombatRoll: state.pendingCombatRoll ? { ...state.pendingCombatRoll } : null,
+            combatError: state.combatError,
+            merchantFilter: state.merchantFilter
+        };
+    }
+    state.testMode = true;
+    state.pendingCombatRoll = null;
+    state.combatError = '';
+    if (elements.mechanicsTestExitBtn) elements.mechanicsTestExitBtn.classList.remove('hidden');
+    return true;
+}
+
+function handleMechanicsTestClick(event) {
+    const button = event.target.closest?.('[data-mechanics-test]');
+    if (!button) return;
+    event.preventDefault();
+    runMechanicsTest(button.dataset.mechanicsTest);
+}
+
+function runMechanicsTest(testName) {
+    if (!enterMechanicsTest()) return;
+    const testerName = 'Tester mechanik';
+
+    if (testName === 'merchant') {
+        state.world = World.createStarterWorld(testerName, 'market_square');
+        state.world.player.gold = 1000;
+        state.world.worldMetadata = {
+            name: 'Test sklepu',
+            description: 'Izolowany test kupowania, sprzedawania i wyposażania przedmiotów.'
+        };
+        state.combatState = null;
+        state.merchantFilter = 'all';
+        setMechanicsTestStatus('Sklep aktywny: kup przedmiot, sprzedaj go albo załóż z ekwipunku.');
+    } else if (testName === 'combat') {
+        state.world = World.createStarterWorld(testerName, 'forest_entrance');
+        const player = state.world.player;
+        const target = state.world.getNPC?.('npc_forest_bandit');
+        if (!target) {
+            setMechanicsTestStatus('Nie znaleziono testowego przeciwnika.');
+            return;
+        }
+        target.isAlive = true;
+        target.hp = Math.max(30, Number(target.maxHp) || 30);
+        target.maxHp = target.hp;
+        target.loot = [];
+        const started = state.world.startCombat(player, target.id, {
+            actorId: 'local',
+            partyMembers: [{ id: 'local', name: player.name, player }]
+        });
+        state.combatState = started.combatState || null;
+        setMechanicsTestStatus(started.success
+            ? 'Walka aktywna: wybierz „Atak”, a potem rzuć d20. Wynik nie trafia do czatu.'
+            : started.message || 'Nie udało się uruchomić testu walki.');
+    } else if (testName === 'd20') {
+        const value = Math.floor(Math.random() * 20) + 1;
+        setMechanicsTestStatus(`Wynik testowego rzutu: d20 = ${value}.`);
+    } else if (testName === 'save') {
+        const snapshot = JSON.parse(JSON.stringify(state.world.toJSON()));
+        const restored = World.fromJSON(snapshot);
+        state.world = restored;
+        state.combatState = restored.combatState || null;
+        setMechanicsTestStatus(`Zapis i odczyt OK: ${restored.player?.name || 'Tester'}, lokacja „${restored.getLocation?.(restored.player?.locationId)?.name || restored.player?.locationId || '—'}”.`);
+    } else {
+        setMechanicsTestStatus('Wybierz test z listy.');
+    }
+    updateGameHUD();
+    renderMechanicsTestStatus();
+}
+
+function renderMechanicsTestStatus() {
+    if (elements.mechanicsTestStatus) elements.mechanicsTestStatus.textContent = state.testStatus || '';
+    if (elements.mechanicsTestExitBtn) elements.mechanicsTestExitBtn.classList.toggle('hidden', !state.testMode);
+}
+
+function restoreMechanicsTest(event) {
+    event?.preventDefault?.();
+    const backup = state.testBackup;
+    if (!state.testMode || !backup?.world) return;
+    try {
+        state.world = World.fromJSON(backup.world);
+        state.combatState = backup.combatState || state.world.combatState || null;
+        state.pendingCombatRoll = backup.pendingCombatRoll || null;
+        state.combatError = backup.combatError || '';
+        state.merchantFilter = backup.merchantFilter || 'all';
+    } finally {
+        state.testMode = false;
+        state.testBackup = null;
+        state.testStatus = '';
+        if (elements.mechanicsTestPanel) elements.mechanicsTestPanel.open = false;
+        renderMechanicsTestStatus();
+        updateGameHUD();
+    }
+}
+
 // ========== PHASE 1: HUD Update Function ==========
 /**
  * Update the game HUD with current world state
@@ -4069,7 +4189,7 @@ async function sendAction() {
 
     // Atak rozpoczyna osobną potyczkę. Nie trafia do czatu ani do narratora.
     if (isClientCombatIntent(action)) {
-        if (state.isMultiplayer && state.socket) {
+        if (state.isMultiplayer && state.socket && !state.testMode) {
             state.socket.emit('combatAction', { kind: 'start', action });
         } else {
             startLocalCombatFromAction(action);
@@ -4082,7 +4202,7 @@ async function sendAction() {
     addStoryEntry('player', playerLabel + action);
     
     // Check if in multiplayer mode
-    if (state.isMultiplayer) {
+    if (state.isMultiplayer && !state.testMode) {
         await sendMultiplayerAction(action);
     } else {
         await generateStory(action);

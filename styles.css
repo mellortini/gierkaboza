@@ -1323,6 +1323,66 @@ button {
     font-style: italic;
 }
 
+.mechanics-test-section details {
+    margin: -2px 0;
+}
+
+.mechanics-test-section summary {
+    color: #ffd166;
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 800;
+    list-style-position: outside;
+}
+
+.mechanics-test-copy {
+    margin: 9px 0 10px;
+    color: #9eafb9;
+    font-size: 0.74rem;
+    line-height: 1.4;
+}
+
+.mechanics-test-actions {
+    display: grid;
+    gap: 6px;
+}
+
+.mechanics-test-button,
+.mechanics-test-exit {
+    width: 100%;
+    padding: 7px 9px;
+    color: #dce5ea;
+    background: rgba(255, 255, 255, 0.055);
+    border: 1px solid rgba(0, 255, 200, 0.23);
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 0.73rem;
+    font-weight: 700;
+    text-align: left;
+    transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+}
+
+.mechanics-test-button:hover,
+.mechanics-test-exit:hover {
+    background: rgba(0, 255, 200, 0.1);
+    border-color: rgba(0, 255, 200, 0.55);
+    transform: translateY(-1px);
+}
+
+.mechanics-test-status {
+    min-height: 1.1em;
+    margin: 9px 0 0;
+    color: #9fe8d5;
+    font-size: 0.73rem;
+    line-height: 1.4;
+}
+
+.mechanics-test-exit {
+    margin-top: 8px;
+    color: #ffd8dc;
+    border-color: rgba(255, 103, 112, 0.42);
+}
+
 #game-story {
     background: rgba(0, 0, 0, 0.3);
     border-radius: 12px;

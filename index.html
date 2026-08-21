@@ -656,6 +656,20 @@
                         <h4>Akty kampanii</h4>
                         <ol id="campaign-acts" class="campaign-list campaign-acts-list"></ol>
                     </section>
+                    <section class="campaign-sidebar-section mechanics-test-section">
+                        <details id="mechanics-test-panel">
+                            <summary>🧪 Testy mechanik</summary>
+                            <p class="mechanics-test-copy">Uruchamiaj izolowane testy bez narratora. Stan kampanii zostanie przywrócony po wyjściu; w multiplayerze test działa tylko lokalnie na twoim ekranie.</p>
+                            <div class="mechanics-test-actions">
+                                <button type="button" class="mechanics-test-button" data-mechanics-test="merchant">🛒 Test sklepu</button>
+                                <button type="button" class="mechanics-test-button" data-mechanics-test="combat">⚔️ Test walki</button>
+                                <button type="button" class="mechanics-test-button" data-mechanics-test="d20">🎲 Test d20</button>
+                                <button type="button" class="mechanics-test-button" data-mechanics-test="save">💾 Test zapisu</button>
+                            </div>
+                            <p id="mechanics-test-status" class="mechanics-test-status" aria-live="polite"></p>
+                            <button id="mechanics-test-exit" type="button" class="mechanics-test-exit hidden">↩ Wróć do kampanii</button>
+                        </details>
+                    </section>
                 </aside>
             </div>
         </div>
