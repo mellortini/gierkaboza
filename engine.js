@@ -2536,6 +2536,12 @@ class World {
             damage: Math.max(0, Math.floor(Number(loggedEntry.damage) || 0)),
             criticalSuccess: loggedEntry.criticalSuccess === true
         };
+        // Keep the player action and the immediate enemy response together so
+        // the client can animate both sides of one combat exchange.
+        this.combatState.lastEvents = [
+            ...(Array.isArray(this.combatState.lastEvents) ? this.combatState.lastEvents : []),
+            this.combatState.lastEvent
+        ].slice(-2);
         if (this.combatState.log.length > 40) this.combatState.log = this.combatState.log.slice(-40);
     }
 

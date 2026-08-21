@@ -2151,7 +2151,8 @@ button {
 }
 
 .combat-fighter.combat-hit .combat-fighter-sprite {
-    animation: combat-hit-shake 0.42s steps(4, end);
+    animation: combat-hit-shake 0.62s steps(6, end);
+    will-change: transform, filter;
 }
 
 .combat-fighter.combat-miss .combat-fighter-sprite {
@@ -2160,6 +2161,65 @@ button {
 
 .combat-fighter.combat-attacker .combat-fighter-sprite {
     animation: combat-attack-lunge 0.26s ease-out;
+}
+
+.combat-hit-burst,
+.combat-hit-sparks,
+.combat-miss-swoosh {
+    position: absolute;
+    z-index: 5;
+    left: 50%;
+    top: 42%;
+    pointer-events: none;
+}
+
+.combat-hit-burst {
+    width: 76px;
+    height: 76px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #fff 0 7%, #fff2a3 8% 20%, rgba(255, 157, 67, 0.86) 21% 37%, rgba(239, 63, 76, 0.2) 38% 54%, transparent 55%);
+    mix-blend-mode: screen;
+    transform: translate(-50%, -50%) scale(0.25);
+    animation: combat-hit-flash 0.48s steps(4, end) forwards;
+}
+
+.combat-hit-burst::before,
+.combat-hit-burst::after {
+    content: '';
+    position: absolute;
+    inset: -17px;
+    border: 4px solid rgba(255, 231, 143, 0.95);
+    clip-path: polygon(50% 0, 58% 35%, 100% 21%, 66% 50%, 100% 79%, 58% 65%, 50% 100%, 42% 65%, 0 79%, 34% 50%, 0 21%, 42% 35%);
+    transform: rotate(8deg) scale(0.45);
+    animation: combat-hit-star 0.42s steps(3, end) forwards;
+}
+
+.combat-hit-burst::after {
+    border-color: rgba(255, 92, 82, 0.85);
+    transform: rotate(43deg) scale(0.32);
+    animation-delay: 0.04s;
+}
+
+.combat-hit-sparks {
+    width: 96px;
+    height: 80px;
+    transform: translate(-50%, -50%) rotate(-18deg);
+    background:
+        linear-gradient(22deg, transparent 0 43%, #fff7c2 44% 48%, transparent 49%),
+        linear-gradient(155deg, transparent 0 48%, #ffb35e 49% 53%, transparent 54%),
+        linear-gradient(76deg, transparent 0 54%, #ff6b63 55% 59%, transparent 60%);
+    filter: drop-shadow(0 0 3px rgba(255, 220, 115, 0.95));
+    animation: combat-sparks-burst 0.5s steps(4, end) forwards;
+}
+
+.combat-miss-swoosh {
+    width: 76px;
+    height: 36px;
+    border-top: 4px solid rgba(193, 235, 255, 0.92);
+    border-bottom: 3px solid rgba(109, 194, 255, 0.7);
+    border-radius: 50%;
+    transform: translate(-50%, -50%) rotate(-20deg) scale(0.35);
+    animation: combat-miss-swoosh 0.38s ease-out forwards;
 }
 
 .combat-damage-popup {
@@ -2176,10 +2236,30 @@ button {
 }
 
 @keyframes combat-hit-shake {
-    0%, 100% { transform: translateX(0) rotate(0); }
-    25% { transform: translateX(-5px) rotate(-3deg); }
-    50% { transform: translateX(5px) rotate(3deg); }
-    75% { transform: translateX(-3px) rotate(-2deg); }
+    0%, 100% { transform: translateX(0) rotate(0) scale(1); filter: brightness(1); }
+    16% { transform: translateX(-12px) rotate(-5deg) scale(1.03); filter: brightness(1.45) saturate(1.35); }
+    32% { transform: translateX(13px) rotate(5deg) scale(0.98); filter: brightness(1.1); }
+    48% { transform: translateX(-9px) rotate(-4deg) scale(1.02); filter: brightness(1.35); }
+    64% { transform: translateX(7px) rotate(3deg) scale(0.99); }
+    80% { transform: translateX(-3px) rotate(-1deg) scale(1.01); }
+}
+
+@keyframes combat-hit-flash {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.2); }
+    22% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1.45); }
+}
+
+@keyframes combat-hit-star {
+    0% { opacity: 0; transform: rotate(8deg) scale(0.25); }
+    25% { opacity: 1; transform: rotate(35deg) scale(1); }
+    100% { opacity: 0; transform: rotate(72deg) scale(1.4); }
+}
+
+@keyframes combat-sparks-burst {
+    0% { opacity: 0; transform: translate(-50%, -50%) rotate(-18deg) scale(0.25); }
+    25% { opacity: 1; transform: translate(-50%, -50%) rotate(-8deg) scale(1); }
+    100% { opacity: 0; transform: translate(-50%, -70%) rotate(12deg) scale(1.25); }
 }
 
 @keyframes combat-miss-dodge {

@@ -2063,36 +2063,67 @@ function renderCombatPanel(combat = getActiveCombatState()) {
     const target = participants.find(participant => participant.type === 'npc')
         || { name: 'Przeciwnik', hp: 0, maxHp: 1, spriteKey: 'bandit' };
     const allies = participants.filter(participant => participant.type !== 'npc');
-    const lastEvent = combat.lastEvent || null;
-    const isNewCombatEvent = Boolean(lastEvent?.id && lastEvent.id !== state.combatLastAnimationId);
+    const combatEvents = Array.isArray(combat.lastEvents) && combat.lastEvents.length
+        ? combat.lastEvents
+        : (combat.lastEvent ? [combat.lastEvent] : []);
+    const combatEventKey = combatEvents.map(event => event?.id).filter(Boolean).join('|');
+    const isNewCombatEvent = Boolean(combatEventKey && combatEventKey !== state.combatLastAnimationId);
     const findParticipant = (idOrName) => participants.find(participant =>
         String(participant.id) === String(idOrName || '') ||
         String(participant.name || '').toLocaleLowerCase('pl-PL') === String(idOrName || '').toLocaleLowerCase('pl-PL'));
-    const eventVictim = findParticipant(lastEvent?.targetId) || findParticipant(lastEvent?.targetName);
-    const eventAttacker = findParticipant(lastEvent?.actorId);
+    const eventsByParticipant = new Map();
+    for (const event of combatEvents) {
+        const victim = findParticipant(event?.targetId) || findParticipant(event?.targetName);
+        const attacker = findParticipant(event?.actorId) || findParticipant(event?.actorName);
+        if (victim) {
+            const entries = eventsByParticipant.get(String(victim.id)) || [];
+            entries.push({
+                event,
+                role: 'victim'
+            });
+            eventsByParticipant.set(String(victim.id), entries);
+        }
+        if (attacker) {
+            const entries = eventsByParticipant.get(String(attacker.id)) || [];
+            entries.push({
+                event,
+                role: 'attacker'
+            });
+            eventsByParticipant.set(String(attacker.id), entries);
+        }
+    }
     const participantCard = (participant) => {
         const hp = Math.max(0, Number(participant.hp) || 0);
         const maxHp = Math.max(1, Number(participant.maxHp) || 1);
         const ratio = Math.max(0, Math.min(100, Math.round((hp / maxHp) * 100)));
         const isActive = String(participant.id) === String(combat.activeActorId || '');
         const sprite = String(participant.spriteKey || (participant.type === 'npc' ? 'bandit' : 'adventurer')).replace(/[^a-z0-9_-]/gi, '') || 'adventurer';
-        const isVictim = eventVictim && String(eventVictim.id) === String(participant.id);
-        const isAttacker = eventAttacker && String(eventAttacker.id) === String(participant.id);
-        const animationClass = isNewCombatEvent && isVictim && lastEvent.success
+        const participantEvents = eventsByParticipant.get(String(participant.id)) || [];
+        const victimEvent = participantEvents.find(item => item.role === 'victim')?.event || null;
+        const attackerEvent = participantEvents.find(item => item.role === 'attacker')?.event || null;
+        const event = victimEvent || attackerEvent;
+        const isVictim = Boolean(victimEvent);
+        const isAttacker = Boolean(attackerEvent);
+        const animationClass = isNewCombatEvent && isVictim && victimEvent.success
             ? 'combat-hit'
             : isNewCombatEvent && isVictim
                 ? 'combat-miss'
-                : isNewCombatEvent && isAttacker && lastEvent.success
+                : isNewCombatEvent && isAttacker && attackerEvent.success
                     ? 'combat-attacker'
                     : '';
-        const damagePopup = isNewCombatEvent && isVictim && lastEvent.success && lastEvent.damage > 0
-            ? `<span class="combat-damage-popup">-${lastEvent.damage}</span>`
+        const impactFx = isNewCombatEvent && isVictim && victimEvent.success
+            ? '<span class="combat-hit-burst" aria-hidden="true"></span><span class="combat-hit-sparks" aria-hidden="true"></span>'
+            : isNewCombatEvent && isVictim
+                ? '<span class="combat-miss-swoosh" aria-hidden="true"></span>'
+            : '';
+        const damagePopup = isNewCombatEvent && isVictim && victimEvent.success && victimEvent.damage > 0
+            ? `<span class="combat-damage-popup">-${victimEvent.damage}</span>`
             : '';
         const resources = participant.type === 'npc'
             ? ''
             : `<small>STA ${Math.max(0, Number(participant.stamina) || 0)}/${Math.max(1, Number(participant.maxStamina) || 1)} · MANA ${Math.max(0, Number(participant.mana) || 0)}/${Math.max(1, Number(participant.maxMana) || 1)}</small>`;
         return `<article class="combat-fighter ${participant.type === 'npc' ? 'combat-fighter-enemy' : 'combat-fighter-ally'} ${isActive ? 'combat-active-turn' : ''} ${participant.downed ? 'combat-fighter-downed' : ''} ${animationClass}">
-            <div class="combat-fighter-sprite"><img src="/assets/characters/${sprite}.png" alt="" loading="lazy"><span class="combat-fighter-shadow"></span>${damagePopup}</div>
+            <div class="combat-fighter-sprite"><img src="/assets/characters/${sprite}.png" alt="" loading="lazy"><span class="combat-fighter-shadow"></span>${impactFx}${damagePopup}</div>
             <div class="combat-fighter-name"><strong>${escapeHtml(participant.name || 'Postać')}</strong>${isActive && combat.status === 'active' ? '<em>● TURA</em>' : ''}</div>
             <div class="combat-hp-label"><span>HP</span><b>${hp}/${maxHp}</b></div>
             <div class="combat-hp-track"><span style="width:${ratio}%"></span></div>
@@ -2104,7 +2135,7 @@ function renderCombatPanel(combat = getActiveCombatState()) {
         elements.combatStage.innerHTML = `<div class="combat-side combat-party-side">${allies.length ? allies.map(participantCard).join('') : participantCard({ name: 'Drużyna', type: 'player', spriteKey: 'adventurer', hp: 0, maxHp: 1, downed: true })}</div>
             <div class="combat-versus" aria-hidden="true"><span>VS</span><i>⚔</i></div>
             <div class="combat-side combat-enemy-side">${participantCard(target)}</div>`;
-        if (isNewCombatEvent) state.combatLastAnimationId = lastEvent.id;
+        if (isNewCombatEvent) state.combatLastAnimationId = combatEventKey;
     }
 
     if (elements.combatParticipants) {
