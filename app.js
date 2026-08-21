@@ -605,7 +605,7 @@ async function init() {
     on(elements.loadScenarioPopiolyBtn, 'click', loadPopiolyScenario);
     on(elements.startWithWorldBtn, 'click', startGameWithWorld);
     on(elements.useCustomWorldBtn, 'click', showWorldBuilding);
-    on(elements.skipWorldBuildingBtn, 'click', showCharacterCreation);
+    on(elements.skipWorldBuildingBtn, 'click', skipWorldBuilding);
 
     // Event listeners - Tworzenie postaci
     on(elements.charSetting, 'change', () => {
@@ -2632,6 +2632,23 @@ function showCharacterCreation() {
     updateSetupProgress('character');
 }
 
+// Rozpoczęcie zwykłej opowieści bez kampanii: nie korzystaj z poprzedniego
+// blueprintu pozostawionego w pamięci po generatorze lub gotowym scenariuszu.
+function skipWorldBuilding() {
+    worldData.name = '';
+    worldData.description = '';
+    worldData.plan = null;
+    worldData.blueprint = null;
+    worldData.generated = false;
+    if (elements.worldPlanContent) {
+        elements.worldPlanContent.innerHTML = '<p style="color: #888; text-align: center; padding: 40px;">Budowanie świata pominięte — świat powstanie podczas opowieści.</p>';
+    }
+    if (elements.worldPreviewContent) {
+        elements.worldPreviewContent.innerHTML = '<p style="color: #888; text-align: center; padding: 40px;">Tryb bez kampanii — szczegóły świata odkryjesz podczas gry.</p>';
+    }
+    showCharacterCreation();
+}
+
 // Funkcja pomocnicza do opisu poziomu suwaka
 function getLevelDescription(type, level) {
     const descriptions = {
@@ -2978,7 +2995,9 @@ function startGameWithWorld() {
 }
 
 function validatePlayableWorldBeforeStart() {
-    const requiresBlueprint = characterData.setting === 'custom' || worldData.generated;
+    // Sam opis własnego settingu nie jest kampanią. Blueprint jest wymagany
+    // wyłącznie wtedy, gdy użytkownik faktycznie załadował lub wygenerował plan.
+    const requiresBlueprint = Boolean(worldData.generated || worldData.blueprint);
     if (!requiresBlueprint) return true;
 
     try {
@@ -3399,7 +3418,7 @@ function buildMemoryContext(world, sceneType, sceneTags) {
 // Rozpoczęcie gry
 function createGameWorld(playerName) {
     let world;
-    const requiresBlueprint = characterData.setting === 'custom' || worldData.generated;
+    const requiresBlueprint = Boolean(worldData.generated || worldData.blueprint);
     if (requiresBlueprint && !validatePlayableWorldBeforeStart()) {
         throw new Error('Nie można uruchomić własnego lub wygenerowanego świata bez poprawnego blueprintu.');
     }
@@ -3414,7 +3433,7 @@ function createGameWorld(playerName) {
         throw new Error('Nie udało się utworzyć grywalnego świata z blueprintu.');
     }
     if (!world) {
-        world = characterData.adventureType === 'open'
+        world = characterData.adventureType === 'open' || characterData.setting === 'custom'
             ? World.createSandboxWorld(playerName)
             : World.createStarterWorld(playerName, 'town_central');
     }
