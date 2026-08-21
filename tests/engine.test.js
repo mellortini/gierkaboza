@@ -177,7 +177,7 @@ function testMerchantGoldWeightAndRoundTrip() {
     world.performPlayerAction('idz do market_square', player);
 
     const beforeWeight = player.getInventoryWeight();
-    const purchase = world.performPlayerAction('kupuje miecz', player);
+    const purchase = world.performPlayerAction('kupuję iron_sword', player);
     assert.strictEqual(purchase.success, true);
     assert.strictEqual(player.getItemQuantity('iron_sword'), 1);
     assert.strictEqual(merchant.gold, 575);

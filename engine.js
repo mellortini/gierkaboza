@@ -1703,7 +1703,17 @@ class World {
 
     _resolveItemInAction(normalizedAction) {
         const items = Object.values(ITEM_CATALOG).sort((a, b) => b.name.length - a.name.length);
-        return items.find(item => item.aliases.some(alias => normalizedAction.includes(alias))) || null;
+        const actionText = String(normalizedAction || '').toLocaleLowerCase('pl-PL');
+        const spacedActionText = actionText.replace(/[_-]+/g, ' ');
+        return items.find(item => {
+            const candidates = [item.id, item.name, ...(Array.isArray(item.aliases) ? item.aliases : [])]
+                .map(value => String(value || '').toLocaleLowerCase('pl-PL').trim())
+                .filter(Boolean);
+            return candidates.some(candidate => {
+                const spacedCandidate = candidate.replace(/[_-]+/g, ' ');
+                return actionText.includes(candidate) || spacedActionText.includes(spacedCandidate);
+            });
+        }) || null;
     }
 
     _findNpcInAction(normalizedAction, player, allowSingleFallback = false) {

@@ -644,6 +644,7 @@ async function init() {
     on(elements.playerStats, 'click', handleStatPanelClick);
     on(elements.equipmentSlots, 'click', handleInventoryClick);
     on(elements.inventoryGrid, 'click', handleInventoryClick);
+    on(elements.merchantGrid, 'click', handleInventoryClick);
     on(elements.playerAction, 'keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -1683,16 +1684,18 @@ function setupMultiplayerListeners() {
 
     // Action result from server
     state.socket.on('actionResult', (data) => {
-        const worldChanges = Array.isArray(data.mechanics?.worldChanges) ? data.mechanics.worldChanges : [];
-        const combatChange = worldChanges.find(change => change.type === 'combat_happened');
+        const worldChanges = getMechanicalWorldChanges(data.mechanics);
         const downedChange = worldChanges.find(change => change.type === 'player_downed');
-        if (combatChange && data.mechanics?.message) {
-            const extra = combatChange.description && combatChange.description !== data.mechanics.message
-                ? `\n${combatChange.description}`
-                : '';
-            addStoryEntry('system', `⚔️ ${data.playerName || 'Gracz'}: ${data.mechanics.message}${extra}`);
-        } else if (data.playerId === state.playerId && data.mechanics?.message) {
-            addStoryEntry('system', `Mechanika: ${data.mechanics.message}`);
+        if (data.mechanics?.message) {
+            const notice = formatMechanicalNotice(
+                data.mechanics,
+                data.playerId === state.playerId ? '' : (data.playerName || 'Gracz')
+            );
+            // Routine actions stay inside the narrative. Important results are
+            // shown to the acting player; combat remains visible to the room.
+            if (notice && (data.playerId === state.playerId || worldChanges.some(change => change.type === 'combat_happened'))) {
+                addStoryEntry('system', notice);
+            }
         }
         if (downedChange) {
             addStoryEntry('system', `💀 ${data.playerName || 'Gracz'} został powalony. Użyj leczenia albo poproś drugiego gracza o pomoc.`);
@@ -1705,6 +1708,22 @@ function setupMultiplayerListeners() {
             state.world = World.fromJSON(data.worldState);
             updateGameHUD();
         }
+    });
+
+    // Handel jest osobnym panelem i nie tworzy wpisu narratora. Odświeżamy
+    // wszystkim stan kupca, a błąd pokazujemy tylko graczowi wykonującemu zakup.
+    state.socket.on('merchantResult', (data) => {
+        if (data?.worldState) {
+            state.world = World.fromJSON(data.worldState);
+            updateGameHUD();
+        }
+        if (data?.playerId === state.playerId && data.success === false && data.message) {
+            addStoryEntry('system', `⚠️ ${data.message}`);
+        }
+    });
+
+    state.socket.on('merchantError', (data) => {
+        addStoryEntry('system', `⚠️ ${data?.message || 'Nie udało się wykonać transakcji.'}`);
     });
 
     state.socket.on('rollRequested', handleRollRequested);
@@ -1881,6 +1900,55 @@ function handleStatPanelClick(event) {
     }
 }
 
+// Mechanika działa w tle jako źródło prawdy dla świata. Pokazujemy graczowi
+// tylko odrzucenia i ważne skutki — zwykłe akcje, rozmowy oraz upływ czasu nie
+// powinny zamieniać dziennika przygody w log techniczny.
+const VISIBLE_MECHANIC_CHANGE_TYPES = new Set([
+    'item_bought',
+    'item_sold',
+    'item_used',
+    'item_equipped',
+    'item_unequipped',
+    'gold_changed',
+    'player_healed',
+    'combat_happened',
+    'player_downed',
+    'npc_died',
+    'npc_killed',
+    'quest_accepted',
+    'quest_completed',
+    'quest_failed',
+    'quest_rewarded',
+    'xp_changed',
+    'level_up',
+    'stat_changed',
+    'travel_completed',
+    'location_changed'
+]);
+
+function getMechanicalWorldChanges(result) {
+    if (Array.isArray(result?.worldChanges)) return result.worldChanges;
+    if (Array.isArray(result?.changes)) return result.changes;
+    return [];
+}
+
+function formatMechanicalNotice(result, actorName = '') {
+    if (!result || !result.message) return '';
+    const changes = getMechanicalWorldChanges(result);
+    if (result.success !== true) return `⚠️ ${result.message}`;
+
+    const combatChange = changes.find(change => change?.type === 'combat_happened');
+    if (combatChange) {
+        const extra = combatChange.description && combatChange.description !== result.message
+            ? `\n${combatChange.description}`
+            : '';
+        return `⚔️ ${actorName ? `${actorName}: ` : ''}${result.message}${extra}`;
+    }
+
+    if (!changes.some(change => VISIBLE_MECHANIC_CHANGE_TYPES.has(change?.type))) return '';
+    return `✓ ${actorName ? `${actorName}: ` : ''}${result.message}`;
+}
+
 function getItemCatalogEntry(itemId) {
     return window.RPGEngine?.ITEM_CATALOG?.[itemId] || null;
 }
@@ -1962,6 +2030,7 @@ async function executeInventoryAction(kind, itemId) {
     const item = getItemCatalogEntry(itemId);
     if (!item || !state.world?.player) return;
     const keyword = item.aliases?.[0] || item.id;
+    const isMerchantAction = kind === 'buy' || kind === 'sell';
     const action = kind === 'equip'
         ? `zakładam ${keyword}`
         : kind === 'unequip'
@@ -1971,14 +2040,43 @@ async function executeInventoryAction(kind, itemId) {
                 : kind === 'sell'
                     ? `sprzedaję ${keyword}`
                     : `uzyj ${keyword}`;
-    addStoryEntry('player', state.isMultiplayer && state.playerName ? `[${state.playerName}]: ${action}` : action);
+    // Zakupy i sprzedaż są obsługiwane przez panel sklepu, nie przez czat.
+    // Dzięki temu narrator nie dostaje sztucznej tury do skomentowania.
+    if (isMerchantAction && state.isMultiplayer) {
+        await sendMultiplayerMerchantAction(kind, item.id);
+        return;
+    }
+    if (!isMerchantAction) {
+        addStoryEntry('player', state.isMultiplayer && state.playerName ? `[${state.playerName}]: ${action}` : action);
+    }
     if (state.isMultiplayer) {
         await sendMultiplayerAction(action);
         return;
     }
     const result = state.world.performPlayerAction(action, state.world.player);
-    if (result?.message) addStoryEntry('system', `Mechanika: ${result.message}`);
+    if (isMerchantAction) {
+        // Zapisz wynik do kontekstu następnej sceny bez pokazywania go jako
+        // wiadomości. Interfejs ekwipunku i złota od razu odzwierciedla zmianę.
+        state.gameState.push({
+            role: 'user',
+            content: `[MECHANIKA SKLEPU — WEWNĘTRZNE]\n${action}\nWynik: ${result?.message || 'brak wyniku'}. Nie twórz osobnej narracji dla tej transakcji.`
+        });
+        if (result?.success !== true && result?.message) {
+            addStoryEntry('system', `⚠️ ${result.message}`);
+        }
+    } else {
+        const notice = formatMechanicalNotice(result);
+        if (notice) addStoryEntry('system', notice);
+    }
     updateGameHUD();
+}
+
+async function sendMultiplayerMerchantAction(kind, itemId) {
+    if (!state.socket || !state.isMultiplayer) return;
+    state.socket.emit('merchantAction', {
+        kind,
+        itemId
+    });
 }
 
 function handleInventoryClick(event) {
@@ -3300,10 +3398,10 @@ async function generateStory(userAction = null) {
             updateGameHUD();
         }
 
-        // Wyświetl w grze
-        if (mechanicalResult?.message) {
-            addStoryEntry('system', `Mechanika: ${mechanicalResult.message}`);
-        }
+        // Wyświetlaj tylko ważne skutki mechaniki; zwykłe akcje pozostają
+        // częścią narracji zamiast pojawiać się jako log techniczny.
+        const notice = formatMechanicalNotice(mechanicalResult);
+        if (notice) addStoryEntry('system', notice);
         addStoryEntry('narrator', storyText);
 
     } catch (error) {
@@ -3642,6 +3740,23 @@ function updateSurvivalWarnings(player) {
     }
 }
 
+function resolveTradeItemFromAction(actionText) {
+    const text = String(actionText || '').toLocaleLowerCase('pl-PL');
+    const spacedText = text.replace(/[_-]+/g, ' ');
+    const catalog = window.RPGEngine?.ITEM_CATALOG || {};
+    return Object.values(catalog)
+        .sort((a, b) => String(b?.name || '').length - String(a?.name || '').length)
+        .find(item => {
+            const candidates = [item.id, item.name, ...(Array.isArray(item.aliases) ? item.aliases : [])]
+                .map(value => String(value || '').toLocaleLowerCase('pl-PL').trim())
+                .filter(Boolean);
+            return candidates.some(candidate => {
+                const spacedCandidate = candidate.replace(/[_-]+/g, ' ');
+                return text.includes(candidate) || spacedText.includes(spacedCandidate);
+            });
+        }) || null;
+}
+
 // Wysłanie akcji gracza
 async function sendAction() {
     const action = elements.playerAction.value.trim();
@@ -3649,6 +3764,20 @@ async function sendAction() {
     if (!action || state.isLoading) return;
 
     elements.playerAction.value = '';
+
+    // Jeśli gracz jest przy kupcu, tekstowe kupno/sprzedaż korzysta z tego
+    // samego cichego kanału co przyciski panelu sklepu.
+    const merchant = getCurrentMerchant();
+    const tradeKind = /\b(kup|kupić|kupic|kupuję|kupuje)\w*/i.test(action)
+        ? 'buy'
+        : /\b(sprzed|sprzedać|sprzedac|sprzedaję|sprzedaje)\w*/i.test(action)
+            ? 'sell'
+            : null;
+    const tradeItem = merchant && tradeKind ? resolveTradeItemFromAction(action) : null;
+    if (merchant && tradeKind && tradeItem) {
+        await executeInventoryAction(tradeKind, tradeItem.id);
+        return;
+    }
     
     // W multiplayer dodaj etykietę z imieniem gracza
     const playerLabel = state.isMultiplayer && state.playerName ? `[${state.playerName}]: ` : '';

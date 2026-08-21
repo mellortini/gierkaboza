@@ -430,6 +430,7 @@ function createRoom(roomId, world = null, persisted = {}) {
         chatHistory: Array.isArray(persisted.chatHistory) ? persisted.chatHistory.slice(-50) : [],
         playerHistories: persisted.playerHistories || {},
         actionHistory: Array.isArray(persisted.actionHistory) ? persisted.actionHistory.slice(-120) : [],
+        mechanicsHistory: Array.isArray(persisted.mechanicsHistory) ? persisted.mechanicsHistory.slice(-40) : [],
         actionQueue: Promise.resolve(),
         pendingRolls: new Map(),
         narrativeConsolidationPromise: null,
@@ -997,6 +998,7 @@ function persistRooms() {
             lobby: publicSafeValue(room.lobby || createLobbyState({}, room.world)),
             chatHistory: room.chatHistory.slice(-50),
             actionHistory: room.actionHistory.slice(-120),
+            mechanicsHistory: room.mechanicsHistory.slice(-40),
             playerHistories: Object.fromEntries(
                 Object.entries(room.playerHistories || {}).map(([id, history]) => [id, history.slice(-100)])
             )
@@ -1363,6 +1365,78 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Sklep działa osobno od narracji: transakcja zmienia stan świata, ale nie
+    // tworzy tury dialogowej ani nie wywołuje LLM.
+    socket.on('merchantAction', (data) => {
+        const player = players.get(socket.id);
+        if (!player || !rooms.has(player.roomId)) {
+            socket.emit('merchantError', { message: 'Nie jesteś w pokoju gry.' });
+            return;
+        }
+        if (!allowAction(socket.id)) {
+            socket.emit('merchantError', { message: 'Za dużo operacji. Odczekaj chwilę.' });
+            return;
+        }
+        const room = rooms.get(player.roomId);
+        room.actionQueue = (room.actionQueue || Promise.resolve())
+            .then(() => processMerchantAction(socket, data))
+            .catch((err) => {
+                console.error('Error processing merchant action:', err);
+                socket.emit('merchantError', { message: 'Nie udało się wykonać transakcji.' });
+            });
+    });
+
+    async function processMerchantAction(socket, data) {
+        const session = players.get(socket.id);
+        if (!session || !rooms.has(session.roomId)) return;
+        const room = rooms.get(session.roomId);
+        const playerData = room.players.get(socket.id);
+        if (!playerData?.player || !room.world?.performPlayerAction) {
+            socket.emit('merchantError', { message: 'Stan gracza nie jest dostępny.' });
+            return;
+        }
+
+        const kind = String(data?.kind || '').trim().toLowerCase();
+        const itemId = String(data?.itemId || '').trim().toLowerCase();
+        if (!['buy', 'sell'].includes(kind) || !/^[a-z0-9_:-]{2,80}$/.test(itemId)) {
+            socket.emit('merchantError', { message: 'Nieprawidłowa operacja sklepu.' });
+            return;
+        }
+
+        const action = `${kind === 'buy' ? 'kupuję' : 'sprzedaję'} ${itemId}`;
+        const currentPlayer = playerData.player;
+        room.world.player = currentPlayer;
+        const result = room.world.performPlayerAction(action, currentPlayer);
+        const message = boundedText(result?.message || '', 400);
+        if (!room.mechanicsHistory) room.mechanicsHistory = [];
+        room.mechanicsHistory.push({
+            type: 'merchant_trade',
+            playerId: playerData.id,
+            playerName: playerData.name,
+            action,
+            result: message,
+            success: result?.success === true,
+            createdAt: Date.now()
+        });
+        room.mechanicsHistory = room.mechanicsHistory.slice(-40);
+        room.lastActiveAt = Date.now();
+        persistRooms();
+
+        // Każdy klient dostaje świeży stan kupca i własny snapshot gracza, ale
+        // tylko klient wykonujący transakcję dostaje ewentualny komunikat błędu.
+        for (const [socketId, roomPlayer] of room.players.entries()) {
+            io.to(socketId).emit('merchantResult', {
+                playerId: playerData.id,
+                playerName: playerData.name,
+                kind,
+                itemId,
+                success: result?.success === true,
+                message: socketId === socket.id ? message : '',
+                worldState: serializeWorld(room.world, roomPlayer.player, roomPlayer.id)
+            });
+        }
+    }
+
     // Serialize actions per room so simultaneous requests cannot overwrite world state.
     socket.on('playerAction', (data) => {
         const player = players.get(socket.id);
@@ -1606,7 +1680,7 @@ io.on('connection', (socket) => {
         }
         actionContext += mechanicsContext + rollContext;
         actionContext += `To dzieje się w ${location ? location.name : currentPlayer.locationId}. `;
-        actionContext += `Jest ${world.getFormattedTime()}, dzień ${world.getDayNumber()}. `;
+        actionContext += `Bieżący czas świata (wspomnij o nim tylko, jeśli ma znaczenie dla tej akcji): ${world.getFormattedTime()}, dzień ${world.getDayNumber()}. `;
         actionContext += availableExits.length > 0
             ? `Bezpośrednio dostępne przejścia: ${availableExits.join(', ')}. `
             : 'Brak zdefiniowanych bezpośrednich przejść z tej lokacji. ';
@@ -1700,6 +1774,13 @@ io.on('connection', (socket) => {
                 actionContext += `- ${turn.playerName}: ${boundedText(turn.action, 180)}\n`;
             }
         }
+        if (room.mechanicsHistory?.length > 0) {
+            actionContext += '\n\n## OSTATNIE ZMIANY MECHANIKI (WEWNĘTRZNE — NIE KOMENTUJ AUTOMATYCZNIE):\n';
+            for (const entry of room.mechanicsHistory.slice(-8)) {
+                actionContext += `- ${entry.playerName}: ${boundedText(entry.action, 160)} → ${boundedText(entry.result, 240)}\n`;
+            }
+            actionContext += 'Wykorzystaj te dane do zachowania ciągłości ekwipunku, złota i świata. Nie opisuj samej transakcji ponownie, chyba że jest to bezpośrednio potrzebne do bieżącej sceny.\n';
+        }
 
         // Sprawdź czy gracz prosi o szczegółowy opis
         const wantsDetailed = /szczeg[oó]łowo|opisz dokładnie|rozwiń|detale|wiecej szczeg[oó][lł]ow|bardziej szczeg[oó]łowo/i.test(action);
@@ -1723,6 +1804,7 @@ io.on('connection', (socket) => {
 - Imię NPC jest wiedzą osobistą gracza. Dopóki NPC nie przedstawi się po pytaniu o imię, używaj wyłącznie opisu lub roli, nigdy jego prawdziwego imienia.
 - Jeśli gracz pyta NPC o imię, odpowiedź musi jasno zawierać imię tylko wtedy, gdy NPC rzeczywiście decyduje się je podać.
 - Nie zmieniaj lokacji, pozycji ani dostępnych przejść w samym opisie. Traktuj komunikat „stan świata nie został zmieniony” dosłownie.
+- Nie wypisuj technicznego stanu świata przy każdej akcji. Nie podawaj dokładnej godziny, dnia ani liczby upływających minut podczas zwykłej rozmowy, handlu lub opisu; użyj czasu tylko wtedy, gdy jest istotny dla sceny albo gracz o niego pyta.
 ${world.isSandbox
     ? '- TRYB SANDBOX: gracz może wybrać dowolny kierunek i miejsce; jeśli podróż została zaakceptowana mechanicznie, opisz odkrywanie nowej lokacji.'
     : '- Jeśli gracz podał cel podróży, którego nie ma na liście lokacji lub nie ma go w bezpośrednich przejściach, nie kieruj go do młyna ani żadnego innego miejsca zastępczego.'}
@@ -2541,6 +2623,7 @@ Postać nazywa się ${playerName}. Odpowiadaj po polsku.`
         systemMessage.content += ' The scenario director brief is internal guidance only: never reveal its secrets directly or as narrator knowledge; reveal them only through player-discoverable events.';
         systemMessage.content += ' The mechanics section in the user prompt is authoritative. Never invent a successful travel or relocate a character when the mechanics say that the world state did not change.';
         systemMessage.content += ' Game time in the mechanics section is authoritative. Never advance the time or declare a new time of day from the player\'s prose alone; describe the actual time supplied by mechanics.';
+        systemMessage.content += ' Keep mechanics and clock data mostly invisible in the prose. Do not repeat the exact hour, day, elapsed minutes, hunger, thirst, fatigue, or a technical state report in every response. Mention time only when the action concerns waiting, a deadline, opening hours, a meaningful change of time of day, or the player asks about it; during ordinary trade, conversation, travel, or description, stay immersed in the scene.';
         systemMessage.content += ' NPC names are personal knowledge: do not reveal an NPC\'s canonical name until the player explicitly asks for it and the NPC gives it in dialogue. Use a role or physical description before that.';
         systemMessage.content += ' If the player action clearly resolves one listed scenario choice, append exactly one marker at the very end in this exact format: [[SCENARIO_CHOICE:{"choiceId":"...","optionId":"..."}]]. Otherwise append no marker. Never explain or reveal the marker.';
 
