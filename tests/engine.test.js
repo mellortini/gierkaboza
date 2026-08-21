@@ -2,6 +2,8 @@ const assert = require('assert');
 const {
     World,
     Player,
+    ITEM_CATALOG,
+    EQUIPMENT_SLOTS,
     StatusEffect,
     WorldEvent,
     EventQueue,
@@ -167,6 +169,53 @@ function testEquipmentAndItemPersistence() {
     assert.strictEqual(removed.success, true);
     assert.strictEqual(player.equipment.weapon, null);
     assert.strictEqual(player.getAttackPower(), 8);
+}
+
+function testExpandedEquipmentCatalog() {
+    const groups = {
+        swords: ['chipped_short_sword', 'crude_iron_sword', 'militia_sword', 'bronze_falchion', 'steel_longsword', 'silver_rapier', 'blacksteel_bastard_sword', 'frost_rune_sword', 'sun_gilded_greatsword', 'starforged_blade'],
+        armor: ['patched_jerkin', 'cracked_hide_vest', 'leather_cuirass', 'studded_leather', 'chainmail_shirt', 'polished_scale_armor', 'dark_ranger_coat', 'arcane_battle_robe', 'royal_plate_armor', 'dragonforged_plate'],
+        gloves: ['cloth_handwraps', 'worn_leather_gloves', 'hunter_fingerless_gloves', 'reinforced_hide_bracers', 'iron_knuckle_gloves', 'duelist_gauntlets', 'ranger_leafgloves', 'arcane_rune_gloves', 'royal_silver_gauntlets', 'dragonclaw_gauntlets'],
+        legs: ['burlap_trousers', 'worn_travel_pants', 'leather_leggings', 'studded_hunter_leggings', 'chainmail_chausses', 'steel_plated_greaves', 'forest_ranger_leggings', 'arcane_blue_trousers', 'royal_silver_leg_armor', 'dragon_scale_greaves'],
+        boots: ['cloth_shoes', 'cracked_leather_boots', 'sturdy_travel_boots', 'hunter_softstep_boots', 'iron_toed_boots', 'steel_greaves_boots', 'foreststrider_boots', 'arcane_blue_boots', 'royal_silver_sabatons', 'dragonfire_boots'],
+        staves: ['crooked_branch_staff', 'ashwood_staff', 'apprentice_copper_staff', 'emerald_nature_staff', 'silver_moon_staff', 'stormcaller_staff', 'black_rune_staff', 'ancient_druid_staff', 'archmage_staff', 'cosmic_crystal_staff'],
+        headgear: ['floppy_cloth_cap', 'patched_wool_hood', 'simple_leather_cap', 'green_ranger_hood', 'iron_skullcap', 'steel_knight_helmet', 'silver_circlet', 'starry_wizard_hat', 'royal_gold_crown_helm', 'dragon_horned_helm']
+    };
+
+    for (const ids of Object.values(groups)) {
+        assert.strictEqual(ids.length, 10);
+        const prices = ids.map(id => {
+            const item = ITEM_CATALOG[id];
+            assert.ok(item, `Brak przedmiotu ${id}`);
+            assert.ok(item.icon.endsWith('.png'));
+            assert.ok(item.classTags?.length > 0);
+            return item.price;
+        });
+        assert.ok(prices.every((price, index) => index === 0 || price > prices[index - 1]));
+    }
+
+    assert.deepStrictEqual(EQUIPMENT_SLOTS, ['weapon', 'armor', 'head', 'gloves', 'legs', 'boots', 'offhand', 'accessory']);
+
+    const world = World.createStarterWorld('Expanded Equipment Tester', 'town_central');
+    const player = world.player;
+    const merchant = world.getNPC('npc_market_merchant');
+    assert.strictEqual(merchant.inventory.filter(entry => ITEM_CATALOG[entry.id]?.slot).length, 74);
+
+    for (const itemId of ['crooked_branch_staff', 'arcane_battle_robe', 'starry_wizard_hat', 'arcane_rune_gloves', 'arcane_blue_trousers', 'arcane_blue_boots']) {
+        player.addItem(itemId);
+        assert.strictEqual(player.equipItem(itemId), true);
+    }
+    assert.strictEqual(player.equipment.weapon, 'crooked_branch_staff');
+    assert.strictEqual(player.equipment.armor, 'arcane_battle_robe');
+    assert.strictEqual(player.equipment.head, 'starry_wizard_hat');
+    assert.strictEqual(player.equipment.gloves, 'arcane_rune_gloves');
+    assert.strictEqual(player.equipment.legs, 'arcane_blue_trousers');
+    assert.strictEqual(player.equipment.boots, 'arcane_blue_boots');
+    assert.ok(player.getEquipmentStatBonus('intelligence') >= 8);
+
+    const restored = Player.fromJSON(JSON.parse(JSON.stringify(player.toJSON())));
+    assert.deepStrictEqual(restored.equipment, player.equipment);
+    assert.ok(restored.getAttackPower() > player.attack);
 }
 
 function testMerchantGoldWeightAndRoundTrip() {
@@ -714,6 +763,7 @@ testPlayerActionsAndRoundTrip();
 testTimeAwareWaitActions();
 testPlayerStatsAndD20Resolution();
 testEquipmentAndItemPersistence();
+testExpandedEquipmentCatalog();
 testMerchantGoldWeightAndRoundTrip();
 testCombatDiceDownedAndLoot();
 testNaturalTravelFormsAndUnknownDestination();

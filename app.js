@@ -37,6 +37,7 @@ const state = {
     pendingRoll: null,
     pendingRoomData: null,
     lobbyFallbackTimer: null,
+    merchantFilter: 'all',
     lobby: {
         active: false,
         supported: false,
@@ -253,6 +254,7 @@ const elements = {
     merchantName: document.getElementById('merchant-name'),
     merchantGold: document.getElementById('merchant-gold'),
     merchantDescription: document.getElementById('merchant-description'),
+    merchantFilter: document.getElementById('merchant-filter'),
     merchantGrid: document.getElementById('merchant-grid'),
     playerHunger: document.getElementById('player-hunger'),
     playerThirst: document.getElementById('player-thirst'),
@@ -645,6 +647,10 @@ async function init() {
     on(elements.equipmentSlots, 'click', handleInventoryClick);
     on(elements.inventoryGrid, 'click', handleInventoryClick);
     on(elements.merchantGrid, 'click', handleInventoryClick);
+    on(elements.merchantFilter, 'change', () => {
+        state.merchantFilter = elements.merchantFilter.value || 'all';
+        renderMerchantPanel(state.world?.player);
+    });
     on(elements.playerAction, 'keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -1953,6 +1959,46 @@ function getItemCatalogEntry(itemId) {
     return window.RPGEngine?.ITEM_CATALOG?.[itemId] || null;
 }
 
+const ITEM_ARCHETYPE_LABELS = Object.freeze({
+    warrior: 'wojownik',
+    mage: 'mag',
+    ranger: 'łucznik',
+    rogue: 'łotrzyk',
+    common: 'uniwersalne'
+});
+
+const ITEM_TYPE_LABELS = Object.freeze({
+    food: 'jedzenie',
+    consumable: 'mikstura',
+    tool: 'narzędzie',
+    weapon: 'broń',
+    armor: 'zbroja',
+    shield: 'tarcza',
+    accessory: 'akcesorium',
+    gloves: 'rękawiczki',
+    legs: 'spodnie',
+    boots: 'buty',
+    head: 'nakrycie głowy',
+    quest: 'przedmiot zadaniowy'
+});
+
+function formatItemModifiers(item) {
+    if (!item) return '';
+    const parts = [];
+    if (Number(item.attack)) parts.push(`Atak +${item.attack}`);
+    if (item.damageDice) parts.push(`Obrażenia ${item.damageDice}`);
+    if (Number(item.defense)) parts.push(`Obrona +${item.defense}`);
+    for (const [key, value] of Object.entries(item.statBonuses || {})) {
+        const labels = { strength: 'Siła', dexterity: 'Zręczność', constitution: 'Kondycja', intelligence: 'Inteligencja', wisdom: 'Mądrość', charisma: 'Charyzma' };
+        if (Number(value)) parts.push(`${labels[key] || key} ${value > 0 ? '+' : ''}${value}`);
+    }
+    const classes = (item.classTags || [])
+        .filter(tag => tag !== 'common')
+        .map(tag => ITEM_ARCHETYPE_LABELS[tag] || tag);
+    if (classes.length) parts.push(classes.join('/'));
+    return parts.join(' • ');
+}
+
 function getCurrentMerchant() {
     const player = state.world?.player;
     if (!player || !state.world?.npcs) return null;
@@ -1974,12 +2020,20 @@ function renderMerchantPanel(player) {
     if (elements.merchantGold) elements.merchantGold.textContent = `💰 ${Math.max(0, Number(merchant.gold) || 0)}`;
     if (elements.merchantDescription) elements.merchantDescription.textContent = `Towar kupca. Twoje złoto: ${player?.gold ?? 0} • Udźwig: ${(player?.getInventoryWeight?.() || 0).toFixed(1)}/${(player?.getCarryCapacity?.() || 0).toFixed(1)} kg`;
     const catalog = window.RPGEngine?.ITEM_CATALOG || {};
-    const stock = (merchant.inventory || []).filter(entry => entry && entry.quantity > 0 && catalog[entry.id]);
+    const filter = state.merchantFilter || 'all';
+    if (elements.merchantFilter && elements.merchantFilter.value !== filter) elements.merchantFilter.value = filter;
+    const stock = (merchant.inventory || []).filter(entry => {
+        if (!entry || entry.quantity <= 0 || !catalog[entry.id]) return false;
+        if (filter === 'all') return true;
+        const item = catalog[entry.id];
+        if (filter === 'consumables') return ['food', 'consumable', 'tool'].includes(item.type);
+        return item.slot === filter;
+    });
     elements.merchantGrid.innerHTML = stock.length > 0 ? stock.map(entry => {
         const item = catalog[entry.id];
         return `<article class="merchant-item">
             <div class="merchant-item-icon-wrap"><img src="${item.icon || ''}" alt="" class="item-icon" loading="lazy"></div>
-            <div class="merchant-item-copy"><strong>${escapeHtml(item.name)}</strong><small>${entry.quantity} szt. • ${Number(item.weight || 0).toFixed(1)} kg • ${item.price} zł</small></div>
+            <div class="merchant-item-copy"><strong>${escapeHtml(item.name)}</strong><small>${entry.quantity} szt. • ${Number(item.weight || 0).toFixed(1)} kg • ${item.price} zł${formatItemModifiers(item) ? ` • ${escapeHtml(formatItemModifiers(item))}` : ''}</small></div>
             <button type="button" class="item-action-button" data-inventory-action="buy" data-item-id="${item.id}" ${player?.gold < item.price || !player?.canCarry?.(item.id, 1) ? 'disabled' : ''}>Kup</button>
         </article>`;
     }).join('') : '<div class="inventory-empty">Kupiec nie ma już towaru.</div>';
@@ -1989,8 +2043,17 @@ function renderInventory(player) {
     if (!elements.inventoryGrid || !elements.equipmentSlots) return;
     const catalog = window.RPGEngine?.ITEM_CATALOG || {};
     const equipment = player?.equipment || {};
-    const slotLabels = { weapon: 'Broń', armor: 'Pancerz', offhand: 'Druga ręka', accessory: 'Akcesorium' };
-    const slotIcons = { weapon: '⚔️', armor: '🛡️', offhand: '🛡️', accessory: '🔮' };
+    const slotLabels = {
+        weapon: 'Broń / kostur',
+        armor: 'Zbroja',
+        head: 'Czapka / hełm',
+        gloves: 'Rękawiczki',
+        legs: 'Spodnie',
+        boots: 'Buty',
+        offhand: 'Druga ręka',
+        accessory: 'Akcesorium'
+    };
+    const slotIcons = { weapon: '⚔️', armor: '🛡️', head: '🪖', gloves: '🧤', legs: '👖', boots: '🥾', offhand: '🛡️', accessory: '🔮' };
     const equippedIds = new Set(Object.values(equipment).filter(Boolean));
 
     elements.equipmentSlots.innerHTML = Object.keys(slotLabels).map(slot => {
@@ -2019,7 +2082,7 @@ function renderInventory(player) {
             : '';
         return `<article class="inventory-item ${isEquipped ? 'inventory-item-equipped' : ''}">
             <div class="inventory-item-icon-wrap"><img src="${item.icon || ''}" alt="" class="item-icon" loading="lazy"><span class="inventory-item-quantity">${entry.quantity}</span></div>
-            <div class="inventory-item-copy"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.type || 'przedmiot')} • ${Number(item.weight || 0).toFixed(1)} kg${item.attack ? ` • Atak +${item.attack}` : ''}${item.defense ? ` • Obrona +${item.defense}` : ''}</small></div>
+            <div class="inventory-item-copy"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(ITEM_TYPE_LABELS[item.type] || item.type || 'przedmiot')} • ${Number(item.weight || 0).toFixed(1)} kg${formatItemModifiers(item) ? ` • ${escapeHtml(formatItemModifiers(item))}` : ''}</small></div>
             <div class="item-action-group">${primaryAction}${sellAction}</div>
         </article>`;
     }).join('') : '<div class="inventory-empty">Plecak jest pusty.</div>';

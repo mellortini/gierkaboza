@@ -103,7 +103,85 @@ const ITEM_CATALOG = Object.freeze({
     wooden_shield: { id: "wooden_shield", name: "Drewniana tarcza", aliases: ["wooden shield", "shield", "tarcza", "tarczę", "tarcze"], price: 45, weight: 2.6, type: "shield", slot: "offhand", icon: "/assets/items/wooden-shield.png", defense: 1, description: "Tarcza z desek, dobra na pierwszy cios." },
     torch: { id: "torch", name: "Pochodnia", aliases: ["torch", "pochodnia", "pochodnie"], price: 3, weight: 0.5, type: "tool", icon: "/assets/items/torch.png", description: "Rozprasza ciemność przez kilka godzin." },
     iron_key: { id: "iron_key", name: "Żelazny klucz", aliases: ["iron key", "key", "klucz"], price: 1, weight: 0.1, type: "quest", icon: "/assets/items/iron-key.png", description: "Pasuje do zamka, którego jeszcze nie znasz." },
-    moon_amulet: { id: "moon_amulet", name: "Amulet księżyca", aliases: ["moon amulet", "amulet", "księżyca", "ksiezyca"], price: 120, weight: 0.2, type: "accessory", slot: "accessory", icon: "/assets/items/moon-amulet.png", statBonuses: { wisdom: 1 }, defense: 1, description: "Chłodny kamień reagujący na szepty." }
+    moon_amulet: { id: "moon_amulet", name: "Amulet księżyca", aliases: ["moon amulet", "amulet", "księżyca", "ksiezyca"], price: 120, weight: 0.2, type: "accessory", slot: "accessory", icon: "/assets/items/moon-amulet.png", statBonuses: { wisdom: 1 }, defense: 1, description: "Chłodny kamień reagujący na szepty." },
+
+    // Broń wojownika, szermierza i łucznika walczącego w zwarciu.
+    chipped_short_sword: { id: "chipped_short_sword", name: "Wyszczerbiony krótki miecz", aliases: ["chipped short sword", "wyszczerbiony miecz", "krótki miecz"], price: 8, weight: 2.4, type: "weapon", slot: "weapon", icon: "/assets/items/chipped-short-sword.png", attack: 1, damageDice: "1d4", classTags: ["warrior"], description: "Tani złom, który pamięta więcej ucieczek niż zwycięstw." },
+    crude_iron_sword: { id: "crude_iron_sword", name: "Toporny żelazny miecz", aliases: ["crude iron sword", "toporny miecz", "żelazny pałasz"], price: 20, weight: 2.8, type: "weapon", slot: "weapon", icon: "/assets/items/crude-iron-sword.png", attack: 2, damageDice: "1d6", classTags: ["warrior"], description: "Nierówne ostrze, ale lepsze niż pięści." },
+    militia_sword: { id: "militia_sword", name: "Miecz milicji", aliases: ["militia sword", "miecz milicji"], price: 45, weight: 3, type: "weapon", slot: "weapon", icon: "/assets/items/militia-sword.png", attack: 3, damageDice: "1d6", classTags: ["warrior"], description: "Prosta broń strażnika miejskiego." },
+    bronze_falchion: { id: "bronze_falchion", name: "Brązowy falcjon", aliases: ["bronze falchion", "falcjon", "brązowy miecz"], price: 80, weight: 3.3, type: "weapon", slot: "weapon", icon: "/assets/items/bronze-falchion.png", attack: 4, damageDice: "1d8", classTags: ["warrior"], description: "Szerokie ostrze do ciężkich, zamachowych cięć." },
+    steel_longsword: { id: "steel_longsword", name: "Stalowy długi miecz", aliases: ["steel longsword", "długi miecz", "stalowy miecz"], price: 130, weight: 3.5, type: "weapon", slot: "weapon", icon: "/assets/items/steel-longsword.png", attack: 6, damageDice: "1d8", classTags: ["warrior"], description: "Dobrze wyważona broń dla doświadczonego wojownika." },
+    silver_rapier: { id: "silver_rapier", name: "Srebrna rapierka", aliases: ["silver rapier", "rapierka", "srebrny rapier"], price: 190, weight: 2, type: "weapon", slot: "weapon", icon: "/assets/items/silver-rapier.png", attack: 7, damageDice: "1d8", statBonuses: { dexterity: 1 }, classTags: ["rogue", "ranger"], description: "Lekka broń nagradzająca precyzję zamiast siły." },
+    blacksteel_bastard_sword: { id: "blacksteel_bastard_sword", name: "Czarnostalowy bastard", aliases: ["blacksteel bastard sword", "bastard", "czarnostalowy miecz"], price: 280, weight: 4.8, type: "weapon", slot: "weapon", icon: "/assets/items/blacksteel-bastard-sword.png", attack: 9, damageDice: "1d10", statBonuses: { strength: 1 }, classTags: ["warrior"], description: "Półtorak o ponurym połysku i ciężarze godnym najemnika." },
+    frost_rune_sword: { id: "frost_rune_sword", name: "Miecz runicznego mrozu", aliases: ["frost rune sword", "miecz mrozu", "runiczny miecz"], price: 420, weight: 3.8, type: "weapon", slot: "weapon", icon: "/assets/items/frost-rune-sword.png", attack: 11, damageDice: "1d10", statBonuses: { intelligence: 1 }, classTags: ["warrior", "mage"], description: "Runy na głowni zostawiają kryształowy szron na trafionym celu." },
+    sun_gilded_greatsword: { id: "sun_gilded_greatsword", name: "Słońcem pozłacany zweihänder", aliases: ["sun gilded greatsword", "pozłacany wielki miecz", "zweihänder"], price: 700, weight: 6.5, type: "weapon", slot: "weapon", icon: "/assets/items/sun-gilded-greatsword.png", attack: 14, damageDice: "2d6", statBonuses: { strength: 2 }, classTags: ["warrior"], description: "Ogromne ostrze dla tych, którzy potrafią udźwignąć jego legendę." },
+    starforged_blade: { id: "starforged_blade", name: "Gwiezdnie wykute ostrze", aliases: ["starforged blade", "gwiezdne ostrze", "miecz gwiazd"], price: 1200, weight: 4.6, type: "weapon", slot: "weapon", icon: "/assets/items/starforged-blade.png", attack: 18, damageDice: "2d8", statBonuses: { strength: 2, dexterity: 1 }, classTags: ["warrior", "ranger"], description: "Metal spadł z nieba i do dziś cicho drży w dłoni." },
+
+    patched_jerkin: { id: "patched_jerkin", name: "Połatany kaftan", aliases: ["patched jerkin", "połatany kaftan", "kaftan"], price: 10, weight: 2, type: "armor", slot: "armor", icon: "/assets/items/patched-jerkin.png", defense: 0, classTags: ["common"], description: "Ochrona bardziej przed wiatrem niż ostrzem." },
+    cracked_hide_vest: { id: "cracked_hide_vest", name: "Pęknięta kamizelka z chruściny", aliases: ["cracked hide vest", "kamizelka ze skóry", "skórzana kamizelka"], price: 25, weight: 3.5, type: "armor", slot: "armor", icon: "/assets/items/cracked-hide-vest.png", defense: 1, classTags: ["warrior", "ranger"], description: "Sztywna i niedroga, choć nieprzyjemnie pachnie dymem." },
+    leather_cuirass: { id: "leather_cuirass", name: "Skórzany napierśnik", aliases: ["leather cuirass", "skórzany napierśnik", "napierśnik"], price: 60, weight: 5.2, type: "armor", slot: "armor", icon: "/assets/items/leather-cuirass.png", defense: 2, classTags: ["warrior", "ranger"], description: "Lekki, praktyczny pancerz na pierwszą wyprawę." },
+    studded_leather: { id: "studded_leather", name: "Ćwiekowana skóra", aliases: ["studded leather", "ćwiekowana zbroja", "ćwiekowana skóra"], price: 100, weight: 6, type: "armor", slot: "armor", icon: "/assets/items/studded-leather.png", defense: 3, statBonuses: { dexterity: 1 }, classTags: ["ranger", "rogue"], description: "Skóra wzmocniona metalowymi ćwiekami, nie krępuje ruchów." },
+    chainmail_shirt: { id: "chainmail_shirt", name: "Kolczuga", aliases: ["chainmail shirt", "kolczuga", "łańcuchowa zbroja"], price: 180, weight: 9, type: "armor", slot: "armor", icon: "/assets/items/chainmail-shirt.png", defense: 4, classTags: ["warrior"], description: "Tysiące kółek, które zatrzymują ostrze kosztem ciężaru." },
+    polished_scale_armor: { id: "polished_scale_armor", name: "Polerowana łuskowa zbroja", aliases: ["polished scale armor", "łuskowa zbroja", "polerowana łuska"], price: 300, weight: 10, type: "armor", slot: "armor", icon: "/assets/items/polished-scale-armor.png", defense: 5, statBonuses: { strength: 1 }, classTags: ["warrior"], description: "Nachodzące na siebie łuski odbijają światło i stal." },
+    dark_ranger_coat: { id: "dark_ranger_coat", name: "Płaszcz mrocznego tropiciela", aliases: ["dark ranger coat", "płaszcz tropiciela", "mroczny płaszcz"], price: 450, weight: 6.5, type: "armor", slot: "armor", icon: "/assets/items/dark-ranger-coat.png", defense: 4, statBonuses: { dexterity: 2 }, classTags: ["ranger", "rogue"], description: "Ciemny płaszcz, w którym łatwo zniknąć między drzewami." },
+    arcane_battle_robe: { id: "arcane_battle_robe", name: "Bojowa szata arkanów", aliases: ["arcane battle robe", "szata arkanów", "bojowa szata"], price: 550, weight: 3.5, type: "armor", slot: "armor", icon: "/assets/items/arcane-battle-robe.png", defense: 3, statBonuses: { intelligence: 2, wisdom: 1 }, classTags: ["mage"], description: "Materiał reaguje na zaklęcia i lekko unosi się nad ziemią." },
+    royal_plate_armor: { id: "royal_plate_armor", name: "Królewska zbroja płytowa", aliases: ["royal plate armor", "królewska zbroja", "zbroja płytowa"], price: 850, weight: 14, type: "armor", slot: "armor", icon: "/assets/items/royal-plate-armor.png", defense: 8, statBonuses: { strength: 2 }, classTags: ["warrior"], description: "Pancerz dla dowódcy, który nie zamierza klękać." },
+    dragonforged_plate: { id: "dragonforged_plate", name: "Smocza zbroja płytowa", aliases: ["dragonforged plate", "smocza zbroja", "smocza płyta"], price: 1500, weight: 16, type: "armor", slot: "armor", icon: "/assets/items/dragonforged-plate.png", defense: 11, statBonuses: { strength: 3, constitution: 1 }, classTags: ["warrior"], description: "Płyty zahartowane w smoczym ogniu wytrzymują ciosy, które kruszą stal." },
+
+    cloth_handwraps: { id: "cloth_handwraps", name: "Płócienne owijki", aliases: ["cloth handwraps", "płócienne owijki", "owijki"], price: 5, weight: 0.2, type: "gloves", slot: "gloves", icon: "/assets/items/cloth-handwraps.png", defense: 0, classTags: ["common"], description: "Ręce owinięte materiałem, żeby nie pękały od pracy." },
+    worn_leather_gloves: { id: "worn_leather_gloves", name: "Wytarte rękawice skórzane", aliases: ["worn leather gloves", "skórzane rękawice", "rękawice"], price: 18, weight: 0.5, type: "gloves", slot: "gloves", icon: "/assets/items/worn-leather-gloves.png", defense: 0, statBonuses: { dexterity: 1 }, classTags: ["common", "ranger"], description: "Stare, ale wciąż lepsze niż gołe dłonie." },
+    hunter_fingerless_gloves: { id: "hunter_fingerless_gloves", name: "Rękawice myśliwego", aliases: ["hunter fingerless gloves", "rękawice myśliwego", "bezpalczaste rękawice"], price: 55, weight: 0.4, type: "gloves", slot: "gloves", icon: "/assets/items/hunter-fingerless-gloves.png", attack: 1, defense: 0, statBonuses: { dexterity: 1 }, classTags: ["ranger", "rogue"], description: "Pozostawiają palce wolne do pracy z cięciwą i nożem." },
+    reinforced_hide_bracers: { id: "reinforced_hide_bracers", name: "Wzmocnione karwasze", aliases: ["reinforced hide bracers", "wzmocnione karwasze", "karwasze"], price: 95, weight: 1, type: "gloves", slot: "gloves", icon: "/assets/items/reinforced-hide-bracers.png", defense: 1, statBonuses: { strength: 1 }, classTags: ["warrior", "ranger"], description: "Skóra i nitowane paski osłaniają nadgarstki przed ciosem." },
+    iron_knuckle_gloves: { id: "iron_knuckle_gloves", name: "Żelazne rękawice z kastetami", aliases: ["iron knuckle gloves", "żelazne kastety", "rękawice z kastetami"], price: 160, weight: 1.8, type: "gloves", slot: "gloves", icon: "/assets/items/iron-knuckle-gloves.png", attack: 2, defense: 1, statBonuses: { strength: 1 }, classTags: ["warrior"], description: "Wzmocnione kostki sprawiają, że pięść brzmi jak młot." },
+    duelist_gauntlets: { id: "duelist_gauntlets", name: "Rękawice pojedynkowicza", aliases: ["duelist gauntlets", "rękawice pojedynkowicza", "rękawice szermierza"], price: 260, weight: 1.2, type: "gloves", slot: "gloves", icon: "/assets/items/duelist-gauntlets.png", defense: 2, statBonuses: { dexterity: 2 }, classTags: ["warrior", "rogue"], description: "Cienkie metalowe płytki nie przeszkadzają w precyzyjnych ruchach." },
+    ranger_leafgloves: { id: "ranger_leafgloves", name: "Liściaste rękawice tropiciela", aliases: ["ranger leaf gloves", "liściaste rękawice", "rękawice tropiciela"], price: 380, weight: 0.7, type: "gloves", slot: "gloves", icon: "/assets/items/ranger-leafgloves.png", defense: 1, statBonuses: { dexterity: 2, wisdom: 1 }, classTags: ["ranger"], description: "Miękka zieleń kamufluje dłonie nawet przy naciąganiu łuku." },
+    arcane_rune_gloves: { id: "arcane_rune_gloves", name: "Runiczne rękawice arkanisty", aliases: ["arcane rune gloves", "runiczne rękawice", "rękawice arkanisty"], price: 520, weight: 0.6, type: "gloves", slot: "gloves", icon: "/assets/items/arcane-rune-gloves.png", defense: 1, statBonuses: { intelligence: 2 }, classTags: ["mage"], description: "Runy na dłoniach rozświetlają się przy każdym zaklęciu." },
+    royal_silver_gauntlets: { id: "royal_silver_gauntlets", name: "Srebrne rękawice królewskie", aliases: ["royal silver gauntlets", "srebrne rękawice królewskie", "królewskie rękawice"], price: 900, weight: 2.5, type: "gloves", slot: "gloves", icon: "/assets/items/royal-silver-gauntlets.png", defense: 4, statBonuses: { strength: 2 }, classTags: ["warrior"], description: "Ciężkie, zdobione rękawice noszone przez gwardię koronną." },
+    dragonclaw_gauntlets: { id: "dragonclaw_gauntlets", name: "Smocze szpony", aliases: ["dragonclaw gauntlets", "smocze szpony", "smocze rękawice"], price: 1600, weight: 3, type: "gloves", slot: "gloves", icon: "/assets/items/dragonclaw-gauntlets.png", attack: 3, defense: 5, statBonuses: { strength: 3 }, classTags: ["warrior"], description: "Pazury na stalowych palcach nie są wyłącznie ozdobą." },
+
+    burlap_trousers: { id: "burlap_trousers", name: "Jutowe spodnie", aliases: ["burlap trousers", "jutowe spodnie", "spodnie z juty"], price: 5, weight: 0.8, type: "legs", slot: "legs", icon: "/assets/items/burlap-trousers.png", defense: 0, classTags: ["common"], description: "Szorstkie, tanie i całkiem niegodne pojedynku." },
+    worn_travel_pants: { id: "worn_travel_pants", name: "Wytarte spodnie podróżne", aliases: ["worn travel pants", "spodnie podróżne", "wytarte spodnie"], price: 16, weight: 1, type: "legs", slot: "legs", icon: "/assets/items/worn-travel-pants.png", statBonuses: { dexterity: 1 }, classTags: ["common", "ranger"], description: "Wygodne spodnie z kieszeniami na drobiazgi." },
+    leather_leggings: { id: "leather_leggings", name: "Skórzane nogawice", aliases: ["leather leggings", "skórzane nogawice", "nogawice"], price: 50, weight: 2.4, type: "legs", slot: "legs", icon: "/assets/items/leather-leggings.png", defense: 1, classTags: ["warrior", "ranger"], description: "Skóra chroni kolana bez blokowania kroku." },
+    studded_hunter_leggings: { id: "studded_hunter_leggings", name: "Ćwiekowane nogawice łowcy", aliases: ["studded hunter leggings", "nogawice łowcy", "ćwiekowane nogawice"], price: 90, weight: 3, type: "legs", slot: "legs", icon: "/assets/items/studded-hunter-leggings.png", defense: 2, statBonuses: { dexterity: 1 }, classTags: ["ranger"], description: "Wzmocnione uda przydają się podczas długich marszów i zasadzki." },
+    chainmail_chausses: { id: "chainmail_chausses", name: "Kolczane nogawice", aliases: ["chainmail chausses", "kolczane nogawice", "kolczuga na nogi"], price: 170, weight: 5.5, type: "legs", slot: "legs", icon: "/assets/items/chainmail-chausses.png", defense: 3, classTags: ["warrior"], description: "Ciężka siatka chroniąca nogi przed cięciem." },
+    steel_plated_greaves: { id: "steel_plated_greaves", name: "Stalowe nagolenniki", aliases: ["steel plated greaves", "stalowe nagolenniki", "nagolenniki"], price: 280, weight: 7, type: "legs", slot: "legs", icon: "/assets/items/steel-plated-greaves.png", defense: 5, classTags: ["warrior"], description: "Solidne płyty dla wojownika, który nie cofa nogi." },
+    forest_ranger_leggings: { id: "forest_ranger_leggings", name: "Nogawice leśnego tropiciela", aliases: ["forest ranger leggings", "nogawice tropiciela", "leśne nogawice"], price: 400, weight: 2.8, type: "legs", slot: "legs", icon: "/assets/items/forest-ranger-leggings.png", defense: 2, statBonuses: { dexterity: 2 }, classTags: ["ranger"], description: "Zielone warstwy nie szeleszczą nawet wśród suchego igliwia." },
+    arcane_blue_trousers: { id: "arcane_blue_trousers", name: "Błękitne spodnie arkanów", aliases: ["arcane blue trousers", "błękitne spodnie arkanów", "spodnie maga"], price: 520, weight: 2.2, type: "legs", slot: "legs", icon: "/assets/items/arcane-blue-trousers.png", defense: 2, statBonuses: { intelligence: 2 }, classTags: ["mage"], description: "Materiał jest lekki jak dym i chłodny jak nocna magia." },
+    royal_silver_leg_armor: { id: "royal_silver_leg_armor", name: "Srebrny pancerz nóg", aliases: ["royal silver leg armor", "srebrny pancerz nóg", "królewskie nogawice"], price: 850, weight: 8, type: "legs", slot: "legs", icon: "/assets/items/royal-silver-leg-armor.png", defense: 6, statBonuses: { strength: 1 }, classTags: ["warrior"], description: "Wypolerowane płyty połyskują jak herb na królewskim sztandarze." },
+    dragon_scale_greaves: { id: "dragon_scale_greaves", name: "Smocze łuskowe nagolenniki", aliases: ["dragon scale greaves", "smocze nagolenniki", "smocze łuski na nogi"], price: 1500, weight: 6, type: "legs", slot: "legs", icon: "/assets/items/dragon-scale-greaves.png", defense: 8, statBonuses: { strength: 2, dexterity: 1 }, classTags: ["warrior", "ranger"], description: "Łuski są lekkie jak skóra, ale twarde jak hartowana stal." },
+
+    cloth_shoes: { id: "cloth_shoes", name: "Płócienne trzewiki", aliases: ["cloth shoes", "płócienne trzewiki", "trzewiki"], price: 4, weight: 0.4, type: "boots", slot: "boots", icon: "/assets/items/cloth-shoes.png", defense: 0, classTags: ["common"], description: "Ledwie chronią stopy przed zimnem i kamieniami." },
+    cracked_leather_boots: { id: "cracked_leather_boots", name: "Pęknięte skórzane buty", aliases: ["cracked leather boots", "pęknięte buty", "skórzane buty"], price: 15, weight: 0.8, type: "boots", slot: "boots", statBonuses: { dexterity: 1 }, icon: "/assets/items/cracked-leather-boots.png", classTags: ["common"], description: "Nadal nadają się do drogi, choć przemakają przy każdej kałuży." },
+    sturdy_travel_boots: { id: "sturdy_travel_boots", name: "Solidne buty podróżne", aliases: ["sturdy travel boots", "solidne buty", "buty podróżne"], price: 40, weight: 1.2, type: "boots", slot: "boots", icon: "/assets/items/sturdy-travel-boots.png", defense: 1, classTags: ["warrior", "ranger"], description: "Wygodne podeszwy na długą drogę." },
+    hunter_softstep_boots: { id: "hunter_softstep_boots", name: "Ciche buty łowcy", aliases: ["hunter softstep boots", "ciche buty", "buty łowcy"], price: 80, weight: 0.8, type: "boots", slot: "boots", icon: "/assets/items/hunter-softstep-boots.png", defense: 1, statBonuses: { dexterity: 2 }, classTags: ["ranger", "rogue"], description: "Miękka podeszwa nie zdradza kroku na mchu." },
+    iron_toed_boots: { id: "iron_toed_boots", name: "Buty z żelaznym noskiem", aliases: ["iron toed boots", "buty z żelaznym noskiem", "żelazne buty"], price: 140, weight: 2.5, type: "boots", slot: "boots", icon: "/assets/items/iron-toed-boots.png", defense: 2, statBonuses: { strength: 1 }, classTags: ["warrior"], description: "Ciężkie, ale potrafią zakończyć rozmowę jednym kopnięciem." },
+    steel_greaves_boots: { id: "steel_greaves_boots", name: "Stalowe sabatony", aliases: ["steel greaves boots", "stalowe sabatony", "sabatony"], price: 250, weight: 4, type: "boots", slot: "boots", icon: "/assets/items/steel-greaves-boots.png", defense: 4, classTags: ["warrior"], description: "Pancerne buty gwardzisty." },
+    foreststrider_boots: { id: "foreststrider_boots", name: "Buty leśnego wędrowca", aliases: ["foreststrider boots", "buty leśnego wędrowca", "leśne buty"], price: 360, weight: 1.5, type: "boots", slot: "boots", icon: "/assets/items/foreststrider-boots.png", defense: 2, statBonuses: { dexterity: 2 }, classTags: ["ranger"], description: "Dopasowują się do nierówności kamieni i korzeni." },
+    arcane_blue_boots: { id: "arcane_blue_boots", name: "Błękitne buty maga", aliases: ["arcane blue boots", "błękitne buty maga", "buty maga"], price: 500, weight: 1.2, type: "boots", slot: "boots", icon: "/assets/items/arcane-blue-boots.png", defense: 2, statBonuses: { intelligence: 1 }, classTags: ["mage"], description: "Runiczna podeszwa zostawia na śniegu niebieskie iskry." },
+    royal_silver_sabatons: { id: "royal_silver_sabatons", name: "Królewskie srebrne sabatony", aliases: ["royal silver sabatons", "srebrne sabatony", "królewskie buty"], price: 800, weight: 4.5, type: "boots", slot: "boots", icon: "/assets/items/royal-silver-sabatons.png", defense: 6, statBonuses: { strength: 1 }, classTags: ["warrior"], description: "Każdy krok brzmi jak rozkaz na paradzie." },
+    dragonfire_boots: { id: "dragonfire_boots", name: "Smoczy ogień pod stopami", aliases: ["dragonfire boots", "smocze buty", "buty smoczego ognia"], price: 1450, weight: 3, type: "boots", slot: "boots", icon: "/assets/items/dragonfire-boots.png", defense: 5, statBonuses: { strength: 2, dexterity: 1 }, classTags: ["warrior", "ranger"], description: "Płomień nie parzy właściciela, ale ostrzega wszystkich wokół." },
+
+    crooked_branch_staff: { id: "crooked_branch_staff", name: "Krzywy kostur z gałęzi", aliases: ["crooked branch staff", "krzywy kostur", "kostur z gałęzi"], price: 8, weight: 0.8, type: "weapon", slot: "weapon", icon: "/assets/items/crooked-branch-staff.png", attack: 1, damageDice: "1d4", statBonuses: { intelligence: 1 }, classTags: ["mage"], description: "Pierwszy kostur ucznia, bardziej pomocny w marszu niż w walce." },
+    ashwood_staff: { id: "ashwood_staff", name: "Kostur jesionowy", aliases: ["ashwood staff", "kostur jesionowy", "jesionowy kostur"], price: 25, weight: 1.2, type: "weapon", slot: "weapon", icon: "/assets/items/ashwood-staff.png", attack: 2, damageDice: "1d6", statBonuses: { intelligence: 1 }, classTags: ["mage"], description: "Gładkie drewno dobrze przewodzi prostą magię." },
+    apprentice_copper_staff: { id: "apprentice_copper_staff", name: "Miedziany kostur czeladnika", aliases: ["apprentice copper staff", "miedziany kostur", "kostur czeladnika"], price: 60, weight: 1.4, type: "weapon", slot: "weapon", icon: "/assets/items/apprentice-copper-staff.png", attack: 3, damageDice: "1d6", statBonuses: { intelligence: 2 }, classTags: ["mage"], description: "Miedziana końcówka pozwala utrzymać zaklęcie w ryzach." },
+    emerald_nature_staff: { id: "emerald_nature_staff", name: "Szmaragdowy kostur natury", aliases: ["emerald nature staff", "szmaragdowy kostur", "kostur natury"], price: 120, weight: 1.6, type: "weapon", slot: "weapon", icon: "/assets/items/emerald-nature-staff.png", attack: 4, damageDice: "1d8", statBonuses: { wisdom: 2 }, classTags: ["mage", "ranger"], description: "Żywe pnącza oplatają drewno i reagują na leśne duchy." },
+    silver_moon_staff: { id: "silver_moon_staff", name: "Srebrny kostur księżyca", aliases: ["silver moon staff", "srebrny kostur", "kostur księżyca"], price: 220, weight: 1.8, type: "weapon", slot: "weapon", icon: "/assets/items/silver-moon-staff.png", attack: 6, damageDice: "1d8", statBonuses: { wisdom: 2, intelligence: 1 }, classTags: ["mage"], description: "Półksiężyc na szczycie świeci mocniej w noc bez chmur." },
+    stormcaller_staff: { id: "stormcaller_staff", name: "Kostur wzywający burzę", aliases: ["stormcaller staff", "kostur burzy", "wzywający burzę"], price: 360, weight: 2, type: "weapon", slot: "weapon", icon: "/assets/items/stormcaller-staff.png", attack: 8, damageDice: "1d10", statBonuses: { intelligence: 2 }, classTags: ["mage"], description: "Kryształ trzaska elektrycznością przed każdym zaklęciem." },
+    black_rune_staff: { id: "black_rune_staff", name: "Czarny kostur run", aliases: ["black rune staff", "czarny kostur", "kostur run"], price: 520, weight: 2.2, type: "weapon", slot: "weapon", icon: "/assets/items/black-rune-staff.png", attack: 10, damageDice: "1d10", statBonuses: { intelligence: 3 }, classTags: ["mage"], description: "Runy są stare, a ich właściciel nie zawsze jest oczywisty." },
+    ancient_druid_staff: { id: "ancient_druid_staff", name: "Kostur pradawnego druida", aliases: ["ancient druid staff", "kostur druida", "pradawny kostur"], price: 760, weight: 2.3, type: "weapon", slot: "weapon", icon: "/assets/items/ancient-druid-staff.png", attack: 12, damageDice: "2d6", statBonuses: { wisdom: 3 }, classTags: ["mage", "ranger"], description: "Wyrósł z drzewa, które pamięta pierwsze ścieżki świata." },
+    archmage_staff: { id: "archmage_staff", name: "Kostur arcymaga", aliases: ["archmage staff", "kostur arcymaga", "arcymag"], price: 1100, weight: 2, type: "weapon", slot: "weapon", icon: "/assets/items/archmage-staff.png", attack: 15, damageDice: "2d6", statBonuses: { intelligence: 4 }, classTags: ["mage"], description: "Pływający kryształ skupia zaklęcia na odległość." },
+    cosmic_crystal_staff: { id: "cosmic_crystal_staff", name: "Kosmiczny kostur kryształowy", aliases: ["cosmic crystal staff", "kosmiczny kostur", "kostur kryształowy"], price: 1800, weight: 2.5, type: "weapon", slot: "weapon", icon: "/assets/items/cosmic-crystal-staff.png", attack: 20, damageDice: "2d8", statBonuses: { intelligence: 4, wisdom: 2 }, classTags: ["mage"], description: "W jego krysztale wiruje maleńka, niemożliwa noc." },
+
+    floppy_cloth_cap: { id: "floppy_cloth_cap", name: "Miękka płócienna czapka", aliases: ["floppy cloth cap", "płócienna czapka", "czapka"], price: 5, weight: 0.3, type: "head", slot: "head", icon: "/assets/items/floppy-cloth-cap.png", defense: 0, classTags: ["common"], description: "Chroni przed słońcem, ale nie przed mieczem." },
+    patched_wool_hood: { id: "patched_wool_hood", name: "Połatany wełniany kaptur", aliases: ["patched wool hood", "wełniany kaptur", "połatany kaptur"], price: 15, weight: 0.5, type: "head", slot: "head", icon: "/assets/items/patched-wool-hood.png", defense: 0, statBonuses: { wisdom: 1 }, classTags: ["common"], description: "Ciepły i skromny, idealny na początek podróży." },
+    simple_leather_cap: { id: "simple_leather_cap", name: "Prosta skórzana czapka", aliases: ["simple leather cap", "skórzana czapka", "czapka skórzana"], price: 35, weight: 0.8, type: "head", slot: "head", icon: "/assets/items/simple-leather-cap.png", defense: 1, classTags: ["warrior", "ranger"], description: "Twarda skóra osłania skroń przed przypadkowym uderzeniem." },
+    green_ranger_hood: { id: "green_ranger_hood", name: "Zielony kaptur tropiciela", aliases: ["green ranger hood", "zielony kaptur", "kaptur tropiciela"], price: 75, weight: 0.6, type: "head", slot: "head", icon: "/assets/items/green-ranger-hood.png", defense: 1, statBonuses: { dexterity: 1 }, classTags: ["ranger"], description: "Zlewa się z koronami drzew i nie ogranicza widzenia." },
+    iron_skullcap: { id: "iron_skullcap", name: "Żelazna szłomka", aliases: ["iron skullcap", "żelazna szłomka", "szłomka"], price: 120, weight: 1.5, type: "head", slot: "head", icon: "/assets/items/iron-skullcap.png", defense: 2, classTags: ["warrior"], description: "Niewyszukana, ale ratuje głowę przed pałką." },
+    steel_knight_helmet: { id: "steel_knight_helmet", name: "Stalowy hełm rycerski", aliases: ["steel knight helmet", "stalowy hełm", "hełm rycerski"], price: 220, weight: 2.8, type: "head", slot: "head", icon: "/assets/items/steel-knight-helmet.png", defense: 4, statBonuses: { strength: 1 }, classTags: ["warrior"], description: "Zamykana przyłbica i stalowa ochrona karku." },
+    silver_circlet: { id: "silver_circlet", name: "Srebrny diadem", aliases: ["silver circlet", "srebrny diadem", "diadem"], price: 380, weight: 0.3, type: "head", slot: "head", icon: "/assets/items/silver-circlet.png", defense: 1, statBonuses: { wisdom: 2 }, classTags: ["mage", "ranger"], description: "Cienka obręcz, w której słychać cichy szum myśli." },
+    starry_wizard_hat: { id: "starry_wizard_hat", name: "Gwiaździsty kapelusz czarodzieja", aliases: ["starry wizard hat", "kapelusz czarodzieja", "gwiaździsty kapelusz"], price: 520, weight: 0.5, type: "head", slot: "head", icon: "/assets/items/starry-wizard-hat.png", defense: 1, statBonuses: { intelligence: 2 }, classTags: ["mage"], description: "Pod rondem świecą drobne gwiazdy, których nie ma na niebie." },
+    royal_gold_crown_helm: { id: "royal_gold_crown_helm", name: "Złoty hełm koronny", aliases: ["royal gold crown helm", "złoty hełm koronny", "hełm koronny"], price: 900, weight: 3.2, type: "head", slot: "head", icon: "/assets/items/royal-gold-crown-helm.png", defense: 5, statBonuses: { strength: 1, charisma: 2 }, classTags: ["warrior"], description: "Korona i hełm w jednym — trudno go nosić bez pewności siebie." },
+    dragon_horned_helm: { id: "dragon_horned_helm", name: "Smoczy hełm rogaty", aliases: ["dragon horned helm", "smoczy hełm", "rogaty hełm"], price: 1500, weight: 3.8, type: "head", slot: "head", icon: "/assets/items/dragon-horned-helm.png", defense: 7, statBonuses: { strength: 2, charisma: 1 }, classTags: ["warrior"], description: "Rogi są prawdziwe, a spojrzenie spod przyłbicy pamięta ogień." }
 });
 
 const ABILITY_KEYS = Object.freeze([
@@ -124,7 +202,18 @@ const DEFAULT_PLAYER_STATS = Object.freeze({
     charisma: 10
 });
 
-const EQUIPMENT_SLOTS = Object.freeze(['weapon', 'armor', 'offhand', 'accessory']);
+const EQUIPMENT_SLOTS = Object.freeze(['weapon', 'armor', 'head', 'gloves', 'legs', 'boots', 'offhand', 'accessory']);
+
+function createFullMerchantInventory() {
+    return [
+        { id: 'bread', quantity: 10 },
+        { id: 'healing_potion', quantity: 5 },
+        { id: 'torch', quantity: 12 },
+        ...Object.values(ITEM_CATALOG)
+            .filter(item => item.slot)
+            .map(item => ({ id: item.id, quantity: item.id === 'wooden_shield' ? 2 : 1 }))
+    ];
+}
 
 function normalizeAbilityKey(value) {
     const key = String(value || '').trim().toLowerCase();
@@ -1067,6 +1156,10 @@ class Player {
         this.equipment = {
             weapon: null,
             armor: null,
+            head: null,
+            gloves: null,
+            legs: null,
+            boots: null,
             offhand: null,
             accessory: null
         };
@@ -1749,12 +1842,7 @@ class World {
         merchant.description = 'Wędrowny handlarz, który pojawił się tu dzięki działaniom drużyny.';
         merchant.isMerchant = true;
         merchant.gold = 500;
-        merchant.inventory = [
-            { id: 'bread', quantity: 10 },
-            { id: 'healing_potion', quantity: 4 },
-            { id: 'torch', quantity: 8 },
-            { id: 'iron_sword', quantity: 1 }
-        ];
+        merchant.inventory = createFullMerchantInventory();
         this.addNPC(merchant);
         changes.push(new WorldChange('npc_discovered', merchant.id, true, 'W lokacji pojawia się handlarz.', 'local'));
         return merchant;
@@ -4771,15 +4859,7 @@ class World {
         merchant.name = 'Market Merchant';
         merchant.isMerchant = true;
         merchant.gold = 500;
-        merchant.inventory = [
-            { id: 'bread', quantity: 10 },
-            { id: 'healing_potion', quantity: 5 },
-            { id: 'iron_sword', quantity: 1 },
-            { id: 'leather_armor', quantity: 1 },
-            { id: 'wooden_shield', quantity: 2 },
-            { id: 'torch', quantity: 12 },
-            { id: 'moon_amulet', quantity: 1 }
-        ];
+        merchant.inventory = createFullMerchantInventory();
         world.addNPC(merchant);
 
         const warden = new NPC('npc_town_warden', 'town_central', 'kingdom');
@@ -5308,7 +5388,8 @@ if (typeof module !== 'undefined' && module.exports) {
         STATUS_THRESHOLDS,
         EVENT_LIMITS,
         STRATEGIC_UPDATE_INTERVAL,
-        ITEM_CATALOG
+        ITEM_CATALOG,
+        EQUIPMENT_SLOTS
     };
 }
 
@@ -5332,6 +5413,7 @@ if (typeof window !== 'undefined') {
         STATUS_THRESHOLDS,
         EVENT_LIMITS,
         STRATEGIC_UPDATE_INTERVAL,
-        ITEM_CATALOG
+        ITEM_CATALOG,
+        EQUIPMENT_SLOTS
     };
 }

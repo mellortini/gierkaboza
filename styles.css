@@ -2334,6 +2334,28 @@ button {
     font-size: 0.76rem;
 }
 
+.merchant-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 12px;
+    color: var(--text-soft);
+    font-size: 0.72rem;
+}
+
+.merchant-toolbar label {
+    font-weight: 700;
+}
+
+.merchant-toolbar select {
+    min-width: 180px;
+    padding: 6px 9px;
+    color: var(--text-main);
+    background: rgba(4, 13, 24, 0.8);
+    border: 1px solid rgba(255, 209, 102, 0.3);
+    border-radius: 6px;
+}
+
 .merchant-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -2522,6 +2544,15 @@ button {
 
     .equipment-slots {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .merchant-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .merchant-toolbar select {
+        width: 100%;
     }
 
     #game-story {
