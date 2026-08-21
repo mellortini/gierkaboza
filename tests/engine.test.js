@@ -477,9 +477,12 @@ function testSeparateCombatModeRoundTrip() {
     assert.strictEqual(check.combatMode, true);
     assert.strictEqual(player.locationId, 'forest_entrance');
     assert.strictEqual(target.locationId, 'forest_entrance');
+    player.hp = 50;
+    const hpBeforeRound = player.hp;
     const result = world.resolveCombatAction('atak bandyta', player, check, 20, 'player:separate');
     assert.strictEqual(result.success, true);
     assert.ok(target.hp < 1000);
+    assert.ok(player.hp <= hpBeforeRound, 'combat time must not passively regenerate HP');
     assert.ok(result.combatState.log.length >= 2, 'log should contain player and NPC turns');
     assert.strictEqual(result.combatSummary, null);
 

@@ -1598,14 +1598,14 @@ class World {
      * Multiplayer rooms use this method so every connected player can keep
      * an independent character sheet inside one shared world clock.
      */
-    advanceWorldTimeForPlayer(player, minutes) {
+    advanceWorldTimeForPlayer(player, minutes, options = {}) {
         if (!player) throw new Error("A player is required");
         if (!Number.isInteger(minutes) || minutes < 0 || !Number.isSafeInteger(minutes)) {
             throw new Error("Time advance must be a non-negative safe integer");
         }
 
         this.currentTimeMinutes += minutes;
-        this.updatePlayerTimeDependentSystems(player, minutes);
+        this.updatePlayerTimeDependentSystems(player, minutes, options);
 
         for (const npc of this.npcs.values()) {
             this._updateStatusEffects(npc, minutes);
@@ -1635,12 +1635,15 @@ class World {
     }
 
     /** Update resources and survival state for one player. */
-    updatePlayerTimeDependentSystems(player, minutes) {
+    updatePlayerTimeDependentSystems(player, minutes, options = {}) {
         if (!player) return;
         const cfg = this.config;
 
         // 1. Regeneration of HP/Stamina/Mana
-        this._updateResource(player, 'hp', cfg.regenRates.hp, minutes, player.maxHp);
+        // HP does not passively regenerate during an active combat round.
+        // Healing in combat must come from an item, spell or explicit effect.
+        const hpRegenRate = options.suppressHpRegen === true ? 0 : cfg.regenRates.hp;
+        this._updateResource(player, 'hp', hpRegenRate, minutes, player.maxHp);
         this._updateResource(player, 'stamina', cfg.regenRates.stamina, minutes, player.maxStamina);
         this._updateResource(player, 'mana', cfg.regenRates.mana, minutes, player.maxMana);
         
@@ -2504,12 +2507,12 @@ class World {
                     if (target.xpReward > 0) changes.push(new WorldChange('xp_gained', player.name, target.xpReward, 'Zdobyto doświadczenie.', 'local'));
                     this._completeKillQuests(player, target, changes);
                     const result = new ActionResult(true, `Trafiasz ${target.name} i pokonujesz przeciwnika.`, 2, changes);
-                    this.advanceWorldTimeForPlayer(player, result.timeCostMinutes);
+                    this.advanceWorldTimeForPlayer(player, result.timeCostMinutes, { suppressHpRegen: check.combatMode === true });
                     for (const change of result.worldChanges) this.logWorldChange(change);
                     return result;
                 }
                 const result = new ActionResult(true, `Trafiasz ${target.name}. Przeciwnik traci ${damage} HP.`, 2, changes);
-                this.advanceWorldTimeForPlayer(player, result.timeCostMinutes);
+                this.advanceWorldTimeForPlayer(player, result.timeCostMinutes, { suppressHpRegen: check.combatMode === true });
                 for (const change of result.worldChanges) this.logWorldChange(change);
                 return result;
             }
@@ -2530,7 +2533,7 @@ class World {
                 : check.combatMode
                     ? `Nie trafiasz ${target.name}.`
                     : `Nie trafiasz ${target.name}; przeciwnik robi unik i kontratakuje.`, 2, changes);
-            this.advanceWorldTimeForPlayer(player, result.timeCostMinutes);
+            this.advanceWorldTimeForPlayer(player, result.timeCostMinutes, { suppressHpRegen: check.combatMode === true });
             for (const change of result.worldChanges) this.logWorldChange(change);
             return result;
         }
@@ -2751,7 +2754,10 @@ class World {
         }
 
         const result = new ActionResult(success, message, timeCostMinutes, changes);
-        this.advanceWorldTimeForPlayer(player, result.timeCostMinutes);
+        const combatChanges = result.worldChanges.some(change =>
+            ['combat_happened', 'player_damaged', 'player_downed', 'npc_killed'].includes(change?.type)
+        );
+        this.advanceWorldTimeForPlayer(player, result.timeCostMinutes, { suppressHpRegen: combatChanges });
         for (const change of result.worldChanges) {
             this.logWorldChange(change);
         }
