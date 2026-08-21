@@ -433,6 +433,7 @@ function createRoom(roomId, world = null, persisted = {}) {
         mechanicsHistory: Array.isArray(persisted.mechanicsHistory) ? persisted.mechanicsHistory.slice(-40) : [],
         actionQueue: Promise.resolve(),
         pendingRolls: new Map(),
+        pendingCombatRolls: new Map(),
         narrativeConsolidationPromise: null,
         narrativeConsolidationNextAttemptAt: 0
     };
@@ -920,12 +921,16 @@ async function interpretSandboxActionWithAI({ world, player, action, apiKey, req
     }
 }
 
+function isCombatIntent(rawAction) {
+    return /\b(atak|atakuję|atakuje|uderz|cios|walcz|zabij|strzel|dźg|dzg|pchn|biję|bije|napad|nacier|szarż|szarz|kop|rzucam się|rzucam sie|fight|attack|punch|hit|shoot|stab)\w*/i.test(String(rawAction || ''));
+}
+
 function buildD20Check(world, player, rawAction) {
     const action = String(rawAction || '').trim();
     const normalized = action.toLocaleLowerCase('pl-PL');
     if (!world || !player || !action) return null;
 
-    const combatIntent = /\b(atak|atakuję|atakuje|uderz|cios|walcz|zabij|strzel|fight|attack|punch|hit)\w*/i.test(normalized);
+    const combatIntent = isCombatIntent(normalized);
     if (combatIntent && typeof world._findNpcInAction === 'function') {
         const target = world._findNpcInAction(normalized, player, true);
         if (!target) return null;
@@ -1437,6 +1442,224 @@ io.on('connection', (socket) => {
         }
     }
 
+    function emitCombatSnapshots(room, eventName, payload = {}) {
+        if (!room?.world) return;
+        for (const [socketId, roomPlayer] of room.players.entries()) {
+            io.to(socketId).emit(eventName, {
+                ...payload,
+                combatState: room.world.getCombatState?.() || room.world.combatState || null,
+                worldState: serializeWorld(room.world, roomPlayer.player, roomPlayer.id)
+            });
+        }
+    }
+
+    async function startCombatForAction(socket, room, playerData, action) {
+        const currentPlayer = playerData?.player;
+        const world = room?.world;
+        if (!currentPlayer || !world?.startCombat) {
+            socket.emit('combatError', { message: 'Stan walki nie jest dostępny.' });
+            return false;
+        }
+        if (world.combatState?.status === 'active') {
+            socket.emit('combatError', { message: 'Walka już trwa. Użyj panelu walki.' });
+            return false;
+        }
+
+        const target = world._findNpcInAction?.(String(action || '').toLocaleLowerCase('pl-PL'), currentPlayer, true);
+        if (!target) {
+            socket.emit('combatError', { message: 'Nie znaleziono przeciwnika w tej lokacji.' });
+            return false;
+        }
+        world.player = currentPlayer;
+        const partyMembers = Array.from(room.players.values())
+            .filter(roomPlayer => roomPlayer?.player)
+            .map(roomPlayer => ({ id: roomPlayer.id, name: roomPlayer.name, player: roomPlayer.player }));
+        const started = world.startCombat(currentPlayer, target.id, {
+            actorId: playerData.id,
+            partyMembers
+        });
+        if (!started.success) {
+            socket.emit('combatError', { message: started.message || 'Nie udało się rozpocząć walki.' });
+            return false;
+        }
+
+        room.mechanicsHistory = Array.isArray(room.mechanicsHistory) ? room.mechanicsHistory : [];
+        room.mechanicsHistory.push({
+            type: 'combat_started',
+            playerId: playerData.id,
+            playerName: playerData.name,
+            action: boundedText(action, 240),
+            result: started.message,
+            success: true,
+            createdAt: Date.now()
+        });
+        room.mechanicsHistory = room.mechanicsHistory.slice(-40);
+        room.lastActiveAt = Date.now();
+        persistRooms();
+        emitCombatSnapshots(room, 'combatStarted', {
+            playerId: playerData.id,
+            playerName: playerData.name,
+            targetName: target.name,
+            message: started.message
+        });
+        return true;
+    }
+
+    async function processCombatAction(socket, data) {
+        const session = players.get(socket.id);
+        if (!session || !rooms.has(session.roomId)) {
+            socket.emit('combatError', { message: 'Nie jesteś w pokoju gry.' });
+            return;
+        }
+        const room = rooms.get(session.roomId);
+        const playerData = room.players.get(socket.id);
+        const world = room.world;
+        if (!playerData?.player || !world?.combatState || world.combatState.status !== 'active') {
+            const rawAction = boundedText(data?.action, 2000);
+            if (String(data?.kind || '').toLowerCase() === 'start' && rawAction) {
+                await startCombatForAction(socket, room, playerData, rawAction);
+                return;
+            }
+            socket.emit('combatError', { message: 'Nie ma aktywnej walki.' });
+            return;
+        }
+
+        if (String(world.combatState.activeActorId) !== String(playerData.id)) {
+            socket.emit('combatError', { message: 'Poczekaj na swoją turę.' });
+            return;
+        }
+        const kind = String(data?.kind || '').trim().toLowerCase();
+        if (kind !== 'attack') {
+            socket.emit('combatError', { message: 'Na tym etapie dostępny jest tylko atak.' });
+            return;
+        }
+        if (Array.from(room.pendingCombatRolls.values()).some(pending => pending.playerId === playerData.id)) {
+            socket.emit('combatError', { message: 'Najpierw rzuć oczekującą kością.' });
+            return;
+        }
+        const check = world.getCombatAttackCheck(playerData.player, world.combatState.targetId);
+        if (!check) {
+            socket.emit('combatError', { message: 'Cel walki nie jest już dostępny.' });
+            return;
+        }
+        const rollId = `${room.id}:combat:${playerData.id}:${Date.now()}:${crypto.randomBytes(3).toString('hex')}`;
+        room.pendingCombatRolls.set(rollId, {
+            rollId,
+            socketId: socket.id,
+            playerId: playerData.id,
+            playerName: playerData.name,
+            action: `atak ${check.targetName}`,
+            check,
+            createdAt: Date.now()
+        });
+        emitCombatSnapshots(room, 'combatRollRequested', {
+            rollId,
+            playerId: playerData.id,
+            playerName: playerData.name,
+            label: check.label,
+            difficulty: check.difficulty,
+            modifier: check.modifier,
+            reason: check.reason,
+            targetName: check.targetName
+        });
+    }
+
+    async function processCombatRoll(socket, pending, value) {
+        const session = players.get(socket.id);
+        if (!session || !rooms.has(session.roomId)) return;
+        const room = rooms.get(session.roomId);
+        const playerData = room.players.get(socket.id);
+        if (!playerData?.player || !room.world?.resolveCombatAction) return;
+        const world = room.world;
+        world.player = playerData.player;
+        const result = world.resolveCombatAction(
+            pending.action,
+            playerData.player,
+            pending.check,
+            value,
+            playerData.id
+        );
+        const d20 = result.worldChanges?.find(change => change.type === 'd20_rolled')?.delta || {};
+        const rollPayload = {
+            rollId: pending.rollId,
+            playerId: playerData.id,
+            playerName: playerData.name,
+            value,
+            difficulty: pending.check.difficulty,
+            modifier: pending.check.modifier,
+            total: value + pending.check.modifier,
+            success: result.success === true,
+            label: pending.check.label,
+            targetName: pending.check.targetName || null,
+            criticalSuccess: d20.criticalSuccess === true,
+            criticalFailure: d20.criticalFailure === true
+        };
+        const summary = result.combatSummary || null;
+        if (summary) {
+            room.mechanicsHistory = Array.isArray(room.mechanicsHistory) ? room.mechanicsHistory : [];
+            room.mechanicsHistory.push({
+                type: 'combat_summary',
+                playerId: playerData.id,
+                playerName: playerData.name,
+                action: pending.action,
+                result: summary.text,
+                summary,
+                success: summary.outcome === 'victory',
+                createdAt: Date.now()
+            });
+            room.mechanicsHistory = room.mechanicsHistory.slice(-40);
+        }
+        room.lastActiveAt = Date.now();
+        persistRooms();
+        emitCombatSnapshots(room, 'combatRollResolved', {
+            ...rollPayload,
+            result: result.message,
+            combatSummary: summary
+        });
+    }
+
+    // Combat has its own queue and never enters the narrator/action timeline.
+    socket.on('combatAction', (data) => {
+        const player = players.get(socket.id);
+        if (!player || !rooms.has(player.roomId)) {
+            socket.emit('combatError', { message: 'Nie jesteś w pokoju gry.' });
+            return;
+        }
+        if (!allowAction(socket.id)) {
+            socket.emit('combatError', { message: 'Za dużo operacji. Odczekaj chwilę.' });
+            return;
+        }
+        const room = rooms.get(player.roomId);
+        room.actionQueue = (room.actionQueue || Promise.resolve())
+            .then(() => processCombatAction(socket, data))
+            .catch(error => {
+                console.error('Error processing combat action:', error);
+                socket.emit('combatError', { message: 'Nie udało się wykonać akcji walki.' });
+            });
+    });
+
+    socket.on('combatRoll', (data) => {
+        const player = players.get(socket.id);
+        if (!player || !rooms.has(player.roomId)) {
+            socket.emit('combatError', { message: 'Nie jesteś w pokoju gry.' });
+            return;
+        }
+        const room = rooms.get(player.roomId);
+        const pending = room.pendingCombatRolls?.get(String(data?.rollId || ''));
+        if (!pending || pending.socketId !== socket.id || pending.playerId !== player.playerId) {
+            socket.emit('combatError', { message: 'Ten rzut walki nie jest już dostępny.' });
+            return;
+        }
+        room.pendingCombatRolls.delete(pending.rollId);
+        const value = crypto.randomInt(1, 21);
+        room.actionQueue = (room.actionQueue || Promise.resolve())
+            .then(() => processCombatRoll(socket, pending, value))
+            .catch(error => {
+                console.error('Error processing combat roll:', error);
+                socket.emit('combatError', { message: 'Nie udało się rozstrzygnąć rzutu walki.' });
+            });
+    });
+
     // Serialize actions per room so simultaneous requests cannot overwrite world state.
     socket.on('playerAction', (data) => {
         const player = players.get(socket.id);
@@ -1553,6 +1776,20 @@ io.on('connection', (socket) => {
         }
 
         const currentPlayer = playerData.player;
+        // Combat intent is diverted before any chat history, narrator call or
+        // normal d20 request is created. The combat panel owns the full turn.
+        if (!trustedRoll && isCombatIntent(action)) {
+            if (world.combatState?.status === 'active') {
+                socket.emit('combatError', { message: 'Walka już trwa. Użyj panelu walki.' });
+                return;
+            }
+            await startCombatForAction(socket, room, playerData, action);
+            return;
+        }
+        if (!trustedRoll && world.combatState?.status === 'active') {
+            socket.emit('actionError', { message: 'Walka trwa — użyj panelu walki, aby wykonać swoją turę.' });
+            return;
+        }
         const playerApiKey = playerData.characterData?.apiKey || '';
         const playerModel = actionModel || playerData.characterData?.model || 'openai/gpt-3.5-turbo';
         let actionForMechanics = trustedRoll && storedInterpretedAction
@@ -1779,7 +2016,7 @@ io.on('connection', (socket) => {
             for (const entry of room.mechanicsHistory.slice(-8)) {
                 actionContext += `- ${entry.playerName}: ${boundedText(entry.action, 160)} → ${boundedText(entry.result, 240)}\n`;
             }
-            actionContext += 'Wykorzystaj te dane do zachowania ciągłości ekwipunku, złota i świata. Nie opisuj samej transakcji ponownie, chyba że jest to bezpośrednio potrzebne do bieżącej sceny.\n';
+            actionContext += 'Wykorzystaj te dane do zachowania ciągłości ekwipunku, złota, HP i świata. Nie opisuj samej transakcji ani technicznego przebiegu walki ponownie, chyba że jest to bezpośrednio potrzebne do bieżącej sceny.\n';
         }
 
         // Sprawdź czy gracz prosi o szczegółowy opis

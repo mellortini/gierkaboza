@@ -478,6 +478,23 @@
                 </div>
                 <button id="roll-d20" class="btn-primary d20-button" type="button" disabled>🎲 Rzuć kością</button>
             </section>
+
+            <section id="combat-panel" class="combat-panel hidden" aria-live="polite">
+                <div class="combat-panel-header">
+                    <div>
+                        <p class="combat-panel-kicker">MODUŁ WALKI</p>
+                        <h3 id="combat-title">⚔️ Przeciwnik</h3>
+                    </div>
+                    <span id="combat-round" class="combat-round">Runda 1</span>
+                </div>
+                <div id="combat-participants" class="combat-participants"></div>
+                <div id="combat-log" class="combat-log"></div>
+                <p id="combat-summary" class="combat-summary"></p>
+                <div class="combat-actions">
+                    <button id="combat-attack" class="btn-primary" type="button">⚔️ Atak</button>
+                    <button id="combat-roll-d20" class="btn-secondary hidden" type="button">🎲 Rzuć d20</button>
+                </div>
+            </section>
             
             <!-- HUD - World Clock & Stats -->
             <div id="game-hud" class="hud-panel">

@@ -1538,6 +1538,9 @@ class World {
         // authoritatively changes the simulation fields above.
         this.narrativeMemory = new NarrativeMemory();
         this.questDefinitions = [];
+        // Combat is a separate mechanical subsystem. It is serialized with
+        // the world, but it never creates a narrator turn by itself.
+        this.combatState = null;
         
         // Configuration
         this.config = {
@@ -2136,6 +2139,307 @@ class World {
         return { success: true, message: `Ranisz ${target.name}, ale przeciwnik odpowiada ciosem za ${retaliation} HP.`, timeCostMinutes: 2, changes };
     }
 
+    // ====================================================================
+    // SEPARATE COMBAT MODE
+    // ====================================================================
+
+    _cloneCombatState() {
+        return this.combatState ? JSON.parse(JSON.stringify(this.combatState)) : null;
+    }
+
+    _combatParticipantSnapshot(id, type, name, playerOrNpc, initiative = 0) {
+        const entity = playerOrNpc || {};
+        const isPlayer = type === 'player';
+        return {
+            id: String(id || name || type),
+            type,
+            name: String(name || entity.name || type),
+            hp: Math.max(0, Math.floor(Number(entity.hp) || 0)),
+            maxHp: Math.max(1, Math.floor(Number(entity.maxHp) || 1)),
+            armorClass: isPlayer
+                ? Math.max(1, Math.floor(entity.getArmorClass?.() || 10))
+                : this._getNpcArmorClass(entity),
+            initiative: Math.floor(Number(initiative) || 0),
+            downed: isPlayer ? entity.isDowned === true : entity.isAlive === false
+        };
+    }
+
+    getCombatState() {
+        return this._cloneCombatState();
+    }
+
+    startCombat(player, targetId, options = {}) {
+        if (!player) return { success: false, message: 'Brak aktywnego gracza.', combatState: null };
+        if (this.combatState?.status === 'active') {
+            return { success: false, message: 'Walka już trwa.', combatState: this.getCombatState() };
+        }
+
+        const target = this.npcs.get(String(targetId || ''));
+        if (!target || target.locationId !== player.locationId || target.isAlive === false) {
+            return { success: false, message: 'Cel walki nie jest dostępny w tej lokacji.', combatState: null };
+        }
+        if (player.isDowned) return { success: false, message: 'Postać jest powalona.', combatState: null };
+
+        const requestedParty = Array.isArray(options.partyMembers) ? options.partyMembers : [];
+        const party = requestedParty
+            .filter(entry => entry?.player && entry.player.locationId === player.locationId && entry.player.isDowned !== true)
+            .map(entry => ({
+                id: String(entry.id || entry.playerId || entry.player.name),
+                player: entry.player,
+                name: entry.name || entry.player.name
+            }));
+        if (!party.some(entry => entry.player === player)) {
+            party.unshift({
+                id: String(options.actorId || player.name || 'player'),
+                player,
+                name: player.name
+            });
+        }
+
+        const partyParticipants = party.map(entry => {
+            const initiative = rollDice('1d20').total + (entry.player.getAbilityModifier?.('dexterity') || 0);
+            return {
+                entry,
+                initiative,
+                snapshot: this._combatParticipantSnapshot(entry.id, 'player', entry.name, entry.player, initiative)
+            };
+        });
+        const npcInitiative = rollDice('1d20').total;
+        const firstActor = String(options.actorId || partyParticipants[0]?.entry.id || player.name || 'player');
+        const combatId = `combat:${this.currentTimeMinutes}:${Date.now()}`;
+
+        this.combatState = {
+            version: 1,
+            id: combatId,
+            status: 'active',
+            round: 1,
+            locationId: player.locationId,
+            activeActorId: firstActor,
+            partyPlayerIds: partyParticipants.map(item => item.entry.id),
+            targetId: target.id,
+            participants: [
+                ...partyParticipants.map(item => item.snapshot),
+                this._combatParticipantSnapshot(target.id, 'npc', target.name, target, npcInitiative)
+            ],
+            log: [],
+            startedAtGameTime: this.currentTimeMinutes,
+            endedAtGameTime: null,
+            summary: null
+        };
+        return {
+            success: true,
+            message: `Walka rozpoczęła się: ${target.name}.`,
+            combatState: this.getCombatState()
+        };
+    }
+
+    getCombatAttackCheck(player, targetId = this.combatState?.targetId) {
+        if (!player || this.combatState?.status !== 'active') return null;
+        const target = this.npcs.get(String(targetId || ''));
+        if (!target || target.isAlive === false || target.locationId !== player.locationId) return null;
+        const modifier = (player.getAbilityModifier?.('strength') || 0)
+            + (Number.isFinite(player.proficiencyBonus) ? player.proficiencyBonus : 2);
+        const difficulty = this._getNpcArmorClass(target);
+        return {
+            kind: 'attack',
+            combatMode: true,
+            ability: 'strength',
+            skill: 'attack',
+            label: `Atak: ${target.name}`,
+            targetId: target.id,
+            targetName: target.name,
+            difficulty,
+            modifier,
+            reason: `Pancerz celu: ${difficulty}`
+        };
+    }
+
+    _syncCombatParticipants(player, target, actorId = this.combatState?.activeActorId) {
+        if (!this.combatState) return;
+        const entities = new Map([
+            [String(this.combatState.targetId), { type: 'npc', name: target?.name, value: target }],
+            [String(actorId || player?.name || 'player'), { type: 'player', name: player?.name, value: player }]
+        ]);
+        for (const participant of this.combatState.participants || []) {
+            const entity = entities.get(String(participant.id));
+            if (!entity?.value) continue;
+            const value = entity.value;
+            participant.name = String(entity.name || value.name || participant.name);
+            participant.hp = Math.max(0, Math.floor(Number(value.hp) || 0));
+            participant.maxHp = Math.max(1, Math.floor(Number(value.maxHp) || participant.maxHp || 1));
+            participant.downed = entity.type === 'player' ? value.isDowned === true : value.isAlive === false;
+            participant.armorClass = entity.type === 'player'
+                ? Math.max(1, Math.floor(value.getArmorClass?.() || participant.armorClass || 10))
+                : this._getNpcArmorClass(value);
+        }
+    }
+
+    _appendCombatLog(entry) {
+        if (!this.combatState) return;
+        this.combatState.log = Array.isArray(this.combatState.log) ? this.combatState.log : [];
+        this.combatState.log.push({ ...entry, round: this.combatState.round });
+        if (this.combatState.log.length > 40) this.combatState.log = this.combatState.log.slice(-40);
+    }
+
+    _resolveNpcCombatTurn(target, player) {
+        const attackRoll = rollDice('1d20').total;
+        const attackBonus = Math.max(0, Math.floor(Number(target?.attack) || 0) - 5);
+        const difficulty = Math.max(1, Math.floor(player?.getArmorClass?.() || 10));
+        const total = attackRoll + attackBonus;
+        const criticalSuccess = attackRoll === 20;
+        const criticalFailure = attackRoll === 1;
+        const hit = criticalSuccess || (!criticalFailure && total >= difficulty);
+        const changes = [new WorldChange(
+            'combat_npc_attack',
+            target?.id || 'npc',
+            { roll: attackRoll, bonus: attackBonus, total, difficulty, hit },
+            hit
+                ? `${target.name} trafia w ${player.name} (${attackRoll} + ${attackBonus} przeciwko ${difficulty}).`
+                : `${target.name} nie trafia (${attackRoll} + ${attackBonus} przeciwko ${difficulty}).`,
+            'local'
+        )];
+        let damage = 0;
+        let damageRoll = null;
+        if (hit) {
+            damageRoll = this._rollNpcDamage(target, player);
+            damage = damageRoll.total;
+            player.hp = Math.max(0, player.hp - damage);
+            changes.push(new WorldChange(
+                'player_damaged',
+                player.name,
+                -damage,
+                `${target.name} zadaje ${damage} obrażeń (${damageRoll.notation}).`,
+                'local'
+            ));
+            if (player.hp <= 0) {
+                player.isDowned = true;
+                changes.push(new WorldChange('player_downed', player.name, true, 'Postać zostaje powalona.', 'local'));
+            }
+        }
+        return {
+            changes,
+            entry: {
+                actorId: target?.id || 'npc',
+                actorName: target?.name || 'Przeciwnik',
+                action: 'attack',
+                roll: attackRoll,
+                total,
+                difficulty,
+                success: hit,
+                damage,
+                targetId: player?.name || 'player',
+                targetName: player?.name || 'Gracz',
+                text: hit ? `${target.name} trafia za ${damage}.` : `${target.name} pudłuje.`
+            }
+        };
+    }
+
+    _finishCombat(player, target, outcome) {
+        if (!this.combatState) return null;
+        const rewardGold = Math.max(0, Math.floor(Number(target?.goldReward) || 0));
+        const rewardXp = Math.max(0, Math.floor(Number(target?.xpReward) || 0));
+        const summary = {
+            outcome,
+            targetId: target?.id || null,
+            targetName: target?.name || 'przeciwnik',
+            locationId: this.combatState.locationId,
+            rounds: this.combatState.round,
+            playerName: player?.name || 'Gracz',
+            playerHp: Math.max(0, Math.floor(Number(player?.hp) || 0)),
+            playerMaxHp: Math.max(1, Math.floor(Number(player?.maxHp) || 1)),
+            rewardGold,
+            rewardXp,
+            text: outcome === 'victory'
+                ? `Walka zakończona zwycięstwem nad ${target?.name || 'przeciwnikiem'}. Zdobyto ${rewardXp} XP${rewardGold ? ` i ${rewardGold} złota` : ''}.`
+                : outcome === 'downed'
+                    ? `${player?.name || 'Gracz'} został powalony w walce z ${target?.name || 'przeciwnikiem'}.`
+                    : `Walka z ${target?.name || 'przeciwnikiem'} została zakończona.`
+        };
+        this.combatState.status = 'completed';
+        this.combatState.outcome = outcome;
+        this.combatState.activeActorId = null;
+        this.combatState.endedAtGameTime = this.currentTimeMinutes;
+        this.combatState.summary = summary;
+        return summary;
+    }
+
+    resolveCombatAction(action, player, check, rollValue, actorId = null) {
+        if (!this.combatState || this.combatState.status !== 'active') {
+            return new ActionResult(false, 'Brak aktywnej walki.', 1);
+        }
+        const expectedActorId = String(this.combatState.activeActorId || '');
+        if (actorId && expectedActorId && String(actorId) !== expectedActorId) {
+            return new ActionResult(false, 'To nie jest tura tej postaci.', 1);
+        }
+        const target = this.npcs.get(String(this.combatState.targetId || check?.targetId || ''));
+        if (!target || target.isAlive === false) {
+            const result = new ActionResult(false, 'Przeciwnik nie jest już dostępny.', 1);
+            result.combatState = this.getCombatState();
+            return result;
+        }
+        if (player.isDowned) return new ActionResult(false, 'Postać jest powalona.', 1);
+        if (player.stamina < 5) return new ActionResult(false, 'Brakuje ci staminy na atak.', 1);
+        const combatCheck = { ...(check || this.getCombatAttackCheck(player, target.id)), combatMode: true, kind: 'attack', targetId: target.id };
+        const result = this.resolveD20Action(action, player, combatCheck, rollValue);
+        const npcChanges = [];
+        const playerRoll = result.worldChanges?.find(change => change.type === 'd20_rolled')?.delta || {};
+        this._appendCombatLog({
+            actorId: actorId || expectedActorId || player.name,
+            actorName: player.name,
+            action: 'attack',
+            roll: playerRoll.roll || rollValue,
+            total: playerRoll.total || null,
+            difficulty: playerRoll.difficulty || combatCheck.difficulty,
+            success: result.success === true,
+            damage: result.worldChanges?.find(change => change.type === 'combat_happened')?.delta || 0,
+            targetId: target.id,
+            targetName: target.name,
+            text: result.message
+        });
+
+        let combatSummary = null;
+        if (target.isAlive === false) {
+            combatSummary = this._finishCombat(player, target, 'victory');
+        } else if (player.isDowned) {
+            combatSummary = this._finishCombat(player, target, 'downed');
+        } else {
+            const npcTurn = this._resolveNpcCombatTurn(target, player);
+            result.worldChanges.push(...npcTurn.changes);
+            npcChanges.push(...npcTurn.changes);
+            this._appendCombatLog(npcTurn.entry);
+            if (player.isDowned) {
+                combatSummary = this._finishCombat(player, target, 'downed');
+            } else {
+                const partyIds = this.combatState.partyPlayerIds || [expectedActorId];
+                const index = Math.max(0, partyIds.indexOf(expectedActorId));
+                const nextIndex = (index + 1) % partyIds.length;
+                this.combatState.activeActorId = partyIds[nextIndex] || expectedActorId;
+                if (nextIndex === 0) this.combatState.round += 1;
+            }
+        }
+        this._syncCombatParticipants(player, target, actorId || expectedActorId);
+        if (combatSummary) this.recordCombatSummary(combatSummary);
+        result.combatState = this.getCombatState();
+        result.combatSummary = combatSummary;
+        for (const change of npcChanges) this.logWorldChange(change);
+        return result;
+    }
+
+    recordCombatSummary(summary) {
+        if (!summary?.text) return false;
+        this.recordPlayerAction('combat_summary', {
+            description: summary.text,
+            scope: 'local',
+            delta: {
+                outcome: summary.outcome,
+                targetId: summary.targetId,
+                rewardGold: summary.rewardGold,
+                rewardXp: summary.rewardXp
+            }
+        });
+        return true;
+    }
+
     /**
      * Resolve an action after the server-authoritative d20 roll is complete.
      * The narrator receives this result later; it cannot invent a hit, damage
@@ -2196,17 +2500,23 @@ class World {
                 for (const change of result.worldChanges) this.logWorldChange(change);
                 return result;
             }
-            const retaliationRoll = this._rollNpcDamage(target, player);
-            const retaliation = retaliationRoll.total;
-            player.hp = Math.max(0, player.hp - retaliation);
-            changes.push(new WorldChange('player_damaged', player.name, -retaliation, `${target.name} unika i kontratakuje za ${retaliation} HP (${retaliationRoll.notation}).`, 'local'));
-            if (player.hp <= 0) {
-                player.isDowned = true;
-                changes.push(new WorldChange('player_downed', player.name, true, 'Postać zostaje powalona.', 'local'));
+            // The separate combat panel resolves the defender's turn itself.
+            // Legacy narrator actions retain the old immediate retaliation.
+            if (!check.combatMode) {
+                const retaliationRoll = this._rollNpcDamage(target, player);
+                const retaliation = retaliationRoll.total;
+                player.hp = Math.max(0, player.hp - retaliation);
+                changes.push(new WorldChange('player_damaged', player.name, -retaliation, `${target.name} unika i kontratakuje za ${retaliation} HP (${retaliationRoll.notation}).`, 'local'));
+                if (player.hp <= 0) {
+                    player.isDowned = true;
+                    changes.push(new WorldChange('player_downed', player.name, true, 'Postać zostaje powalona.', 'local'));
+                }
             }
             const result = new ActionResult(false, player.isDowned
                 ? `Nie trafiasz ${target.name}; kontratak powala twoją postać.`
-                : `Nie trafiasz ${target.name}; przeciwnik robi unik i kontratakuje.`, 2, changes);
+                : check.combatMode
+                    ? `Nie trafiasz ${target.name}.`
+                    : `Nie trafiasz ${target.name}; przeciwnik robi unik i kontratakuje.`, 2, changes);
             this.advanceWorldTimeForPlayer(player, result.timeCostMinutes);
             for (const change of result.worldChanges) this.logWorldChange(change);
             return result;
@@ -3862,7 +4172,8 @@ class World {
             actionCountSinceLastCompression: this.actionCountSinceLastCompression,
             currentNpcMemory: Object.fromEntries(this.currentNpcMemory),
             narrativeMemory: this.narrativeMemory ? this.narrativeMemory.toJSON() : new NarrativeMemory().toJSON(),
-            questDefinitions: this.questDefinitions
+            questDefinitions: this.questDefinitions,
+            combatState: this.getCombatState()
         };
     }
 
@@ -3997,6 +4308,14 @@ class World {
             ? { ...json.memoryStatus }
             : null;
         world.questDefinitions = Array.isArray(json.questDefinitions) ? json.questDefinitions : [];
+        if (json.combatState && typeof json.combatState === 'object') {
+            const combat = scenarioSafeValue(json.combatState) || null;
+            if (combat && ['active', 'completed'].includes(combat.status)) {
+                combat.participants = Array.isArray(combat.participants) ? combat.participants.slice(0, 16) : [];
+                combat.log = Array.isArray(combat.log) ? combat.log.slice(-40) : [];
+                world.combatState = combat;
+            }
+        }
         
         return world;
     }

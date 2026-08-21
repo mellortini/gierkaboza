@@ -451,6 +451,43 @@ function testCombatDiceDownedAndLoot() {
     assert.strictEqual(restored.player.isDowned, false);
 }
 
+function testSeparateCombatModeRoundTrip() {
+    const world = World.createStarterWorld('Separate Combat Tester', 'town_central');
+    const player = world.player;
+    const target = world.getNPC('npc_forest_bandit');
+    player.locationId = 'forest_entrance';
+    target.hp = 1000;
+    target.maxHp = 1000;
+    target.armorClass = 11;
+    target.attack = 0;
+
+    const started = world.startCombat(player, target.id, {
+        actorId: 'player:separate',
+        partyMembers: [{ id: 'player:separate', name: player.name, player }]
+    });
+    assert.strictEqual(started.success, true);
+    assert.strictEqual(started.combatState.status, 'active');
+    assert.strictEqual(started.combatState.activeActorId, 'player:separate');
+
+    const check = world.getCombatAttackCheck(player, target.id);
+    assert.strictEqual(check.combatMode, true);
+    const result = world.resolveCombatAction('atak bandyta', player, check, 20, 'player:separate');
+    assert.strictEqual(result.success, true);
+    assert.ok(target.hp < 1000);
+    assert.ok(result.combatState.log.length >= 2, 'log should contain player and NPC turns');
+    assert.strictEqual(result.combatSummary, null);
+
+    target.hp = 1;
+    const finished = world.resolveCombatAction('atak bandyta', player, check, 20, 'player:separate');
+    assert.strictEqual(finished.combatSummary.outcome, 'victory');
+    assert.match(finished.combatSummary.text, /Walka zakończona zwycięstwem/);
+
+    const restored = World.fromJSON(JSON.parse(JSON.stringify(world.toJSON())));
+    assert.strictEqual(restored.combatState.status, 'completed');
+    assert.strictEqual(restored.combatState.targetId, target.id);
+    assert.ok(restored.combatState.participants.some(participant => participant.type === 'npc'));
+}
+
 function testStructuredBlueprintWorld() {
     const blueprint = {
         version: 1,
@@ -767,6 +804,7 @@ testEquipmentAndItemPersistence();
 testExpandedEquipmentCatalog();
 testMerchantGoldWeightAndRoundTrip();
 testCombatDiceDownedAndLoot();
+testSeparateCombatModeRoundTrip();
 testNaturalTravelFormsAndUnknownDestination();
 testSandboxCreatesAndPersistsFreeformLocations();
 testNpcNameDiscoveryAndPersistence();

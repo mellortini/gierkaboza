@@ -1992,6 +1992,154 @@ button {
     to { transform: translateY(-2px) rotate(1deg); }
 }
 
+.combat-panel {
+    display: grid;
+    gap: 12px;
+    margin: 0 0 16px;
+    padding: 15px;
+    background: linear-gradient(135deg, rgba(46, 20, 32, 0.96), rgba(18, 25, 42, 0.96));
+    border: 1px solid rgba(255, 103, 112, 0.65);
+    border-radius: 12px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+
+.combat-panel-header,
+.combat-participant-top,
+.combat-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.combat-panel-kicker {
+    margin: 0 0 3px;
+    color: #ffbd72;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.combat-panel h3 {
+    margin: 0;
+    color: #fff4ea;
+}
+
+.combat-round {
+    color: #ffd166;
+    font-size: 0.78rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.combat-participants {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.combat-participant {
+    padding: 9px 10px;
+    background: rgba(4, 13, 24, 0.54);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 9px;
+}
+
+.combat-participant.combat-enemy {
+    border-color: rgba(255, 103, 112, 0.38);
+}
+
+.combat-participant.combat-active-turn {
+    outline: 1px solid rgba(255, 209, 102, 0.9);
+    box-shadow: 0 0 0 2px rgba(255, 209, 102, 0.12);
+}
+
+.combat-participant-top strong {
+    overflow: hidden;
+    color: var(--text-main);
+    font-size: 0.83rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.combat-participant-top span,
+.combat-participant small {
+    color: var(--text-soft);
+    font-size: 0.72rem;
+}
+
+.combat-hp-track {
+    height: 6px;
+    margin: 7px 0 4px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 99px;
+}
+
+.combat-hp-track span {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, #ff6670, #ffbd72);
+    border-radius: inherit;
+    transition: width 0.25s ease;
+}
+
+.combat-ally .combat-hp-track span {
+    background: linear-gradient(90deg, #24c8a5, #82e8c6);
+}
+
+.combat-log {
+    display: grid;
+    gap: 5px;
+    max-height: 150px;
+    padding: 8px;
+    overflow: auto;
+    background: rgba(0, 0, 0, 0.18);
+    border-radius: 8px;
+}
+
+.combat-log-entry {
+    display: grid;
+    grid-template-columns: 28px 1fr;
+    gap: 7px;
+    color: var(--text-soft);
+    font-size: 0.77rem;
+}
+
+.combat-log-entry > span {
+    color: #ffd166;
+    font-weight: 800;
+}
+
+.combat-log-entry p,
+.combat-log-empty,
+.combat-summary {
+    margin: 0;
+}
+
+.combat-log-entry strong {
+    color: var(--text-main);
+}
+
+.combat-log-empty,
+.combat-summary {
+    color: var(--text-soft);
+    font-size: 0.78rem;
+}
+
+.combat-summary {
+    min-height: 1.1em;
+    color: #ffe3a1;
+}
+
+.combat-summary.combat-error {
+    color: #ff9ba1;
+}
+
+.combat-actions {
+    justify-content: flex-end;
+}
+
 .player-stats-panel {
     margin: 0 0 16px;
     background: rgba(4, 13, 24, 0.58);
@@ -2535,6 +2683,19 @@ button {
     }
 
     .d20-button {
+        width: 100%;
+    }
+
+    .combat-participants {
+        grid-template-columns: 1fr;
+    }
+
+    .combat-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .combat-actions button {
         width: 100%;
     }
 

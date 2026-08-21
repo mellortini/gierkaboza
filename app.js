@@ -35,6 +35,9 @@ const state = {
     multiplayerListenersSetup: false,
     multiplayerGameStarted: false,
     pendingRoll: null,
+    combatState: null,
+    pendingCombatRoll: null,
+    combatError: '',
     pendingRoomData: null,
     lobbyFallbackTimer: null,
     merchantFilter: 'all',
@@ -219,6 +222,14 @@ const elements = {
     d20Description: document.getElementById('d20-description'),
     d20Result: document.getElementById('d20-result'),
     rollD20Btn: document.getElementById('roll-d20'),
+    combatPanel: document.getElementById('combat-panel'),
+    combatTitle: document.getElementById('combat-title'),
+    combatRound: document.getElementById('combat-round'),
+    combatParticipants: document.getElementById('combat-participants'),
+    combatLog: document.getElementById('combat-log'),
+    combatSummary: document.getElementById('combat-summary'),
+    combatAttackBtn: document.getElementById('combat-attack'),
+    combatRollBtn: document.getElementById('combat-roll-d20'),
     savedGamesSection: document.getElementById('saved-games-section'),
     savedGamesList: document.getElementById('saved-games-list'),
     saveSlotFromMenuBtn: document.getElementById('save-slot-from-menu'),
@@ -643,6 +654,8 @@ async function init() {
     // Event listeners - Gra
     on(elements.sendActionBtn, 'click', sendAction);
     on(elements.rollD20Btn, 'click', rollD20);
+    on(elements.combatAttackBtn, 'click', requestCombatAttack);
+    on(elements.combatRollBtn, 'click', rollCombatD20);
     on(elements.playerStats, 'click', handleStatPanelClick);
     on(elements.equipmentSlots, 'click', handleInventoryClick);
     on(elements.inventoryGrid, 'click', handleInventoryClick);
@@ -982,6 +995,7 @@ function connectToServer(serverUrl) {
                 updateMultiplayerStatus('Utracono połączenie z pokojem. Łączę ponownie...', 'error');
                 state.isMultiplayer = false;
                 state.pendingRoll = null;
+                state.pendingCombatRoll = null;
             });
             
             // Ponowne dołączenie do pokoju
@@ -989,6 +1003,7 @@ function connectToServer(serverUrl) {
                 console.log('Room rejoined:', data);
                 state.isMultiplayer = true;
                 state.pendingRoll = null;
+                state.pendingCombatRoll = null;
                 state.roomId = data.roomId;
                 state.playerId = data.playerId;
                 state.playerName = data.playerName;
@@ -1006,6 +1021,7 @@ function connectToServer(serverUrl) {
                 if (data.worldState) {
                     try {
                         state.world = World.fromJSON(data.worldState);
+                        state.combatState = data?.combatState || state.world.combatState || null;
                         updateGameHUD();
                     } catch (error) {
                         console.error('Error restoring rejoined world:', error);
@@ -1156,6 +1172,8 @@ async function joinRoom(serverUrl, roomId, options = {}) {
             state.isMultiplayer = true;
             state.multiplayerGameStarted = false;
             state.pendingRoll = null;
+            state.pendingCombatRoll = null;
+            state.combatError = '';
             state.pendingRoomData = data;
             state.lobby.active = true;
             state.lobby.supported = false;
@@ -1572,6 +1590,8 @@ function startMultiplayerGame(roomData) {
     if (state.multiplayerGameStarted) return;
     state.multiplayerGameStarted = true;
     state.pendingRoll = null;
+    state.pendingCombatRoll = null;
+    state.combatError = '';
     if (elements.d20Panel) elements.d20Panel.classList.add('hidden');
     state.lobby.active = false;
     if (state.lobbyFallbackTimer) window.clearTimeout(state.lobbyFallbackTimer);
@@ -1603,9 +1623,11 @@ function startMultiplayerGame(roomData) {
         state.world = roomData.worldState
             ? World.fromJSON(roomData.worldState)
             : World.createStarterWorld(characterData.name, 'town_central');
+        state.combatState = roomData?.combatState || state.world.combatState || null;
     } catch (error) {
         console.error('Error restoring multiplayer world:', error);
         state.world = World.createStarterWorld(characterData.name, 'town_central');
+        state.combatState = null;
     }
     
     // Initialize game state for LLM
@@ -1730,6 +1752,16 @@ function setupMultiplayerListeners() {
 
     state.socket.on('merchantError', (data) => {
         addStoryEntry('system', `⚠️ ${data?.message || 'Nie udało się wykonać transakcji.'}`);
+    });
+
+    // Walka jest osobnym modułem: aktualizuje wyłącznie panel i stan świata.
+    state.socket.on('combatStarted', handleCombatSnapshot);
+    state.socket.on('combatStateUpdated', handleCombatSnapshot);
+    state.socket.on('combatRollRequested', handleCombatRollRequested);
+    state.socket.on('combatRollResolved', handleCombatRollResolved);
+    state.socket.on('combatError', (data) => {
+        state.combatError = data?.message || 'Nie udało się wykonać akcji walki.';
+        renderCombatPanel(state.combatState || state.world?.combatState);
     });
 
     state.socket.on('rollRequested', handleRollRequested);
@@ -1860,6 +1892,158 @@ function handleRollResolved(data) {
         elements.rollD20Btn.classList.remove('d20-button-rolling');
     }
     addStoryEntry('system', `🎲 ${data.playerName || 'Gracz'}: ${data.value} ${formatSignedNumber(data.modifier)} = ${total} (${successText}).`);
+}
+
+function getActiveCombatState() {
+    return state.combatState || state.world?.combatState || null;
+}
+
+function handleCombatSnapshot(data) {
+    if (data?.worldState) {
+        try {
+            state.world = World.fromJSON(data.worldState);
+        } catch (error) {
+            console.error('Error restoring combat snapshot:', error);
+        }
+    }
+    state.combatState = data?.combatState || state.world?.combatState || null;
+    state.combatError = '';
+    updateGameHUD();
+    renderCombatPanel(state.combatState);
+}
+
+function handleCombatRollRequested(data) {
+    if (!data?.rollId) return;
+    state.pendingCombatRoll = data;
+    state.combatError = '';
+    renderCombatPanel(getActiveCombatState());
+}
+
+function handleCombatRollResolved(data) {
+    if (!data?.rollId) return;
+    if (data.rollId === state.pendingCombatRoll?.rollId) state.pendingCombatRoll = null;
+    if (data?.worldState) {
+        try {
+            state.world = World.fromJSON(data.worldState);
+        } catch (error) {
+            console.error('Error applying combat result:', error);
+        }
+    }
+    state.combatState = data?.combatState || state.world?.combatState || null;
+    state.combatError = '';
+    updateGameHUD();
+    renderCombatPanel(state.combatState);
+}
+
+function requestCombatAttack() {
+    const combat = getActiveCombatState();
+    if (!combat || combat.status !== 'active') return;
+    const expectedActor = String(combat.activeActorId || '');
+    const localActor = state.isMultiplayer ? String(state.playerId || '') : 'local';
+    if (expectedActor && expectedActor !== localActor) {
+        state.combatError = 'Poczekaj na swoją turę.';
+        renderCombatPanel(combat);
+        return;
+    }
+    if (state.pendingCombatRoll) return;
+
+    if (state.isMultiplayer && state.socket) {
+        state.socket.emit('combatAction', { kind: 'attack' });
+        return;
+    }
+    const check = state.world?.getCombatAttackCheck?.(state.world.player, combat.targetId);
+    if (!check) {
+        state.combatError = 'Cel walki nie jest już dostępny.';
+        renderCombatPanel(combat);
+        return;
+    }
+    state.pendingCombatRoll = { ...check, rollId: `local-combat:${Date.now()}`, playerId: 'local' };
+    state.combatError = '';
+    renderCombatPanel(combat);
+}
+
+function rollCombatD20() {
+    const pending = state.pendingCombatRoll;
+    if (!pending) return;
+    const localActor = state.isMultiplayer ? String(state.playerId || '') : 'local';
+    if (String(pending.playerId) !== localActor) return;
+    if (state.isMultiplayer && state.socket) {
+        if (elements.combatRollBtn) {
+            elements.combatRollBtn.disabled = true;
+            elements.combatRollBtn.textContent = '🎲 Losowanie...';
+        }
+        state.socket.emit('combatRoll', { rollId: pending.rollId });
+        return;
+    }
+
+    const value = Math.floor(Math.random() * 20) + 1;
+    const result = state.world?.resolveCombatAction?.(
+        `atak ${pending.targetName || ''}`,
+        state.world.player,
+        pending,
+        value,
+        'local'
+    );
+    state.pendingCombatRoll = null;
+    if (result?.combatState) state.combatState = result.combatState;
+    updateGameHUD();
+    renderCombatPanel(state.combatState);
+}
+
+function renderCombatPanel(combat = getActiveCombatState()) {
+    if (!elements.combatPanel) return;
+    if (!combat || !['active', 'completed'].includes(combat.status)) {
+        elements.combatPanel.classList.add('hidden');
+        return;
+    }
+    elements.combatPanel.classList.remove('hidden');
+    const target = (combat.participants || []).find(participant => participant.type === 'npc')
+        || { name: 'Przeciwnik', hp: 0, maxHp: 1 };
+    if (elements.combatTitle) elements.combatTitle.textContent = `⚔️ ${target.name}`;
+    if (elements.combatRound) elements.combatRound.textContent = combat.status === 'active'
+        ? `Runda ${combat.round || 1}`
+        : 'Walka zakończona';
+
+    if (elements.combatParticipants) {
+        elements.combatParticipants.innerHTML = (combat.participants || []).map(participant => {
+            const hp = Math.max(0, Number(participant.hp) || 0);
+            const maxHp = Math.max(1, Number(participant.maxHp) || 1);
+            const ratio = Math.max(0, Math.min(100, Math.round((hp / maxHp) * 100)));
+            const isActive = String(participant.id) === String(combat.activeActorId || '');
+            return `<div class="combat-participant ${participant.type === 'npc' ? 'combat-enemy' : 'combat-ally'} ${isActive ? 'combat-active-turn' : ''}">
+                <div class="combat-participant-top"><strong>${escapeHtml(participant.name || 'Postać')}</strong><span>${hp}/${maxHp} HP</span></div>
+                <div class="combat-hp-track"><span style="width:${ratio}%"></span></div>
+                <small>${participant.downed ? 'Powalony' : isActive ? 'Następna tura' : participant.type === 'npc' ? 'Przeciwnik' : 'Drużyna'}${Number.isFinite(Number(participant.initiative)) ? ` • inicjatywa ${participant.initiative}` : ''}</small>
+            </div>`;
+        }).join('');
+    }
+
+    if (elements.combatLog) {
+        const entries = Array.isArray(combat.log) ? combat.log.slice(-8) : [];
+        elements.combatLog.innerHTML = entries.length > 0
+            ? entries.map(entry => `<div class="combat-log-entry"><span>R${entry.round || 1}</span><p><strong>${escapeHtml(entry.actorName || 'Postać')}</strong> — ${escapeHtml(entry.text || '')}</p></div>`).join('')
+            : '<p class="combat-log-empty">Walka rozpoczęta. Wybierz działanie.</p>';
+    }
+    if (elements.combatSummary) {
+        const summary = combat.summary?.text || '';
+        elements.combatSummary.textContent = state.combatError || summary;
+        elements.combatSummary.classList.toggle('combat-error', Boolean(state.combatError));
+    }
+
+    const localActor = state.isMultiplayer ? String(state.playerId || '') : 'local';
+    const isMyTurn = combat.status === 'active' && String(combat.activeActorId || '') === localActor;
+    if (elements.combatAttackBtn) {
+        elements.combatAttackBtn.disabled = !isMyTurn || Boolean(state.pendingCombatRoll);
+        elements.combatAttackBtn.textContent = isMyTurn ? '⚔️ Atak' : '⏳ Tura gracza';
+    }
+    if (elements.combatRollBtn) {
+        const hasMyRoll = state.pendingCombatRoll && String(state.pendingCombatRoll.playerId) === localActor;
+        elements.combatRollBtn.classList.toggle('hidden', !hasMyRoll);
+        elements.combatRollBtn.disabled = !hasMyRoll;
+        if (hasMyRoll && elements.combatRollBtn.textContent.includes('Losowanie') === false) {
+            elements.combatRollBtn.textContent = `🎲 Rzuć d20 (${state.pendingCombatRoll.difficulty})`;
+        }
+    }
 }
 
 const STAT_LABELS = Object.freeze({
@@ -3260,6 +3444,9 @@ async function startGame() {
     state.isMultiplayer = false;
     state.multiplayerGameStarted = false;
     state.pendingRoll = null;
+    state.combatState = null;
+    state.pendingCombatRoll = null;
+    state.combatError = '';
     if (elements.d20Panel) elements.d20Panel.classList.add('hidden');
     cancelNarrativeConsolidation();
     // Zbierz dane postaci
@@ -3750,6 +3937,7 @@ function updateGameHUD() {
     updateSurvivalWarnings(player);
     updateMemoryStatus(world);
     renderCampaignSidebar();
+    renderCombatPanel(state.combatState || world.combatState);
 }
 
 function updateMemoryStatus(world = state.world) {
@@ -3820,6 +4008,34 @@ function resolveTradeItemFromAction(actionText) {
         }) || null;
 }
 
+function isClientCombatIntent(actionText) {
+    return /\b(atak|atakuję|atakuje|uderz|cios|walcz|zabij|strzel|dźg|dzg|pchn|biję|bije|napad|nacier|szarż|szarz|kop|rzucam się|rzucam sie|fight|attack|punch|hit|shoot|stab)\w*/i.test(String(actionText || ''));
+}
+
+function startLocalCombatFromAction(action) {
+    if (!state.world?.startCombat || !state.world.player) return;
+    const player = state.world.player;
+    const target = state.world._findNpcInAction?.(String(action || '').toLocaleLowerCase('pl-PL'), player, true);
+    if (!target) {
+        state.combatError = 'Nie znaleziono przeciwnika w tej lokacji.';
+        renderCombatPanel(state.combatState);
+        return;
+    }
+    const started = state.world.startCombat(player, target.id, {
+        actorId: 'local',
+        partyMembers: [{ id: 'local', name: player.name, player }]
+    });
+    if (!started.success) {
+        state.combatError = started.message || 'Nie udało się rozpocząć walki.';
+        renderCombatPanel(state.world.combatState);
+        return;
+    }
+    state.combatState = started.combatState;
+    state.pendingCombatRoll = null;
+    state.combatError = '';
+    updateGameHUD();
+}
+
 // Wysłanie akcji gracza
 async function sendAction() {
     const action = elements.playerAction.value.trim();
@@ -3839,6 +4055,25 @@ async function sendAction() {
     const tradeItem = merchant && tradeKind ? resolveTradeItemFromAction(action) : null;
     if (merchant && tradeKind && tradeItem) {
         await executeInventoryAction(tradeKind, tradeItem.id);
+        return;
+    }
+
+    if (state.world?.combatState?.status === 'active') {
+        if (isClientCombatIntent(action)) requestCombatAttack();
+        else {
+            state.combatError = 'Walka trwa — użyj panelu walki.';
+            renderCombatPanel(state.world.combatState);
+        }
+        return;
+    }
+
+    // Atak rozpoczyna osobną potyczkę. Nie trafia do czatu ani do narratora.
+    if (isClientCombatIntent(action)) {
+        if (state.isMultiplayer && state.socket) {
+            state.socket.emit('combatAction', { kind: 'start', action });
+        } else {
+            startLocalCombatFromAction(action);
+        }
         return;
     }
     
