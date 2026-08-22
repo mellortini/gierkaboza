@@ -403,7 +403,7 @@ function rollDice(value, fallback = '1d4') {
 
 // Scenario blueprints are authored content, not simulation state. Keep them
 // deliberately bounded and JSON-safe before putting them in a world/save.
-const SCENARIO_FIELDS = ['id', 'title', 'pitch', 'tone', 'activeAct', 'directorBrief', 'acts', 'mainArc', 'sideQuests', 'npcs', 'factions', 'choices', 'multiplayerHooks', 'endings', 'antiRailroadingRules'];
+const SCENARIO_FIELDS = ['id', 'title', 'pitch', 'tone', 'activeAct', 'directorBrief', 'acts', 'mainArc', 'sideQuests', 'npcs', 'factions', 'choices', 'encounters', 'sceneBeats', 'multiplayerHooks', 'endings', 'antiRailroadingRules'];
 
 function scenarioSafeValue(value, depth = 0) {
     if (depth > 6 || value === undefined || typeof value === 'function' || typeof value === 'symbol') return undefined;
@@ -4387,7 +4387,7 @@ class World {
                 return withoutName;
             });
         }
-        const fields = ['id', 'title', 'pitch', 'tone', 'directorBrief', 'acts', 'mainArc', 'sideQuests', 'npcs', 'factions', 'choices', 'multiplayerHooks', 'endings', 'antiRailroadingRules'];
+        const fields = ['id', 'title', 'pitch', 'tone', 'directorBrief', 'acts', 'mainArc', 'sideQuests', 'npcs', 'factions', 'choices', 'encounters', 'sceneBeats', 'multiplayerHooks', 'endings', 'antiRailroadingRules'];
         const lines = ['SCENARIO'];
         for (const field of fields) {
             if (scenario[field] !== undefined) lines.push(`${field}: ${JSON.stringify(scenario[field])}`);

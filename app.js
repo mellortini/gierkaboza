@@ -178,7 +178,6 @@ const elements = {
     worldComplexity: document.getElementById('world-complexity'),
     generateWorldPlanBtn: document.getElementById('generate-world-plan'),
     regeneratePlanBtn: document.getElementById('regenerate-plan'),
-    loadScenarioPopiolyBtn: document.getElementById('load-scenario-popioly'),
     readyScenario: document.getElementById('ready-scenario'),
     loadReadyScenarioBtn: document.getElementById('load-ready-scenario'),
     readyScenarioHelp: document.getElementById('ready-scenario-help'),
@@ -602,7 +601,6 @@ async function init() {
     });
     on(elements.generateWorldPlanBtn, 'click', generateWorldPlan);
     on(elements.regeneratePlanBtn, 'click', generateWorldPlan);
-    on(elements.loadScenarioPopiolyBtn, 'click', loadPopiolyScenario);
     on(elements.startWithWorldBtn, 'click', startGameWithWorld);
     on(elements.useCustomWorldBtn, 'click', showWorldBuilding);
     on(elements.skipWorldBuildingBtn, 'click', skipWorldBuilding);
@@ -2917,7 +2915,7 @@ Required JSON shape:
 
 // Aktualizacja podglądu świata
 async function loadScenarioFromFile(filePath) {
-    const button = elements.loadReadyScenarioBtn || elements.loadScenarioPopiolyBtn;
+    const button = elements.loadReadyScenarioBtn;
     if (!World || typeof World.validateBlueprint !== 'function') {
         alert('Silnik gry nie jest jeszcze gotowy.');
         return;
@@ -2954,10 +2952,6 @@ async function loadScenarioFromFile(filePath) {
     } finally {
         if (button) button.disabled = false;
     }
-}
-
-async function loadPopiolyScenario() {
-    return loadScenarioFromFile('/scenarios/popioly-pod-zielona-dolina.json');
 }
 
 function updateWorldPreview() {
