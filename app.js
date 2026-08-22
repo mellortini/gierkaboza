@@ -35,6 +35,7 @@ const state = {
     multiplayerListenersSetup: false,
     multiplayerGameStarted: false,
     pendingRoll: null,
+    pendingLocalMechanics: null,
     combatState: null,
     pendingCombatRoll: null,
     combatLastRoll: null,
@@ -284,6 +285,11 @@ const elements = {
     campaignAct: document.getElementById('campaign-act'),
     campaignCurrentLocation: document.getElementById('campaign-current-location'),
     campaignCurrentLocationDescription: document.getElementById('campaign-current-location-description'),
+    campaignRuntimeSection: document.getElementById('campaign-runtime-section'),
+    campaignWeather: document.getElementById('campaign-weather'),
+    campaignProject: document.getElementById('campaign-project'),
+    campaignClues: document.getElementById('campaign-clues'),
+    campaignEnding: document.getElementById('campaign-ending'),
     campaignNpcs: document.getElementById('campaign-npcs'),
     campaignExits: document.getElementById('campaign-exits'),
     campaignLocations: document.getElementById('campaign-locations'),
@@ -1885,7 +1891,41 @@ function handleRollRequested(data) {
 
 function rollD20() {
     const pending = state.pendingRoll;
-    if (!pending || pending.playerId !== state.playerId || !state.socket) return;
+    if (!pending) return;
+    if (pending.local) {
+        if (!state.world?.resolveD20Action || !state.pendingLocalMechanics) return;
+        if (elements.rollD20Btn) {
+            elements.rollD20Btn.disabled = true;
+            elements.rollD20Btn.textContent = '🎲 Losowanie...';
+            elements.rollD20Btn.classList.add('d20-button-rolling');
+        }
+        const value = Math.floor(Math.random() * 20) + 1;
+        const result = state.world.resolveD20Action(
+            state.pendingLocalMechanics.action,
+            state.world.player,
+            state.pendingLocalMechanics.check,
+            value
+        );
+        const rollId = pending.rollId;
+        const total = value + Number(pending.modifier || 0);
+        state.pendingRoll = null;
+        state.pendingLocalMechanics = null;
+        handleRollResolved({
+            rollId,
+            playerName: characterData.name,
+            value,
+            modifier: pending.modifier,
+            total,
+            difficulty: pending.difficulty,
+            label: pending.label,
+            targetName: pending.targetName || null
+        });
+        updateGameHUD();
+        renderCampaignSidebar();
+        generateStory(pending.action, { skipScenarioCheck: true, mechanicalResult: result });
+        return;
+    }
+    if (pending.playerId !== state.playerId || !state.socket) return;
     if (elements.rollD20Btn) {
         elements.rollD20Btn.disabled = true;
         elements.rollD20Btn.textContent = '🎲 Losowanie...';
@@ -3703,8 +3743,39 @@ async function startGame() {
 }
 
 // Generowanie historii przez AI
-async function generateStory(userAction = null) {
+async function generateStory(userAction = null, options = {}) {
     if (state.isLoading) return;
+    if (userAction && state.pendingRoll && !options.skipScenarioCheck) {
+        addStoryEntry('system', '🎲 Najpierw rozstrzygnij poprzednią akcję rzutem kością.');
+        return;
+    }
+
+    if (userAction && !options.skipScenarioCheck && !state.isMultiplayer && !state.testMode && state.world?.getScenarioCheckForAction) {
+        const localCheck = state.world.getScenarioCheckForAction(userAction, state.world.player);
+        if (localCheck) {
+            state.pendingLocalMechanics = { action: userAction, check: localCheck };
+            state.pendingRoll = {
+                ...localCheck,
+                rollId: `local:${Date.now()}`,
+                playerId: 'local',
+                playerName: characterData.name,
+                action: userAction,
+                local: true
+            };
+            if (elements.d20Panel) elements.d20Panel.classList.remove('hidden');
+            if (elements.d20Visual) elements.d20Visual.textContent = 'd20';
+            if (elements.d20Title) elements.d20Title.textContent = `${localCheck.label} — trudność ${localCheck.difficulty}`;
+            if (elements.d20Description) elements.d20Description.textContent = `Twoja akcja. Premia: ${formatSignedNumber(localCheck.modifier)}`;
+            if (elements.d20Result) elements.d20Result.textContent = localCheck.reason || 'Rzut rozstrzygnie akcję.';
+            if (elements.rollD20Btn) {
+                elements.rollD20Btn.disabled = false;
+                elements.rollD20Btn.textContent = '🎲 Rzuć kością';
+                elements.rollD20Btn.classList.remove('d20-button-rolling');
+            }
+            addStoryEntry('system', `🎲 ${localCheck.label}: rzuć d20, aby rozstrzygnąć akcję.`);
+            return;
+        }
+    }
 
     const requestGeneration = state.sessionGeneration;
     state.isLoading = true;
@@ -3717,7 +3788,9 @@ async function generateStory(userAction = null) {
         ? `turn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
         : null;
     if (userAction) {
-        if (state.world && typeof state.world.performPlayerAction === 'function') {
+        if (options.mechanicalResult) {
+            mechanicalResult = options.mechanicalResult;
+        } else if (state.world && typeof state.world.performPlayerAction === 'function') {
             mechanicalResult = state.world.performPlayerAction(userAction, state.world.player);
         }
         const mechanicsNote = mechanicalResult
@@ -3974,6 +4047,41 @@ function renderCampaignSidebar() {
 
     elements.campaignCurrentLocation.textContent = location?.name || world.player.locationId || '—';
     elements.campaignCurrentLocationDescription.textContent = location?.description || '';
+
+    if (elements.campaignRuntimeSection) {
+        const runtime = world.getScenarioRuntimeSnapshot?.() || null;
+        const hasRuntime = runtime && (runtime.weather?.state !== 'unknown' || Object.keys(runtime.projects || {}).length > 0 || (runtime.clues || []).length > 0);
+        elements.campaignRuntimeSection.classList.toggle('hidden', !hasRuntime);
+        if (hasRuntime) {
+            const weatherLabels = {
+                calm: 'spokojnie',
+                warning: 'ostrzeżenie przed huraganem',
+                hurricane: 'HURAGAN',
+                unknown: 'nieznana'
+            };
+            if (elements.campaignWeather) {
+                const weather = runtime.weather || {};
+                const suffix = weather.endsAt ? ` · do ${Math.floor(weather.endsAt / 60) % 24}:${String(weather.endsAt % 60).padStart(2, '0')}` : '';
+                elements.campaignWeather.textContent = `🌪️ Pogoda: ${weatherLabels[weather.state] || weather.state || '—'}${suffix}`;
+            }
+            if (elements.campaignProject) {
+                const project = runtime.projects?.drakkar_repair;
+                let projectLabel = '';
+                if (project) {
+                    if (project.status === 'completed') projectLabel = 'gotowy';
+                    else if (project.status === 'awaiting_completion') projectLabel = `prace zakończone · gotowy za ok. ${project.estimatedDays} dni`;
+                    else if (project.status === 'active') projectLabel = `${project.progress}/${project.requiredProgress} pracy · ok. ${project.estimatedDays} dni`;
+                    else projectLabel = 'nie rozpoczęto';
+                }
+                elements.campaignProject.textContent = project ? `🛶 Drakkar: ${projectLabel}` : '';
+            }
+            if (elements.campaignClues) elements.campaignClues.textContent = `🔎 Wskazówki: ${(runtime.clues || []).length}`;
+            if (elements.campaignEnding) {
+                elements.campaignEnding.textContent = runtime.ending ? `⚑ ${runtime.ending.title}` : '';
+                elements.campaignEnding.classList.toggle('hidden', !runtime.ending);
+            }
+        }
+    }
 
     if (elements.campaignNpcs) {
         const localNpcs = Array.from(world.npcs?.values?.() || [])

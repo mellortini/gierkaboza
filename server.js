@@ -704,6 +704,20 @@ function applyScenarioChoices(world, choices) {
     }
 }
 
+// Scenario state is shared by the room, while quest sheets belong to each
+// character. When a shared flag, clue, choice or project changes, reevaluate
+// every active character so multiplayer rewards do not depend on who happened
+// to trigger the last event.
+function syncScenarioObjectivesForRoom(room) {
+    const world = room?.world;
+    if (!world || typeof world._completeScenarioObjectives !== 'function') return;
+    for (const roomPlayer of room.players?.values?.() || []) {
+        const changes = [];
+        world._completeScenarioObjectives(roomPlayer.player, changes);
+        for (const change of changes) world.logWorldChange(change);
+    }
+}
+
 function getPlayerHistory(room, playerId, socketId = null) {
     if (!room.playerHistories) room.playerHistories = {};
     const stableId = boundedText(playerId, 120);
@@ -965,6 +979,13 @@ function buildD20Check(world, player, rawAction) {
             modifier: modifier + proficiency,
             reason: `Obrona celu: ${targetDefense}`
         };
+    }
+
+    // Scenario-specific checks are still server-authoritative. The campaign
+    // supplies the trigger, skill and DC; the client only requests a roll.
+    if (typeof world.getScenarioCheckForAction === 'function') {
+        const scenarioCheck = world.getScenarioCheckForAction(action, player);
+        if (scenarioCheck) return scenarioCheck;
     }
 
     const explicitCheck = /\b(test|rzut|sprawdzam|próbuję|probuje|przekon|perswad|zastrasz|skrad|ukryj|wspin|otwier|wyważ|wywaz|przeszuk|zauważ|zauwaz|nasłuch|nasluch|czaruj|rzucam czar)\w*/i.test(normalized);
@@ -1908,6 +1929,7 @@ io.on('connection', (socket) => {
             : world.performPlayerAction
                 ? world.performPlayerAction(actionForMechanics, currentPlayer)
                 : null;
+        syncScenarioObjectivesForRoom(room);
 
         // Build context for the action
         let context = '';
@@ -2125,6 +2147,7 @@ ${world.isSandbox
         const parsedNarration = extractScenarioChoiceMarkers(rawResponse);
         const response = parsedNarration.text;
         applyScenarioChoices(world, parsedNarration.choices);
+        syncScenarioObjectivesForRoom(room);
         if (typeof world.revealNpcNamesFromDialogue === 'function') {
             world.revealNpcNamesFromDialogue(action, response, currentPlayer);
         }

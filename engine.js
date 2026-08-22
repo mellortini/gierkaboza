@@ -104,6 +104,12 @@ const ITEM_CATALOG = Object.freeze({
     torch: { id: "torch", name: "Pochodnia", aliases: ["torch", "pochodnia", "pochodnie"], price: 3, weight: 0.5, type: "tool", icon: "/assets/items/torch.png", description: "Rozprasza ciemność przez kilka godzin." },
     iron_key: { id: "iron_key", name: "Żelazny klucz", aliases: ["iron key", "key", "klucz"], price: 1, weight: 0.1, type: "quest", icon: "/assets/items/iron-key.png", description: "Pasuje do zamka, którego jeszcze nie znasz." },
     moon_amulet: { id: "moon_amulet", name: "Amulet księżyca", aliases: ["moon amulet", "amulet", "księżyca", "ksiezyca"], price: 120, weight: 0.2, type: "accessory", slot: "accessory", icon: "/assets/items/moon-amulet.png", statBonuses: { wisdom: 1 }, defense: 1, description: "Chłodny kamień reagujący na szepty." },
+    life_crystal: { id: "life_crystal", name: "Kryształ Życia", aliases: ["life crystal", "kryształ życia", "krysztal zycia"], price: 0, weight: 0.2, type: "quest", icon: "/assets/items/moon-amulet.png", description: "Atlanteński kryształ podtrzymujący życie strażnika." },
+    orichalcum_collar: { id: "orichalcum_collar", name: "Orichalkowa kolia", aliases: ["orichalcum collar", "orichalkowa kolia", "kolia"], price: 0, weight: 1.5, type: "quest", icon: "/assets/items/iron-key.png", description: "Kolia związana z obowiązkiem pierwszego strażnika." },
+    poseidon_crystal: { id: "poseidon_crystal", name: "Kryształ Posejdona", aliases: ["poseidon crystal", "kryształ posejdona", "krysztal posejdona"], price: 0, weight: 0.3, type: "quest", icon: "/assets/items/moon-amulet.png", description: "Relikt Atlantów, którym uśpiono Hragmorra." },
+    atlantean_communicator: { id: "atlantean_communicator", name: "Komunikator Atlantów", aliases: ["atlantean communicator", "komunikator", "komunikator atlantów"], price: 0, weight: 0.8, type: "quest", icon: "/assets/items/iron-key.png", description: "Działające urządzenie z czasów Atlantydy." },
+    atlantean_hologram: { id: "atlantean_hologram", name: "Hologram Atlanty", aliases: ["atlantean hologram", "hologram", "wiadomość atlantów"], price: 0, weight: 0.1, type: "quest", icon: "/assets/items/moon-amulet.png", description: "Zapis wiadomości wyjaśniającej prawdziwą rolę strażnika." },
+    wind_horn: { id: "wind_horn", name: "Róg Wiatru", aliases: ["wind horn", "róg wiatru", "róg"], price: 0, weight: 18, type: "quest", icon: "/assets/items/iron-key.png", description: "Pradawny róg wywołujący huragany i narzucający obowiązek strażnika." },
 
     // Broń wojownika, szermierza i łucznika walczącego w zwarciu.
     chipped_short_sword: { id: "chipped_short_sword", name: "Wyszczerbiony krótki miecz", aliases: ["chipped short sword", "wyszczerbiony miecz", "krótki miecz"], price: 8, weight: 2.4, type: "weapon", slot: "weapon", icon: "/assets/items/chipped-short-sword.png", attack: 1, damageDice: "1d4", classTags: ["warrior"], description: "Tani złom, który pamięta więcej ucieczek niż zwycięstw." },
@@ -403,7 +409,7 @@ function rollDice(value, fallback = '1d4') {
 
 // Scenario blueprints are authored content, not simulation state. Keep them
 // deliberately bounded and JSON-safe before putting them in a world/save.
-const SCENARIO_FIELDS = ['id', 'title', 'pitch', 'tone', 'activeAct', 'directorBrief', 'acts', 'mainArc', 'sideQuests', 'npcs', 'factions', 'choices', 'encounters', 'sceneBeats', 'multiplayerHooks', 'endings', 'antiRailroadingRules'];
+const SCENARIO_FIELDS = ['id', 'title', 'pitch', 'tone', 'activeAct', 'directorBrief', 'acts', 'mainArc', 'sideQuests', 'npcs', 'factions', 'choices', 'encounters', 'sceneBeats', 'mechanics', 'multiplayerHooks', 'endings', 'antiRailroadingRules'];
 
 function scenarioSafeValue(value, depth = 0) {
     if (depth > 6 || value === undefined || typeof value === 'function' || typeof value === 'symbol') return undefined;
@@ -438,6 +444,46 @@ function normalizeScenarioDefinition(rawScenario) {
 function newScenarioState(scenario) {
     const firstAct = scenario && Array.isArray(scenario.acts) && scenario.acts[0];
     return { activeAct: firstAct && typeof firstAct === 'object' ? (firstAct.id || null) : null, flags: [], choiceHistory: [], variables: {} };
+}
+
+function newScenarioRuntime(scenario) {
+    const isWindGuardian = scenario?.id === 'straznik_wiatru';
+    const repairDefinition = scenario?.mechanics?.projects?.drakkar_repair || {};
+    return {
+        version: 1,
+        weather: {
+            state: isWindGuardian ? 'calm' : 'unknown',
+            eventId: null,
+            startedAt: null,
+            endsAt: null,
+            nextHurricaneAt: null,
+            hornSounds: 0,
+            disabled: false
+        },
+        projects: isWindGuardian ? {
+            drakkar_repair: {
+                id: 'drakkar_repair',
+                status: 'not_started',
+                progress: 0,
+                requiredProgress: Math.max(1, Math.floor(Number(repairDefinition.requiredProgress) || 100)),
+                damage: Math.max(0, Math.floor(Number(repairDefinition.initialDamage) || 0)),
+                villagersCommitted: 0,
+                passengers: 0,
+                estimatedDays: Math.max(1, Math.floor(Number(repairDefinition.maxDays) || 21)),
+                startedAt: null,
+                readyAt: null
+            }
+        } : {},
+        clues: [],
+        encounters: isWindGuardian ? {
+            troll_straznik: { canonicalEntityId: 'troll_straznik', disposition: 'neutral', met: false, defeated: false, wounded: false, alarmTriggered: false },
+            pustelnik_straznik: { disposition: 'guarded', defeated: false },
+            hragmorr: { awake: false }
+        } : {},
+        ending: null,
+        lastEvent: null,
+        notifications: []
+    };
 }
 
 // Phase 3: Goal types
@@ -1181,6 +1227,9 @@ class NPC {
         this.gold = 0;
         this.inventory = [];
         this.loot = [];
+        this.canonicalEntityId = null;
+        this.specialAbilities = [];
+        this.specialAbilityData = {};
     }
 
     addStatusEffect(effect) {
@@ -1223,7 +1272,10 @@ class NPC {
             isQuestGiver: this.isQuestGiver,
             gold: this.gold,
             inventory: this.inventory,
-            loot: this.loot
+            loot: this.loot,
+            canonicalEntityId: this.canonicalEntityId,
+            specialAbilities: this.specialAbilities,
+            specialAbilityData: this.specialAbilityData
         };
     }
 
@@ -1264,6 +1316,9 @@ class NPC {
                 .filter(item => item && ITEM_CATALOG[item.id] && Number.isInteger(item.quantity) && item.quantity > 0)
                 .map(item => ({ id: item.id, quantity: Math.min(1000, item.quantity) }))
             : [];
+        npc.canonicalEntityId = typeof json.canonicalEntityId === 'string' ? json.canonicalEntityId : null;
+        npc.specialAbilities = Array.isArray(json.specialAbilities) ? json.specialAbilities.filter(item => typeof item === 'string').slice(0, 20) : [];
+        npc.specialAbilityData = json.specialAbilityData && typeof json.specialAbilityData === 'object' ? scenarioSafeValue(json.specialAbilityData) : {};
         return npc;
     }
 }
@@ -1738,6 +1793,7 @@ class World {
         };
         this.scenario = null;
         this.scenarioState = newScenarioState(null);
+        this.scenarioRuntime = newScenarioRuntime(null);
         this.isSandbox = false;
     }
 
@@ -2093,6 +2149,438 @@ class World {
             const objective = quest.objective;
             if (quest.status !== 'active' || objective?.type !== 'explore' || objective.targetId !== locationId) continue;
             this._completeQuest(player, quest, changes);
+        }
+    }
+
+    _completeScenarioObjectives(player, changes = []) {
+        const runtime = this.scenarioRuntime || newScenarioRuntime(this.scenario);
+        const flags = new Set(this.scenarioState?.flags || []);
+        const clues = new Set(runtime.clues || []);
+        for (const quest of player?.quests || []) {
+            if (!quest || quest.status !== 'active') continue;
+            const objective = quest.objective || {};
+            let complete = false;
+            if (objective.type === 'flag') complete = flags.has(objective.targetId);
+            if (objective.type === 'clue') complete = clues.has(objective.targetId);
+            if (objective.type === 'project') complete = runtime.projects?.[objective.targetId]?.status === 'completed';
+            if (objective.type === 'choice') complete = (this.scenarioState?.choiceHistory || []).some(choice => choice?.choiceId === objective.targetId);
+            if (objective.type === 'survive') complete = flags.has(objective.targetId) && player.isDowned !== true;
+            if (complete) this._completeQuest(player, quest, changes);
+        }
+    }
+
+    _scenarioDefinition() {
+        return this.scenario?.id === 'straznik_wiatru' ? this.scenario : null;
+    }
+
+    _scenarioHasFlag(flag) {
+        return Boolean(flag && this.scenarioState?.flags?.includes(flag));
+    }
+
+    _scenarioAddFlags(flags = [], changes = [], description = 'Zmieniono stan scenariusza.') {
+        const state = this.scenarioState || newScenarioState(this.scenario);
+        const add = Array.isArray(flags) ? flags.filter(flag => typeof flag === 'string' && flag.trim()) : [];
+        const added = [];
+        for (const flag of add) {
+            if (!state.flags.includes(flag)) {
+                state.flags.push(flag);
+                added.push(flag);
+            }
+        }
+        if (added.length) changes.push(new WorldChange('scenario_flag_added', null, added, description, 'local'));
+        return added;
+    }
+
+    _scenarioRemoveFlags(flags = [], changes = []) {
+        const remove = new Set(Array.isArray(flags) ? flags : []);
+        if (!remove.size || !this.scenarioState?.flags) return [];
+        const before = this.scenarioState.flags.length;
+        this.scenarioState.flags = this.scenarioState.flags.filter(flag => !remove.has(flag));
+        if (before !== this.scenarioState.flags.length) changes.push(new WorldChange('scenario_flag_removed', null, [...remove], 'Usunięto flagę scenariusza.', 'local'));
+        return [...remove];
+    }
+
+    _scenarioAddClues(clues = [], changes = [], description = 'Odkryto nową wskazówkę.') {
+        const runtime = this.scenarioRuntime || newScenarioRuntime(this.scenario);
+        const added = [];
+        for (const clue of Array.isArray(clues) ? clues : []) {
+            if (typeof clue !== 'string' || !clue.trim() || runtime.clues.includes(clue)) continue;
+            runtime.clues.push(clue);
+            added.push(clue);
+        }
+        if (added.length) changes.push(new WorldChange('scenario_clue_discovered', null, added, description, 'local'));
+        return added;
+    }
+
+    _ensureScenarioProject(projectId) {
+        const runtime = this.scenarioRuntime || newScenarioRuntime(this.scenario);
+        if (!runtime.projects) runtime.projects = {};
+        if (!runtime.projects[projectId]) {
+            const definition = this.scenario?.mechanics?.projects?.[projectId] || {};
+            runtime.projects[projectId] = {
+                id: projectId,
+                status: 'not_started',
+                progress: 0,
+                requiredProgress: Math.max(1, Math.floor(Number(definition.requiredProgress) || 100)),
+                damage: Math.max(0, Math.floor(Number(definition.initialDamage) || 0)),
+                villagersCommitted: 0,
+                passengers: 0,
+                estimatedDays: Math.max(1, Math.floor(Number(definition.maxDays) || 21)),
+                startedAt: null,
+                readyAt: null
+            };
+        }
+        return runtime.projects[projectId];
+    }
+
+    _estimateScenarioProjectDays(project) {
+        const definition = this.scenario?.mechanics?.projects?.[project?.id] || {};
+        const maxDays = Math.max(1, Math.floor(Number(definition.maxDays) || 21));
+        const minDays = Math.min(maxDays, Math.max(1, Math.floor(Number(definition.minDays) || 7)));
+        const help = Math.max(0, Number(project?.villagersCommitted) || 0);
+        const damage = Math.max(0, Number(project?.damage) || 0);
+        // More helpers shorten the work; more damage lengthens it. The result
+        // remains inside the scenario's promised 1–3 week window.
+        return Math.max(minDays, Math.min(maxDays, maxDays - Math.floor(help / 2) + Math.floor(damage / 5)));
+    }
+
+    _completeScenarioProject(project, changes = []) {
+        if (!project || project.status === 'completed' || Number(project.progress) < Number(project.requiredProgress)) return false;
+        project.progress = project.requiredProgress;
+        project.estimatedDays = this._estimateScenarioProjectDays(project);
+        if (project.status === 'awaiting_completion' && Number(project.readyAt) <= this.currentTimeMinutes) {
+            project.status = 'completed';
+            project.readyAt = null;
+            changes.push(new WorldChange('scenario_project_completed', project.id, { estimatedDays: project.estimatedDays }, 'Drakkar jest gotowy do drogi.', 'local'));
+            this._scenarioAddFlags(['drakkar_naprawiony'], changes, 'Naprawa drakkara została zakończona.');
+            this._completeScenarioObjectives(this.player, changes);
+            return true;
+        }
+        if (!Number.isSafeInteger(Number(project.readyAt)) || Number(project.readyAt) <= this.currentTimeMinutes) {
+            project.status = 'awaiting_completion';
+            project.startedAt = this.currentTimeMinutes;
+            project.readyAt = this.currentTimeMinutes + (project.estimatedDays * 24 * 60);
+            this.eventQueue.schedule(new WorldEvent(
+                `scenario:project:${project.id}:${project.readyAt}`,
+                'scenario_project_completed',
+                project.readyAt,
+                'local',
+                { projectId: project.id },
+                20,
+                false,
+                'scenario',
+                0.7
+            ));
+            changes.push(new WorldChange(
+                'scenario_project_scheduled',
+                project.id,
+                { readyAt: project.readyAt, estimatedDays: project.estimatedDays },
+                `Zakończono prace. Drakkar będzie gotowy za około ${project.estimatedDays} dni.`,
+                'local'
+            ));
+        }
+        return false;
+    }
+
+    _applyScenarioEffects(effects = {}, player, changes = []) {
+        if (!effects || typeof effects !== 'object') return { message: '' };
+        this._scenarioAddFlags(effects.flagsAdd, changes, effects.message || 'Zmieniono stan scenariusza.');
+        this._scenarioRemoveFlags(effects.flagsRemove, changes);
+        if (effects.variables && typeof effects.variables === 'object') {
+            this.scenarioState.variables = { ...(this.scenarioState.variables || {}), ...scenarioSafeValue(effects.variables) };
+        }
+        if (effects.cluesAdd) this._scenarioAddClues(effects.cluesAdd, changes, effects.message || 'Odkryto nową wskazówkę.');
+        if (effects.projectStart) {
+            const project = this._ensureScenarioProject(effects.projectStart);
+            if (project.status === 'not_started') {
+                project.status = 'active';
+                changes.push(new WorldChange('scenario_project_started', project.id, true, effects.message || 'Rozpoczęto projekt.', 'local'));
+            }
+        }
+        if (effects.projectProgress) {
+            const project = this._ensureScenarioProject(effects.projectId || 'drakkar_repair');
+            project.status = project.status === 'completed' ? 'completed' : 'active';
+            project.progress = Math.min(project.requiredProgress, Math.max(0, Number(project.progress) + Number(effects.projectProgress)));
+            changes.push(new WorldChange('scenario_project_progress', project.id, project.progress, effects.message || 'Postęp projektu.', 'local'));
+            this._completeScenarioProject(project, changes);
+        }
+        if (Number.isFinite(Number(effects.projectVillagers))) {
+            const project = this._ensureScenarioProject(effects.projectId || 'drakkar_repair');
+            project.villagersCommitted = Math.max(0, Math.floor(Number(effects.projectVillagers)));
+        }
+        if (Number.isFinite(Number(effects.shipDamage))) {
+            const project = this._ensureScenarioProject('drakkar_repair');
+            project.damage = Math.max(0, Math.min(100, Number(project.damage) + Number(effects.shipDamage)));
+            project.estimatedDays = this._estimateScenarioProjectDays(project);
+            changes.push(new WorldChange('scenario_ship_damaged', project.id, project.damage, effects.message || 'Uszkodzenia drakkara zwiększają czas naprawy.', 'local'));
+        }
+        if (effects.itemsAdd && player) {
+            for (const entry of Array.isArray(effects.itemsAdd) ? effects.itemsAdd : []) {
+                if (entry?.id && player.addItem(entry.id, Math.max(1, Math.floor(Number(entry.quantity) || 1)))) {
+                    changes.push(new WorldChange('item_looted', entry.id, entry.quantity || 1, effects.message || 'Zdobyto przedmiot scenariusza.', 'local'));
+                }
+            }
+        }
+        if (effects.addStatus && player) {
+            const status = effects.addStatus;
+            const name = typeof status === 'string' ? status : status.name;
+            if (name && !player.statusEffects.some(effect => effect.name === name)) {
+                player.addStatusEffect(new StatusEffect(name, Math.max(1, Number(status.durationMinutes) || 60), status.effectType || 'all_stats_drain', Number(status.magnitude) || 0.7));
+                changes.push(new WorldChange('status_effect_added', player.name, name, effects.message || `Status: ${name}.`, 'local'));
+            }
+        }
+        if (Number(effects.damage) > 0 && player) {
+            const damage = Math.max(1, Math.floor(Number(effects.damage)));
+            player.hp = Math.max(0, player.hp - damage);
+            changes.push(new WorldChange('player_damaged', player.name, -damage, effects.message || `Zostajesz ranny za ${damage} HP.`, 'local'));
+            if (player.hp <= 0) {
+                player.isDowned = true;
+                changes.push(new WorldChange('player_downed', player.name, true, 'Postać zostaje powalona.', 'local'));
+            }
+        }
+        if (effects.encounterId && effects.encounterPatch) {
+            const runtime = this.scenarioRuntime || newScenarioRuntime(this.scenario);
+            runtime.encounters[effects.encounterId] = { ...(runtime.encounters[effects.encounterId] || {}), ...scenarioSafeValue(effects.encounterPatch) };
+        }
+        if (effects.weatherDisabled === true) {
+            this.scenarioRuntime.weather.disabled = true;
+            this.scenarioRuntime.weather.state = 'calm';
+        }
+        if (effects.endingId) this._setScenarioEnding(effects.endingId, effects.message || 'Rozstrzygnięto losy wyprawy.');
+        this._completeScenarioObjectives(player, changes);
+        return { message: typeof effects.message === 'string' ? effects.message : '' };
+    }
+
+    _setScenarioEnding(endingId, reason = '') {
+        const runtime = this.scenarioRuntime || newScenarioRuntime(this.scenario);
+        if (runtime.ending?.id === endingId) return runtime.ending;
+        const ending = (this.scenario?.endings || []).find(item => item?.id === endingId) || {};
+        runtime.ending = {
+            id: endingId,
+            title: ending.title || endingId,
+            reason: String(reason || ending.trigger || '').slice(0, 500),
+            at: this.currentTimeMinutes
+        };
+        runtime.notifications = [...(runtime.notifications || []), runtime.ending].slice(-20);
+        return runtime.ending;
+    }
+
+    getScenarioCheckForAction(action, player = this.player) {
+        const scenario = this._scenarioDefinition();
+        if (!scenario || !player) return null;
+        const mechanics = scenario.mechanics || {};
+        const normalized = String(action || '').toLocaleLowerCase('pl-PL');
+        const runtime = this.scenarioRuntime || newScenarioRuntime(scenario);
+        for (const check of Array.isArray(mechanics.skillChecks) ? mechanics.skillChecks : []) {
+            if (!check || typeof check !== 'object') continue;
+            const locationIds = Array.isArray(check.locationIds) ? check.locationIds : [];
+            if (locationIds.length && !locationIds.includes(player.locationId)) continue;
+            if (check.weatherState && runtime.weather?.state !== check.weatherState) continue;
+            if (Array.isArray(check.requiredFlags) && !check.requiredFlags.every(flag => this._scenarioHasFlag(flag))) continue;
+            if (Array.isArray(check.blockedFlags) && check.blockedFlags.some(flag => this._scenarioHasFlag(flag))) continue;
+            if (check.onceFlag && this._scenarioHasFlag(check.onceFlag)) continue;
+            const keywords = Array.isArray(check.keywordsAny) ? check.keywordsAny : [];
+            if (keywords.length && !keywords.some(keyword => normalized.includes(String(keyword).toLocaleLowerCase('pl-PL')))) continue;
+            const ability = normalizeAbilityKey(check.ability) || 'wisdom';
+            const difficulty = Math.max(1, Math.min(30, Math.floor(Number(check.difficulty) || 10)));
+            const modifier = (player.getAbilityModifier?.(ability) || 0) + (Number.isFinite(player.proficiencyBonus) ? player.proficiencyBonus : 2);
+            return {
+                kind: 'check',
+                scenarioCheckId: String(check.id || '').slice(0, 120),
+                ability,
+                skill: String(check.skill || ability).slice(0, 80),
+                label: String(check.label || `Test: ${check.skill || ability}`).slice(0, 160),
+                difficulty,
+                modifier,
+                timeCostMinutes: Math.max(1, Math.floor(Number(check.timeCostMinutes) || 10)),
+                reason: String(check.reason || `Trudność testu: ${difficulty}`).slice(0, 300)
+            };
+        }
+        return null;
+    }
+
+    _applyScenarioCheckResult(check, player, success, changes = []) {
+        const definition = this.scenario?.mechanics?.skillChecks?.find(item => item?.id === check?.scenarioCheckId);
+        if (!definition) return '';
+        const outcome = success ? definition.onSuccess : definition.onFailure;
+        if (!outcome) return '';
+        let effects = { ...outcome };
+        if (effects.damageDice) {
+            const damageRoll = rollDice(effects.damageDice, '1d4');
+            effects.damage = damageRoll.total;
+            changes.push(new WorldChange('scenario_hazard_roll', player.name, damageRoll, `${definition.label || 'Zagrożenie'}: ${damageRoll.notation} = ${damageRoll.total}.`, 'local'));
+        }
+        if (definition.onceFlag) effects.flagsAdd = [...(effects.flagsAdd || []), definition.onceFlag];
+        const result = this._applyScenarioEffects(effects, player, changes);
+        if (definition.id === 'alarm_runes' && !success) {
+            const state = this.scenarioRuntime.encounters.troll_straznik || {};
+            state.alarmTriggered = true;
+            state.disposition = 'hostile';
+            this.scenarioRuntime.encounters.troll_straznik = state;
+        }
+        return result.message || '';
+    }
+
+    _applyScenarioAction(action, player, changes = []) {
+        const scenario = this._scenarioDefinition();
+        if (!scenario || !player) return '';
+        const normalized = String(action || '').toLocaleLowerCase('pl-PL');
+        let message = '';
+        if (player.locationId === 'wioska_rozbitkow' && /leif|starsz|mieszkań|mieszkanc|wiosk/.test(normalized) && /rozmaw|pyt|słuch|sluch|pozn/.test(normalized)) {
+            this._scenarioAddClues(['village_survivors'], changes, 'Poznajesz historię wioski i jej mieszkańców.');
+        }
+        if (player.locationId === 'skraj_lasu' && /troll|olbrzym|stwor/.test(normalized) && /rozmaw|pyt|słuch|sluch|obserw|spokoj/.test(normalized)) {
+            const encounter = this.scenarioRuntime.encounters.troll_straznik || {};
+            encounter.met = true;
+            encounter.disposition = 'curious';
+            this.scenarioRuntime.encounters.troll_straznik = encounter;
+            this._scenarioAddClues(['troll_guardian_truth'], changes, 'Troll pozwala podejść bliżej i zdradza ślad swojej więzi z górą.');
+        }
+        if (player.locationId === 'iglasty_las' && /koza|zagrod|palik/.test(normalized) && /prowad|odprowad|pomagam|zabier/.test(normalized)) {
+            this._scenarioAddClues(['goat_to_village'], changes, 'Koza prowadzi cię ku zabudowaniom i śladom cywilizacji.');
+        }
+        if (player.locationId === 'swiatynia_atlantow' && /komunik|szkat|hologram/.test(normalized) && /uży|uzy|otwier|uruch|badam|przeglą|przegla/.test(normalized)) {
+            this._scenarioAddClues(['atlantean_message'], changes, 'Uruchamiasz atlanteńskie urządzenie i odkrywasz zapis wiadomości.');
+            this._applyScenarioEffects({ itemsAdd: [{ id: 'atlantean_hologram', quantity: 1 }] }, player, changes);
+        }
+        if (player.locationId === 'swiatynia_atlantow' && /mozaik|ołtarz|oltarz|atlant/.test(normalized) && /badam|oglą|oglad|czytam|przeglą|przegla/.test(normalized)) {
+            // The action is intercepted by the scenario's authoritative
+            // temple_mosaics check. Do not award the clue here as well: a
+            // failed roll must leave the discovery incomplete.
+        }
+        if (player.locationId === 'krag_rogu' && /zabier|podnos|krad|wynos/.test(normalized) && /róg|rog|szkat|koli/.test(normalized)) {
+            this._applyScenarioEffects({ itemsAdd: [{ id: 'wind_horn', quantity: 1 }], endingId: 'end_escape_artifacts', message: 'Artefakty są w twoich rękach; pozostaje znaleźć drogę ucieczki.' }, player, changes);
+        }
+        this._completeScenarioObjectives(player, changes);
+        return message;
+    }
+
+    _nextMorningAt() {
+        const dayMinutes = 24 * 60;
+        const dayStart = Math.floor(this.currentTimeMinutes / dayMinutes) * dayMinutes;
+        let target = dayStart + 8 * 60;
+        if (target <= this.currentTimeMinutes) target += dayMinutes;
+        return target;
+    }
+
+    _scheduleScenarioHurricaneCycle(startAt = null) {
+        const scenario = this._scenarioDefinition();
+        const weather = this.scenarioRuntime?.weather;
+        const definition = scenario?.mechanics?.weather;
+        if (!scenario || !weather || weather.disabled || !definition) return false;
+        const start = Number.isSafeInteger(startAt) ? startAt : this._nextMorningAt();
+        const existing = this.eventQueue?._heap?.heap?.some(entry => entry?.[3]?.type === 'scenario_hurricane_start' && Number(entry[3].executeAt) === start);
+        if (existing) return true;
+        const warningMinutes = Math.max(1, Math.floor(Number(definition.warningMinutes) || 15));
+        weather.nextHurricaneAt = start;
+        this.eventQueue.schedule(new WorldEvent(`scenario:hurricane:warning:${start}`, 'scenario_hurricane_warning', Math.max(this.currentTimeMinutes + 1, start - warningMinutes), 'regional', { startAt: start }, 20, false, 'scenario', 0.5));
+        this.eventQueue.schedule(new WorldEvent(`scenario:hurricane:start:${start}`, 'scenario_hurricane_start', start, 'regional', { startAt: start }, 20, false, 'scenario', 0.8));
+        return true;
+    }
+
+    _onScenarioLocationEntered(locationId, player, changes = []) {
+        if (this.scenario?.id !== 'straznik_wiatru') return;
+        if (locationId === 'wioska_rozbitkow') this._scheduleScenarioHurricaneCycle();
+        if (locationId === 'swiatynia_atlantow') this._scenarioAddClues(['temple_discovered'], changes, 'Odnajdujesz zapomnianą świątynię Atlantów.');
+        this._completeScenarioObjectives(player, changes);
+    }
+
+    getScenarioTravelRule(targetLocation, player = this.player) {
+        if (this.scenario?.id !== 'straznik_wiatru' || !targetLocation) return { allowed: true };
+        if (targetLocation.id === 'oko_cyklonu' && this.scenarioRuntime?.weather?.state !== 'hurricane') {
+            return { allowed: false, message: 'Oko cyklonu można przejść tylko podczas aktywnego huraganu.' };
+        }
+        if (targetLocation.id === 'morze_polnocne' && this.scenarioRuntime?.projects?.drakkar_repair?.status !== 'completed' && player?.locationId === 'brzeg_wyspy') {
+            return { allowed: false, message: 'Drakkar nie jest jeszcze gotowy do wypłynięcia.' };
+        }
+        return { allowed: true };
+    }
+
+    _resolveScenarioHurricaneWarning(event) {
+        if (this.scenario?.id !== 'straznik_wiatru' || this.scenarioRuntime.weather.disabled) return [];
+        this.scenarioRuntime.weather.state = 'warning';
+        this.scenarioRuntime.lastEvent = { type: event.type, at: this.currentTimeMinutes };
+        this.scenarioRuntime.notifications = [...(this.scenarioRuntime.notifications || []), { type: 'weather_warning', at: this.currentTimeMinutes }].slice(-20);
+        return [new WorldChange('scenario_weather_warning', 'wioska_rozbitkow', true, 'Z oddali dobiega róg. Nad wyspą narasta huragan.', 'regional')];
+    }
+
+    _resolveScenarioHurricaneStart(event) {
+        if (this.scenario?.id !== 'straznik_wiatru' || this.scenarioRuntime.weather.disabled) return [];
+        const definition = this.scenario.mechanics?.weather || {};
+        const duration = Math.max(10, Math.floor(Number(definition.durationMinutes) || 45));
+        const startAt = Number(event.data?.startAt) || this.currentTimeMinutes;
+        this.scenarioRuntime.weather = {
+            ...this.scenarioRuntime.weather,
+            state: 'hurricane',
+            eventId: event.eventId,
+            startedAt: this.currentTimeMinutes,
+            endsAt: this.currentTimeMinutes + duration,
+            hornSounds: (this.scenarioRuntime.weather.hornSounds || 0) + 1
+        };
+        this.eventQueue.schedule(new WorldEvent(`scenario:hurricane:end:${this.currentTimeMinutes}`, 'scenario_hurricane_end', this.currentTimeMinutes + duration, 'regional', { startAt }, 20, false, 'scenario', 0.6));
+        const repeat = Math.max(60, Math.floor(Number(definition.repeatMinutes) || 1440));
+        if (!this.scenarioRuntime.weather.disabled) this._scheduleScenarioHurricaneCycle(this.currentTimeMinutes + repeat);
+        return [new WorldChange('scenario_hurricane_started', 'wyspa_straznika_wiatru', { endsAt: this.scenarioRuntime.weather.endsAt }, 'Huragan uderza w wyspę.', 'regional')];
+    }
+
+    _resolveScenarioHurricaneEnd() {
+        if (this.scenario?.id !== 'straznik_wiatru') return [];
+        this.scenarioRuntime.weather.state = 'calm';
+        this.scenarioRuntime.weather.endsAt = null;
+        this.scenarioRuntime.lastEvent = { type: 'scenario_hurricane_end', at: this.currentTimeMinutes };
+        return [new WorldChange('scenario_hurricane_ended', 'wyspa_straznika_wiatru', true, 'Huragan ustępuje równie nagle, jak się pojawił.', 'regional')];
+    }
+
+    _resolveScenarioProjectCompleted(event) {
+        if (this.scenario?.id !== 'straznik_wiatru') return [];
+        const projectId = String(event?.data?.projectId || 'drakkar_repair');
+        const project = this.scenarioRuntime?.projects?.[projectId];
+        if (!project || project.status !== 'awaiting_completion' || Number(project.readyAt) > this.currentTimeMinutes) return [];
+        const changes = [];
+        this._completeScenarioProject(project, changes);
+        return changes;
+    }
+
+    _resolveScenarioHragmorrDeadline() {
+        if (this.scenario?.id !== 'straznik_wiatru' || !this._scenarioHasFlag('pustelnik_zginal')) return [];
+        if (this._scenarioHasFlag('nowy_straznik') || this._scenarioHasFlag('rog_zbadany') || this._scenarioHasFlag('rog_zniszczony')) return [];
+        const encounter = this.scenarioRuntime.encounters.hragmorr || {};
+        encounter.awake = true;
+        this.scenarioRuntime.encounters.hragmorr = encounter;
+        this._scenarioAddFlags(['hragmorr_przebudzony'], []);
+        this._setScenarioEnding('end_titan_awakened', 'Po śmierci pustelnika nikt nie zadął w róg w ciągu kwadransa.');
+        return [new WorldChange('scenario_titan_awakened', 'hragmorr', true, 'Pod morzem budzi się Hragmorr, Gniew Skał.', 'global')];
+    }
+
+    _markScenarioNpcDefeated(target, changes = []) {
+        if (!target || this.scenario?.id !== 'straznik_wiatru') return;
+        const canonicalId = target.canonicalEntityId || target.id;
+        const aliases = Array.from(this.npcs.values()).filter(npc => (npc.canonicalEntityId || npc.id) === canonicalId);
+        for (const alias of aliases) {
+            alias.hp = target.hp;
+            alias.isAlive = target.isAlive;
+            alias.statusEffects = (target.statusEffects || []).map(effect => ({ ...effect }));
+        }
+        const encounter = this.scenarioRuntime.encounters[canonicalId] || {};
+        encounter.defeated = target.isAlive === false;
+        encounter.wounded = target.isAlive !== false && target.hp < target.maxHp;
+        this.scenarioRuntime.encounters[canonicalId] = encounter;
+        if (target.isAlive === false && canonicalId === 'troll_straznik') this._scenarioAddFlags(['troll_zraniony'], changes, 'Troll Strażnik został pokonany.');
+        if (target.isAlive === false && target.id === 'pustelnik_straznik') {
+            this._scenarioAddFlags(['pustelnik_zginal'], changes, 'Pustelnik Strażnik nie żyje.');
+            this.eventQueue.schedule(new WorldEvent(`scenario:hragmorr:deadline:${this.currentTimeMinutes}`, 'scenario_hragmorr_deadline', this.currentTimeMinutes + 15, 'global', {}, 10, false, 'scenario', 1));
+        }
+    }
+
+    _syncCanonicalNpcState(target) {
+        if (!target) return;
+        const canonicalId = target.canonicalEntityId || target.id;
+        const aliases = Array.from(this.npcs.values()).filter(npc => (npc.canonicalEntityId || npc.id) === canonicalId);
+        for (const alias of aliases) {
+            alias.hp = target.hp;
+            alias.maxHp = target.maxHp;
+            alias.isAlive = target.isAlive;
+            alias.statusEffects = (target.statusEffects || []).map(effect => ({ ...effect }));
         }
     }
 
@@ -2546,6 +3034,20 @@ class World {
     }
 
     _resolveNpcCombatTurn(target, player) {
+        const specialChanges = [];
+        const abilities = new Set(Array.isArray(target?.specialAbilities) ? target.specialAbilities : []);
+        const abilityData = target?.specialAbilityData || {};
+        if (abilities.has('regeneration') && target.isAlive !== false && target.hp < target.maxHp) {
+            const amount = Math.max(1, Math.floor(Number(abilityData.regeneration) || 10));
+            const healed = Math.min(amount, target.maxHp - target.hp);
+            target.hp += healed;
+            specialChanges.push(new WorldChange('npc_regenerated', target.id, healed, `${target.name} regeneruje ${healed} HP.`, 'local'));
+        }
+        if (abilities.has('fear') && player && !player.statusEffects.some(effect => effect.name === 'terrified')) {
+            const duration = Math.max(1, Math.floor(Number(abilityData.fearDurationMinutes) || 30));
+            player.addStatusEffect(new StatusEffect('terrified', duration, 'all_stats_drain', Number(abilityData.fearMagnitude) || 0.85));
+            specialChanges.push(new WorldChange('status_effect_added', player.name, 'terrified', `${target.name} wzbudza paraliżujący strach.`, 'local'));
+        }
         const attackRoll = rollDice('1d20').total;
         const attackBonus = Math.max(0, Math.floor(Number(target?.attack) || 0) - 5);
         const difficulty = Math.max(1, Math.floor(player?.getArmorClass?.() || 10));
@@ -2553,7 +3055,7 @@ class World {
         const criticalSuccess = attackRoll === 20;
         const criticalFailure = attackRoll === 1;
         const hit = criticalSuccess || (!criticalFailure && total >= difficulty);
-        const changes = [new WorldChange(
+        const changes = [...specialChanges, new WorldChange(
             'combat_npc_attack',
             target?.id || 'npc',
             { roll: attackRoll, bonus: attackBonus, total, difficulty, hit },
@@ -2575,6 +3077,16 @@ class World {
                 `${target.name} zadaje ${damage} obrażeń (${damageRoll.notation}).`,
                 'local'
             ));
+            if (abilities.has('acid_vomit') && Math.random() < Math.max(0, Math.min(1, Number(abilityData.acidChance) || 0.35))) {
+                const acidRoll = rollDice(abilityData.acidDice || '2d6', '2d6');
+                const acidDamage = acidRoll.total;
+                player.hp = Math.max(0, player.hp - acidDamage);
+                changes.push(new WorldChange('npc_special_attack', target.id, acidDamage, `${target.name} pluje kwasem za ${acidDamage} obrażeń (${acidRoll.notation}).`, 'local'));
+            }
+            if (abilities.has('kinetic_pulsar') && (player.getAbilityScore?.('strength') || 10) < 5) {
+                player.isDowned = true;
+                changes.push(new WorldChange('player_downed', player.name, true, 'Pulsar kinetyczny powala bohatera.', 'local'));
+            }
             if (player.hp <= 0) {
                 player.isDowned = true;
                 changes.push(new WorldChange('player_downed', player.name, true, 'Postać zostaje powalona.', 'local'));
@@ -2788,9 +3300,11 @@ class World {
                     : this._rollPlayerDamage(player, criticalSuccess);
                 const damage = Math.max(1, damageRoll.total - Math.floor(Number(target.defense) || 0));
                 target.hp = Math.max(0, target.hp - damage);
+                this._syncCanonicalNpcState(target);
                 changes.push(new WorldChange('combat_happened', target.id, damage, `Trafiasz ${target.name} za ${damage} obrażeń (${damageRoll.notation}${damageRoll.bonus ? ` ${damageRoll.bonus >= 0 ? '+' : ''}${damageRoll.bonus}` : ''}${criticalSuccess ? ', krytyczne trafienie' : ''}).`, 'local'));
                 if (target.hp <= 0) {
                     target.isAlive = false;
+                    this._syncCanonicalNpcState(target);
                     player.gold += target.goldReward;
                     player.gainXp(target.xpReward);
                     this._applyNpcLoot(player, target, changes);
@@ -2798,6 +3312,7 @@ class World {
                     if (target.goldReward > 0) changes.push(new WorldChange('gold_changed', player.name, target.goldReward, 'Zdobyto złoto.', 'local'));
                     if (target.xpReward > 0) changes.push(new WorldChange('xp_gained', player.name, target.xpReward, 'Zdobyto doświadczenie.', 'local'));
                     this._completeKillQuests(player, target, changes);
+                    this._markScenarioNpcDefeated(target, changes);
                     const result = new ActionResult(true, `Trafiasz ${target.name} i pokonujesz przeciwnika.`, 2, changes);
                     this.advanceWorldTimeForPlayer(player, result.timeCostMinutes, { suppressHpRegen: check.combatMode === true });
                     for (const change of result.worldChanges) this.logWorldChange(change);
@@ -2830,11 +3345,12 @@ class World {
             return result;
         }
 
-        const message = success
+        const scenarioMessage = this._applyScenarioCheckResult(check, player, success, changes);
+        const message = `${success
             ? `${check.label || 'Test'} zakończony sukcesem: ${total} przeciwko ${difficulty}.`
-            : `${check.label || 'Test'} nieudany: ${total} przeciwko ${difficulty}.`;
+            : `${check.label || 'Test'} nieudany: ${total} przeciwko ${difficulty}.`}${scenarioMessage ? ` ${scenarioMessage}` : ''}`;
         changes.push(new WorldChange('d20_check_resolved', player.name, success, message, 'local'));
-        const result = new ActionResult(success, message, 5, changes);
+        const result = new ActionResult(success, message, Math.max(1, Math.floor(Number(check.timeCostMinutes) || 5)), changes);
         this.advanceWorldTimeForPlayer(player, result.timeCostMinutes);
         for (const change of result.worldChanges) this.logWorldChange(change);
         return result;
@@ -2943,10 +3459,19 @@ class World {
         // jako akcja, która może samowolnie zmienić miejsce sceny.
         const travelIntent = /\b(idźmy|idzmy|idziemy|idę|ide|idź|idz|udajmy|udajmy się|udajemy|udajemy się|udaj|ruszmy|ruszmy się|ruszamy|ruszamy się|rusz|chodźmy|chodzmy|chodzimy|chodź|chodz|podążajmy|podazajmy|podążamy|podazamy|podąż|podaz|przenieśmy|przeniesmy|przenieś|przenies|jedźmy|jedzmy|jedziemy|jedź|jedz|wędrujmy|wedrujmy|wędrujemy|wedrujemy|wędruj|wedruj|podróżujmy|podrozujmy|podróżujemy|podrozujemy|podróżuj|podrozuj)\b/i.test(normalizedForParsing);
 
-        const extendedTravelIntent = /\b(kieruję się|kieruje sie|zmierzam|płynę|plyne|płyniemy|plyniemy|lecę|lece|lecimy|teleportuję się|teleportuje sie|udaję się|udaje sie|chcę iść|chce isc|wsiadam do|wracam|wracamy|wróć|wroc|powrót|powrot)\b/i.test(normalizedForParsing);
+        // JS word boundaries are ASCII-only: `\b` does not see Polish
+        // letters such as ę/ź as word characters. Use a diacritic-folded
+        // copy for intent detection so “idę do wioski” is a real journey,
+        // not a free-form narration fallback.
+        const intentText = normalizedForParsing
+            .normalize('NFKD')
+            .replace(/[\u0300-\u036f]/g, '');
+        const foldedTravelIntent = /\b(idzmy|idziemy|ide|idz|udajmy|udajemy|udaj|ruszmy|ruszamy|rusz|chodzmy|chodzimy|chodz|podazajmy|podazamy|podaz|przeniesmy|przenies|jedzmy|jedziemy|jedz|wedrujmy|wedrujemy|wedruj|podrozujmy|podrozujemy|podrozuj)\b/i.test(intentText);
+        const extendedTravelIntent = /\b(kieruje sie|zmierzam|plyne|plyniemy|lece|lecimy|teleportuje sie|udaje sie|chce isc|wsiadam do|wracam|wroccie|wroc|powrot)\b/i.test(intentText);
+        const wantsTravel = travelIntent || foldedTravelIntent || extendedTravelIntent;
         const implicitSandboxTravel = this.isSandbox && /^(?:do|na|w|we|ku|przez|w stronę|w strone)\s+\S+/i.test(normalizedForParsing);
-        const wantsTravel = travelIntent || extendedTravelIntent || implicitSandboxTravel;
-        if (this.isSandbox && wantsTravel && !targetLocation && !timeIntent) {
+        const wantsTravelWithSandboxFallback = wantsTravel || implicitSandboxTravel;
+        if (this.isSandbox && wantsTravelWithSandboxFallback && !targetLocation && !timeIntent) {
             targetLocation = this._createSandboxLocation(this._extractSandboxDestination(normalizedForParsing), player.locationId);
         }
 
@@ -2962,7 +3487,7 @@ class World {
                 message,
                 'local'
             ));
-        } else if (wantsTravel && targetLocation) {
+        } else if (wantsTravelWithSandboxFallback && targetLocation) {
             const currentLocation = this.getLocation(player.locationId);
             const hasTravelGraph = Array.isArray(currentLocation?.connections) && currentLocation.connections.length > 0;
             const isConnected = this.isSandbox || !hasTravelGraph || currentLocation.connections.includes(targetLocation.id);
@@ -2976,6 +3501,15 @@ class World {
                 message = `Jesteś już w lokacji „${targetLocation.name}”.`;
                 timeCostMinutes = 1;
             } else {
+                const scenarioTravel = this.getScenarioTravelRule(targetLocation, player);
+                if (!scenarioTravel.allowed) {
+                    success = false;
+                    message = scenarioTravel.message || 'Ta droga jest teraz niedostępna.';
+                    timeCostMinutes = 1;
+                    targetLocation = null;
+                }
+            }
+            if (wantsTravelWithSandboxFallback && targetLocation && success && player.locationId !== targetLocation.id) {
                 const previousLocationId = player.locationId;
                 player.locationId = targetLocation.id;
                 timeCostMinutes = 30;
@@ -2988,8 +3522,9 @@ class World {
                     'local'
                 ));
                 this._completeExploreQuests(player, targetLocation.id, changes);
+                this._onScenarioLocationEntered(targetLocation.id, player, changes);
             }
-        } else if (wantsTravel) {
+        } else if (wantsTravelWithSandboxFallback) {
             success = false;
             message = "Nie rozpoznaję celu podróży. Wskaż nazwę istniejącej lokacji.";
             timeCostMinutes = 1;
@@ -3045,6 +3580,8 @@ class World {
             changes.splice(0, changes.length, ...mechanicOverride.changes);
         }
 
+        this._applyScenarioAction(text, player, changes);
+
         const result = new ActionResult(success, message, timeCostMinutes, changes);
         const combatChanges = result.worldChanges.some(change =>
             ['combat_happened', 'player_damaged', 'player_downed', 'npc_killed'].includes(change?.type)
@@ -3098,12 +3635,46 @@ class World {
     }
 
     _findLocationInAction(normalizedAction) {
+        const rawText = String(normalizedAction || '').toLocaleLowerCase('pl-PL');
+        const fold = value => String(value || '')
+            .toLocaleLowerCase('pl-PL')
+            .normalize('NFKD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[_-]+/g, ' ')
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        const text = fold(rawText);
+        const textWords = new Set(text.split(' ').filter(Boolean));
+        const locationAliases = {
+            wioska_rozbitkow: ['wioski rozbitkow', 'wiosce rozbitkow', 'do wioski rozbitkow'],
+            brzeg_wyspy: ['brzegu wyspy', 'na brzeg wyspy'],
+            skraj_lasu: ['skraju lasu'],
+            podnoze_gory: ['podnozu gory', 'podnoze gory'],
+            sciezka_na_szczyt: ['sciezke na szczyt', 'sciezka na szczyt'],
+            swiatynia_atlantow: ['swiatyni atlantow', 'swiatynie atlantow'],
+            chata_pustelnika: ['chacie pustelnika', 'chaty pustelnika'],
+            krag_rogu: ['kregu rogu', 'krag menhirow']
+        };
+        const matchesByWords = phrase => {
+            const words = fold(phrase).split(' ').filter(Boolean);
+            if (!words.length) return false;
+            return words.every(word => {
+                if (textWords.has(word)) return true;
+                if (word.length < 5) return false;
+                const stem = word.slice(0, Math.max(4, word.length - 2));
+                return Array.from(textWords).some(candidate => candidate.startsWith(stem));
+            });
+        };
         for (const location of this.locations.values()) {
-            const id = String(location.id).toLocaleLowerCase('pl-PL');
-            const name = String(location.name).toLocaleLowerCase('pl-PL');
-            if (normalizedAction.includes(id) || normalizedAction.includes(name)) {
+            const id = String(location.id || '').toLocaleLowerCase('pl-PL');
+            const name = String(location.name || '').toLocaleLowerCase('pl-PL');
+            if (rawText.includes(id) || rawText.includes(name) || text.includes(fold(id)) || text.includes(fold(name))) {
                 return location;
             }
+            const aliases = locationAliases[location.id] || [];
+            if (aliases.some(alias => matchesByWords(alias))) return location;
+            if (matchesByWords(name)) return location;
         }
         return null;
     }
@@ -3137,7 +3708,12 @@ class World {
             "trade_agreement": this._resolveStrategicEvent.bind(this),
             "resource_boost": this._resolveStrategicEvent.bind(this),
             "espionage": this._resolveStrategicEvent.bind(this),
-            "alliance_proposal": this._resolveStrategicEvent.bind(this)
+            "alliance_proposal": this._resolveStrategicEvent.bind(this),
+            "scenario_hurricane_warning": this._resolveScenarioHurricaneWarning.bind(this),
+            "scenario_hurricane_start": this._resolveScenarioHurricaneStart.bind(this),
+            "scenario_hurricane_end": this._resolveScenarioHurricaneEnd.bind(this),
+            "scenario_project_completed": this._resolveScenarioProjectCompleted.bind(this),
+            "scenario_hragmorr_deadline": this._resolveScenarioHragmorrDeadline.bind(this)
         };
 
         const handler = handlers[event.type];
@@ -4368,6 +4944,57 @@ class World {
         return this.npcs.get(npcId);
     }
 
+    getScenarioRuntimeSnapshot() {
+        const runtime = this.scenarioRuntime || newScenarioRuntime(this.scenario);
+        return scenarioSafeValue({
+            version: runtime.version,
+            weather: runtime.weather,
+            projects: runtime.projects,
+            clues: runtime.clues,
+            encounters: runtime.encounters,
+            ending: runtime.ending,
+            lastEvent: runtime.lastEvent,
+            notifications: Array.isArray(runtime.notifications) ? runtime.notifications.slice(-6) : []
+        }) || {};
+    }
+
+    getScenarioRuntimePrompt() {
+        const snapshot = this.getScenarioRuntimeSnapshot();
+        const weather = snapshot.weather || {};
+        const project = snapshot.projects?.drakkar_repair;
+        const lines = [
+            `SCENARIO_RUNTIME: weather=${weather.state || 'unknown'}; hurricaneEndsAt=${weather.endsAt ?? 'none'}; nextHurricaneAt=${weather.nextHurricaneAt ?? 'unknown'}; hornSounds=${weather.hornSounds || 0}`
+        ];
+        if (project) lines.push(`DRAKKAR_REPAIR: status=${project.status}; progress=${project.progress}/${project.requiredProgress}; damage=${project.damage}; villagers=${project.villagersCommitted}; passengers=${project.passengers}; estimatedDays=${project.estimatedDays}; readyAt=${project.readyAt ?? 'unknown'}`);
+        lines.push(`KNOWN_CLUES: ${JSON.stringify(snapshot.clues || [])}`);
+        lines.push(`ENCOUNTER_STATE: ${JSON.stringify(snapshot.encounters || {})}`);
+        if (snapshot.ending) lines.push(`ENDING_STATE: ${JSON.stringify(snapshot.ending)}`);
+        return lines.join('\n').slice(0, 5000);
+    }
+
+    _mergeScenarioRuntimeDefaults(runtime = {}) {
+        const defaults = newScenarioRuntime(this.scenario);
+        const safe = scenarioSafeValue(runtime) || {};
+        const mergeMap = (base, value) => {
+            const output = { ...(base || {}) };
+            for (const [key, entry] of Object.entries(value && typeof value === 'object' ? value : {})) {
+                output[key] = entry && typeof entry === 'object' && !Array.isArray(entry)
+                    ? { ...(output[key] || {}), ...entry }
+                    : entry;
+            }
+            return output;
+        };
+        return {
+            ...defaults,
+            ...safe,
+            weather: { ...defaults.weather, ...(safe.weather || {}) },
+            projects: mergeMap(defaults.projects, safe.projects),
+            clues: Array.isArray(safe.clues) ? [...new Set(safe.clues.filter(item => typeof item === 'string').slice(0, 100))] : defaults.clues,
+            encounters: mergeMap(defaults.encounters, safe.encounters),
+            notifications: Array.isArray(safe.notifications) ? safe.notifications.slice(-20) : defaults.notifications
+        };
+    }
+
     /**
      * Get faction by ID
      */
@@ -4393,6 +5020,7 @@ class World {
             if (scenario[field] !== undefined) lines.push(`${field}: ${JSON.stringify(scenario[field])}`);
         }
         lines.push(`CURRENT_SCENARIO_STATE: ${JSON.stringify(state)}`);
+        lines.push(this.getScenarioRuntimePrompt());
         let prompt = lines.join('\n');
         if (options && options.maskNpcNames) {
             const scenarioNpcNames = Array.isArray(this.scenario.npcs)
@@ -4449,7 +5077,46 @@ class World {
             note: (typeof note === 'string' && note.trim() ? note : option.note || '').slice(0, 240)
         }]).slice(-200);
         this.scenarioState = state;
+        this._applyScenarioChoiceRuntime(choiceKey, optionKey);
         return { success: true, choiceId, optionId, state: scenarioSafeValue(state), changed: before !== JSON.stringify(state) };
+    }
+
+    _applyScenarioChoiceRuntime(choiceId, optionId) {
+        if (this.scenario?.id !== 'straznik_wiatru') return;
+        const runtime = this.scenarioRuntime || newScenarioRuntime(this.scenario);
+        const changes = [];
+        if (optionId === 'troll_pokoj') {
+            runtime.encounters.troll_straznik = { ...(runtime.encounters.troll_straznik || {}), met: true, disposition: 'curious' };
+            this._scenarioAddClues(['troll_guardian_truth'], changes, 'Troll nie jest wrogi i pozwala poznać swój ślad.');
+        } else if (optionId === 'troll_ominac') {
+            runtime.encounters.troll_straznik = { ...(runtime.encounters.troll_straznik || {}), disposition: 'wary' };
+        } else if (optionId === 'troll_walka') {
+            runtime.encounters.troll_straznik = { ...(runtime.encounters.troll_straznik || {}), disposition: 'hostile', wounded: true };
+        } else if (optionId === 'wioska_naprawa') {
+            const project = this._ensureScenarioProject('drakkar_repair');
+            project.status = project.status === 'completed' ? 'completed' : 'active';
+            project.villagersCommitted = Math.max(project.villagersCommitted || 0, 4);
+        } else if (optionId === 'wioska_ucieczka') {
+            runtime.projects.drakkar_repair.passengers = Math.max(runtime.projects.drakkar_repair.passengers || 0, 16);
+        } else if (optionId === 'straznik_walka') {
+            this._scenarioAddFlags(['pustelnik_zaatakowany'], changes, 'Pustelnik uznaje drużynę za zagrożenie.');
+            runtime.encounters.pustelnik_straznik = { ...(runtime.encounters.pustelnik_straznik || {}), disposition: 'hostile' };
+        } else if (optionId === 'rog_nowy_straznik') {
+            this._scenarioAddFlags(['nowy_straznik'], changes, 'Ktoś przyjmuje obowiązek Strażnika Wiatru.');
+            this._setScenarioEnding('end_guardian', 'Drużyna świadomie przyjęła obowiązek rogu.');
+        } else if (optionId === 'rog_kradziez') {
+            this._setScenarioEnding('end_escape_artifacts', 'Drużyna wybrała ucieczkę z artefaktami.');
+        } else if (optionId === 'rog_zniszczenie') {
+            this._scenarioAddFlags(['rog_zniszczony'], changes, 'Róg lub menhiry zostały zniszczone.');
+            runtime.weather.disabled = true;
+            runtime.weather.state = 'calm';
+            this._setScenarioEnding('end_titan_awakened', 'Róg przestał podtrzymywać uśpienie Hragmorra.');
+        }
+        if (changes.length) {
+            runtime.notifications = [...(runtime.notifications || []), ...changes.map(change => ({ type: change.type, description: change.description, at: this.currentTimeMinutes }))].slice(-20);
+        }
+        this._completeScenarioObjectives(this.player, changes);
+        for (const change of changes) this.logWorldChange(change);
     }
 
     // ========================================================================
@@ -4473,6 +5140,7 @@ class World {
             worldMetadata: this.worldMetadata,
             scenario: this.scenario,
             scenarioState: this.scenarioState,
+            scenarioRuntime: this.scenarioRuntime,
             lastGlobalStrategicUpdate: this.lastGlobalStrategicUpdate,
             // Phase 2: Serialize event queue
             eventQueue: this.eventQueue ? this.eventQueue.toJSON() : null,
@@ -4537,6 +5205,11 @@ class World {
         } else {
             world.scenarioState = newScenarioState(world.scenario);
         }
+        world.scenarioRuntime = json.scenarioRuntime && typeof json.scenarioRuntime === 'object'
+            ? scenarioSafeValue(json.scenarioRuntime)
+            : newScenarioRuntime(world.scenario);
+        if (!world.scenarioRuntime || typeof world.scenarioRuntime !== 'object') world.scenarioRuntime = newScenarioRuntime(world.scenario);
+        world.scenarioRuntime = world._mergeScenarioRuntimeDefaults(world.scenarioRuntime);
         world.lastGlobalStrategicUpdate = Number.isSafeInteger(json.lastGlobalStrategicUpdate)
             ? json.lastGlobalStrategicUpdate
             : 0;
@@ -5334,7 +6007,10 @@ class World {
                     inventory,
                     loot: Array.isArray(entry?.loot) ? entry.loot
                         .filter(item => item && ITEM_CATALOG[item.id] && Number.isInteger(item.quantity) && item.quantity > 0)
-                        .map(item => ({ id: item.id, quantity: Math.min(1000, item.quantity) })) : []
+                        .map(item => ({ id: item.id, quantity: Math.min(1000, item.quantity) })) : [],
+                    canonicalEntityId: typeof entry?.canonicalEntityId === 'string' ? makeId(entry.canonicalEntityId, '') : null,
+                    specialAbilities: Array.isArray(entry?.specialAbilities) ? entry.specialAbilities.filter(item => typeof item === 'string').slice(0, 20) : [],
+                    specialAbilityData: entry?.specialAbilityData && typeof entry.specialAbilityData === 'object' ? scenarioSafeValue(entry.specialAbilityData) : {}
                 };
             });
 
@@ -5387,6 +6063,7 @@ class World {
         };
         world.scenario = data.scenario;
         world.scenarioState = newScenarioState(world.scenario);
+        world.scenarioRuntime = world._mergeScenarioRuntimeDefaults(newScenarioRuntime(world.scenario));
         for (const entry of data.locations) {
             const location = new Location(entry.id, entry.name);
             Object.assign(location, entry);

@@ -9,6 +9,7 @@ const {
     EventQueue,
     NarrativeMemory
 } = require('../engine.js');
+const windGuardianScenario = require('../scenarios/straznik-wiatru.json');
 
 function narrativeFact(overrides = {}) {
     return {
@@ -833,6 +834,60 @@ function testNarrativePatchValidationPendingTurnsAndBudget() {
     assert.ok(context.facts.length < facts.length);
 }
 
+function testWindGuardianRuntimeMechanics() {
+    const world = World.createFromBlueprint(windGuardianScenario, 'Wind Tester');
+    const player = world.player;
+    assert.strictEqual(world.scenario.id, 'straznik_wiatru');
+
+    player.locationId = 'iglasty_las';
+    const villageTravel = world.performPlayerAction('idę do wioski rozbitków', player);
+    assert.strictEqual(villageTravel.success, true);
+    assert.strictEqual(player.locationId, 'wioska_rozbitkow');
+    assert.strictEqual(world.eventQueue.countByType('scenario_hurricane_warning'), 1);
+
+    world.advanceWorldTimeForPlayer(player, 435);
+    assert.strictEqual(world.scenarioRuntime.weather.state, 'warning');
+    world.advanceWorldTimeForPlayer(player, 15);
+    assert.strictEqual(world.scenarioRuntime.weather.state, 'hurricane');
+
+    player.locationId = 'brzeg_wyspy';
+    const stormCheck = world.getScenarioCheckForAction('utrzymuję ster podczas sztormu', player);
+    assert.strictEqual(stormCheck.scenarioCheckId, 'storm_survival');
+    const stormResult = world.resolveD20Action('utrzymuję ster podczas sztormu', player, stormCheck, 20);
+    assert.strictEqual(stormResult.success, true);
+    assert.ok(world.scenarioState.flags.includes('storm_survived'));
+
+    player.locationId = 'wioska_rozbitkow';
+    const repairCheck = world.getScenarioCheckForAction('pomagam naprawiać drakkar', player);
+    assert.strictEqual(repairCheck.scenarioCheckId, 'repair_work');
+    for (let index = 0; index < 4; index += 1) {
+        const repairResult = world.resolveD20Action('pomagam naprawiać drakkar', player, repairCheck, 20);
+        assert.strictEqual(repairResult.success, true);
+    }
+    const project = world.scenarioRuntime.projects.drakkar_repair;
+    assert.strictEqual(project.progress, project.requiredProgress);
+    assert.strictEqual(project.status, 'awaiting_completion');
+    assert.ok(Number.isSafeInteger(project.readyAt));
+    world.advanceWorldTimeForPlayer(player, project.readyAt - world.currentTimeMinutes);
+    assert.strictEqual(project.status, 'completed');
+    assert.ok(world.scenarioState.flags.includes('drakkar_naprawiony'));
+
+    player.locationId = 'swiatynia_atlantow';
+    const mosaicCheck = world.getScenarioCheckForAction('badam mozaiki Atlantów', player);
+    assert.strictEqual(mosaicCheck.scenarioCheckId, 'temple_mosaics');
+    const failedMosaic = world.resolveD20Action('badam mozaiki Atlantów', player, mosaicCheck, 1);
+    assert.strictEqual(failedMosaic.success, false);
+    assert.strictEqual(world.scenarioRuntime.clues.includes('atlantean_mosaics'), false);
+    const successfulMosaic = world.resolveD20Action('badam mozaiki Atlantów', player, mosaicCheck, 20);
+    assert.strictEqual(successfulMosaic.success, true);
+    assert.strictEqual(world.scenarioRuntime.clues.includes('atlantean_mosaics'), true);
+
+    const roundTrip = World.fromJSON(JSON.parse(JSON.stringify(world.toJSON())));
+    assert.strictEqual(roundTrip.scenarioRuntime.projects.drakkar_repair.status, 'completed');
+    assert.ok(roundTrip.scenarioState.flags.includes('storm_survived'));
+    assert.ok(roundTrip.scenarioRuntime.clues.includes('atlantean_mosaics'));
+}
+
 testTimeValidation();
 testPlayerActionsAndRoundTrip();
 testTimeAwareWaitActions();
@@ -859,4 +914,5 @@ testNarrativeFactIdempotenceAndClothingHistory();
 testNarrativeAppearanceRetrievalAndSecrets();
 testNoncanonicalAppearanceFactsAreAlwaysSceneGated();
 testNarrativePatchValidationPendingTurnsAndBudget();
+testWindGuardianRuntimeMechanics();
 console.log('engine tests passed');
